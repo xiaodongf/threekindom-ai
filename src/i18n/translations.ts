@@ -1,0 +1,117 @@
+import type { Language, LocalizedText, Season, TerrainType } from '../game/types.js';
+
+export function tLoc(text: LocalizedText, lang: Language): string {
+  return lang === 'zh' ? text.zh : text.en;
+}
+
+export const SEASONS_TEXT: Record<Season, LocalizedText> = {
+  spring: { en: 'Spring', zh: '春' },
+  summer: { en: 'Summer', zh: '夏' },
+  autumn: { en: 'Autumn', zh: '秋' },
+  winter: { en: 'Winter', zh: '冬' },
+};
+
+export const TERRAIN_TEXT: Record<TerrainType, LocalizedText> = {
+  plains: { en: 'Plains', zh: '平原' },
+  mountain: { en: 'Mountains', zh: '山地' },
+  river: { en: 'Yangtze River', zh: '水泽江防' },
+  fortress: { en: 'Fortress Pass', zh: '雄关要塞' },
+};
+
+export const UI_TEXT = {
+  appTitle: { en: 'Three Kingdoms AI', zh: '三国志 AI' },
+  appSubtitle: {
+    en: 'Grand Strategy & AI Warlord Diplomacy · 214 AD',
+    zh: '智能群雄博弈 · 建安十九年天下三分',
+  },
+  chooseFaction: { en: 'Choose Your Kingdom', zh: '择主起兵 · 逐鹿中原' },
+  chooseFactionDesc: {
+    en: 'Command armies across Late Han China, consult your AI chief strategist, and negotiate with autonomous rival warlords.',
+    zh: '运筹帷幄于汉末十三城，与大军师共商军机，与AI敌国君主合纵连横、决胜千里。',
+  },
+  beginCampaign: { en: 'Begin Campaign', zh: '挥师起兵' },
+  victoryGoal: { en: 'Victory: Control 9 Cities', zh: '胜负条件：占领 9 座城池一统天下' },
+  gold: { en: 'Gold', zh: '国库' },
+  food: { en: 'Food', zh: '粮草' },
+  troops: { en: 'Troops', zh: '总兵力' },
+  cities: { en: 'Cities', zh: '城池' },
+  actionPoints: { en: 'Actions', zh: '行动力' },
+  endTurn: { en: 'End Season', zh: '结束本季' },
+  aiThinking: { en: 'AI Warlords Moving...', zh: '敌国君主推演中...' },
+  aiSettings: { en: 'AI Engine', zh: 'AI 引擎' },
+  newGame: { en: 'New Campaign', zh: '重开战局' },
+  tabCity: { en: 'Commandery', zh: '城池军政' },
+  tabAdvisor: { en: 'War Council', zh: '军师献策' },
+  tabDiplomacy: { en: 'Diplomacy', zh: '外交博弈' },
+  tabChronicle: { en: 'Chronicle', zh: '战报史记' },
+  selectCityPrompt: {
+    en: 'Click any city on the map to inspect garrisons, issue orders, or plan campaigns.',
+    zh: '点击地图上的任意城池查看兵力、部署内政或发兵征讨。',
+  },
+  prosperity: { en: 'Prosperity', zh: '繁荣度' },
+  defense: { en: 'Fortification', zh: '城防等级' },
+  garrison: { en: 'Garrison', zh: '守军' },
+  terrain: { en: 'Terrain', zh: '地形' },
+  stationedGenerals: { en: 'Stationed Generals', zh: '驻守武将' },
+  noGenerals: { en: 'No named general stationed here.', zh: '本城暂无名将驻守。' },
+  develop: { en: 'Develop', zh: '发展内政' },
+  recruit: { en: 'Recruit', zh: '征募新兵' },
+  fortify: { en: 'Fortify', zh: '修筑城防' },
+  marchOrders: { en: 'Adjacent Routes & March Orders', zh: '邻接通道与出兵部署' },
+  attack: { en: 'Attack', zh: '出兵攻伐' },
+  reinforce: { en: 'Reinforce', zh: '调兵增援' },
+  neutralOwner: { en: 'Independent Garrison', zh: '无主群雄守军' },
+  truceBlocked: { en: 'Truce Active (Attacking breaks pact)', zh: '停战盟约生效中（出兵将背盟）' },
+  battleSetupTitle: { en: 'Campaign Orders', zh: '点将出征' },
+  leadGeneral: { en: 'Lead General', zh: '挂帅主将' },
+  noGeneralOption: { en: 'Garrison Commander (No General)', zh: '部曲校尉（无名将）' },
+  selectTactic: { en: 'Battle Tactic', zh: '出战计策' },
+  deployTroops: { en: 'Troops to Deploy', zh: '出征兵力' },
+  launchAttack: { en: 'Launch Campaign', zh: '鸣鼓进军' },
+  cancel: { en: 'Cancel', zh: '取消' },
+  close: { en: 'Close', zh: '关闭' },
+  battleVictory: { en: 'City Captured!', zh: '大获全胜 · 城池告破！' },
+  battleRepelled: { en: 'Assault Repelled', zh: '攻城受挫 · 鸣金收兵' },
+  advisorPlaceholder: {
+    en: 'Ask your strategist about targets, defense, or diplomacy...',
+    zh: '向军师请教攻伐方略、城防隐患或合纵之策...',
+  },
+  send: { en: 'Send', zh: '发送' },
+  consulting: { en: 'Consulting...', zh: '军师沉思中...' },
+  quickQ1: { en: 'Where should we strike next?', zh: '当务之急应先取何城？' },
+  quickQ2: { en: 'Are any borders vulnerable?', zh: '我军防线可有隐忧？' },
+  quickQ3: { en: 'Who should we ally with?', zh: '纵横捭阖当联何国？' },
+  proposeAlliance: { en: 'Propose Truce (3 Turns)', zh: '遣使结盟（3季）' },
+  sendGift: { en: 'Send Gift (250 Gold)', zh: '赠金示好（250金）' },
+  declareWar: { en: 'Declare War', zh: '颁布讨伐檄文' },
+  envoyPlaceholder: {
+    en: 'Write a diplomatic message to this warlord...',
+    zh: '撰写国书游说敌国君主...',
+  },
+  sendEnvoy: { en: 'Dispatch Envoy', zh: '遣使递书' },
+  providerSettingsTitle: { en: 'Pluggable AI Engine', zh: '可插拔 AI 大模型配置' },
+  providerSettingsDesc: {
+    en: 'Switch between Gemini, OpenAI, Anthropic, or zero-key Built-in Tactical AI. Server .env keys are detected automatically.',
+    zh: '支持 Gemini、OpenAI、Anthropic 及内置规则战术 AI 无缝切换。服务端 .env 密钥将自动识别。',
+  },
+  activeProvider: { en: 'Provider Mode', zh: 'AI 提供商' },
+  modelOverride: { en: 'Model Override (optional)', zh: '自定义模型名（可选）' },
+  sessionApiKey: { en: 'Session API Key (optional, overrides .env)', zh: '临时会话 API Key（可选，覆盖服务端配置）' },
+  openaiBaseUrl: { en: 'OpenAI-Compatible Base URL (optional)', zh: 'OpenAI 兼容接口地址（可选，支持 Ollama/DeepSeek）' },
+  saveSettings: { en: 'Apply Settings', zh: '应用配置' },
+  victoryBanner: { en: 'Mandate of Heaven Achieved!', zh: '天下一统 · 功垂竹帛！' },
+  defeatBanner: { en: 'Your Dynasty Has Fallen', zh: '社稷倾覆 · 霸业未竟' },
+  playAgain: { en: 'Start New Campaign', zh: '再战乱世' },
+  statusLabels: {
+    war: { en: 'At War', zh: '交战' },
+    hostile: { en: 'Hostile', zh: '敌对' },
+    neutral: { en: 'Neutral', zh: '中立' },
+    truce: { en: 'Truce', zh: '停战' },
+    allied: { en: 'Allied', zh: '同盟' },
+  },
+  difficulty: {
+    normal: { en: 'Balanced', zh: '雄霸中原' },
+    challenging: { en: 'Challenging', zh: '兴复汉室' },
+    hard: { en: 'Tactical', zh: '江东制衡' },
+  },
+} as const;
