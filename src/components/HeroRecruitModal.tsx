@@ -147,25 +147,46 @@ export function HeroRecruitModal({
           </button>
         </div>
 
-        {/* Hero Spotlight + Chrono Dossier Hint */}
-        <div className="flex items-start gap-4 rounded-xl bg-[#0d1015]/85 border border-white/10 p-3.5">
-          <HeroAvatar hero={hero} size="lg" showLevel />
-          <div className="min-w-0 flex-1 space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="font-display text-lg font-bold text-[#f7efe0]">
-                {tLoc(hero.name, lang)}
+        {/* YOU vs Hero Face-to-Face Portrait Spotlight + Chrono Intel */}
+        <div className="rounded-xl bg-slate-950/80 border border-cyan-500/25 p-3.5 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <img
+                src={state.playerProfile.portrait}
+                alt="Player"
+                className="w-14 h-14 rounded-xl object-cover object-top border-2 border-cyan-400 shadow-[0_0_16px_rgba(56,189,248,0.3)]"
+              />
+              <div>
+                <div className="text-[10px] font-bold uppercase text-cyan-400">
+                  {lang === 'zh' ? '你 · 穿越者' : 'YOU · 2026'}
+                </div>
+                <div className="font-display text-sm font-bold text-white">
+                  {state.playerProfile.name || (lang === 'zh' ? '天命奇士' : 'Chrono-Strategist')}
+                </div>
               </div>
-              <span className="text-xs text-[#d4a853] font-medium">
-                {tLoc(hero.title, lang)}
-              </span>
             </div>
-            <div className="text-[11px] text-sky-200 bg-sky-950/40 border border-sky-400/25 rounded-lg p-2 space-y-1">
-              <div className="flex items-center gap-1 text-[10px] font-bold uppercase text-sky-300">
-                <Eye className="w-3 h-3" />
-                <span>{lang === 'zh' ? '穿越者攻略提示' : 'Time-Traveler Intel Hint'}</span>
+
+            <div className="text-xs font-bold text-cyan-300/70">⇄</div>
+
+            <div className="flex items-center gap-2.5 flex-row-reverse text-right">
+              <HeroAvatar hero={hero} size="md" showLevel />
+              <div>
+                <div className="text-[10px] font-semibold text-amber-300">
+                  {tLoc(hero.title, lang)}
+                </div>
+                <div className="font-display text-sm font-bold text-white">
+                  {tLoc(hero.name, lang)}
+                </div>
               </div>
-              <div>{tLoc(hero.dossier.persuasionHook, lang)}</div>
             </div>
+          </div>
+
+          <div className="text-[11px] text-cyan-100 bg-cyan-950/40 border border-cyan-400/25 rounded-lg p-2 space-y-1">
+            <div className="flex items-center gap-1 text-[10px] font-bold uppercase text-cyan-300">
+              <Eye className="w-3 h-3" />
+              <span>{lang === 'zh' ? '穿越者攻略提示' : 'Time-Traveler Intel Hint'}</span>
+            </div>
+            <div>{tLoc(hero.dossier.persuasionHook, lang)}</div>
           </div>
         </div>
 

@@ -20,16 +20,19 @@ import {
 } from './engine.js';
 
 describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
-  it('initializes 214 AD map with 24 heroes (18 faction + 6 wandering) and 3 AP', () => {
+  it('initializes 214 AD map with 36 heroes (27 faction + 9 wandering), player profile, and 3 AP', () => {
     const state = createNewGame('shu');
     expect(state.year).toBe(214);
     expect(state.season).toBe('spring');
     expect(state.playerFaction).toBe('shu');
+    expect(state.playerProfile.portrait).toBe('/portraits/traveler_male.jpg');
     expect(state.actionPoints).toBe(3);
-    expect(Object.keys(state.generals).length).toBe(24);
+    expect(Object.keys(state.generals).length).toBe(36);
     expect(
       Object.values(state.generals).filter((g) => g.status === 'wandering').length
-    ).toBe(6);
+    ).toBe(9);
+    expect(state.generals.lubu.war).toBe(100);
+    expect(state.generals.zhouyu.faction).toBe('wu');
     expect(getFactionCities(state, 'wei').length).toBe(5);
     expect(getFactionCities(state, 'shu').length).toBe(3);
     expect(getFactionCities(state, 'wu').length).toBe(3);

@@ -40,14 +40,14 @@ export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps)
   return (
     <div className="p-3.5 space-y-3 overflow-y-auto h-[580px]">
       {/* Top Status Banner */}
-      <div className="rounded-xl bg-[#0d1015]/90 border border-[#d4a853]/30 p-3 space-y-2">
+      <div className="rounded-xl bg-slate-950/80 border border-cyan-500/30 p-3 space-y-2">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-[#f7e7be]">
-            <FlaskConical className="w-4 h-4 text-[#d4a853]" />
+          <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-200">
+            <FlaskConical className="w-4 h-4 text-cyan-400" />
             <span>{lang === 'zh' ? '穿越者格物工坊' : 'Chrono Modern Tech Lab'}</span>
           </div>
-          <div className="flex items-center gap-1 text-xs font-bold text-amber-300 bg-amber-500/15 border border-amber-400/35 px-2.5 py-0.5 rounded-full">
-            <Lightbulb className="w-3.5 h-3.5" />
+          <div className="flex items-center gap-1 text-xs font-bold text-cyan-200 bg-cyan-500/15 border border-cyan-400/40 px-2.5 py-0.5 rounded-full">
+            <Lightbulb className="w-3.5 h-3.5 text-cyan-300" />
             <span>
               {state.chrono.innovationPoints}{' '}
               {lang === 'zh' ? '灵感' : 'Innovation'}
@@ -143,7 +143,7 @@ export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps)
                   <button
                     disabled={!canAfford}
                     onClick={() => onResearchTech(tid, selectedResearcher?.id)}
-                    className="shrink-0 px-3 py-1.5 rounded-lg bg-[#d4a853] hover:bg-[#e4ba67] disabled:opacity-35 text-[#11151d] font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 disabled:opacity-35 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow"
                   >
                     <Sparkles className="w-3 h-3" />
                     <span>{lang === 'zh' ? '研造' : 'Build'}</span>

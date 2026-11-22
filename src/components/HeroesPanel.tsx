@@ -383,8 +383,8 @@ export function HeroesPanel({
             onClick={() => setFilter(tab.id)}
             className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
               filter === tab.id
-                ? 'bg-[#d4a853] text-[#11151d]'
-                : 'bg-white/5 text-[#b8b2a2] hover:bg-white/10'
+                ? 'bg-gradient-to-r from-cyan-500 to-indigo-500 text-white shadow'
+                : 'bg-slate-800/70 text-slate-300 hover:bg-slate-700/80'
             }`}
           >
             {tab.label} ({tab.count})

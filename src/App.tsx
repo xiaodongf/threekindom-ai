@@ -31,6 +31,7 @@ import {
   advanceSeason,
   applyDiplomacyOutcome,
   applyHeroEncounterOutcome,
+  createDefaultPlayerProfile,
   createNewGame,
   executeAITurnAction,
   performAttackCity,
@@ -56,6 +57,7 @@ import type {
   HeroEncounterResponse,
   Language,
   PlayableFactionId,
+  PlayerProfile,
   TechId,
 } from './game/types.js';
 import { UI_TEXT, tLoc } from './i18n/translations.js';
@@ -140,8 +142,8 @@ export default function App() {
       });
   }, []);
 
-  function startCampaign(faction: PlayableFactionId) {
-    const fresh = createNewGame(faction);
+  function startCampaign(faction: PlayableFactionId, profile?: PlayerProfile) {
+    const fresh = createNewGame(faction, profile || createDefaultPlayerProfile());
     const capital = Object.values(fresh.cities).find(
       (c) => c.owner === faction && c.isCapital
     );
@@ -153,6 +155,15 @@ export default function App() {
     setPendingAttack(null);
     setActiveDuel(null);
     setHeroEncounter(null);
+  }
+
+  function handleTogglePlayerAvatar() {
+    if (!gameState) return;
+    const nextAvatar = gameState.playerProfile.avatar === 'male' ? 'female' : 'male';
+    setGameState({
+      ...gameState,
+      playerProfile: createDefaultPlayerProfile(nextAvatar, gameState.playerProfile.name),
+    });
   }
 
   function handleSelectCity(cityId: string) {
@@ -381,6 +392,7 @@ export default function App() {
         isEndingTurn={isEndingTurn}
         providerLabel={providerLabel}
         onToggleLang={() => setLang((l) => (l === 'en' ? 'zh' : 'en'))}
+        onTogglePlayerAvatar={handleTogglePlayerAvatar}
         onOpenSettings={() => setShowSettings(true)}
         onEndTurn={handleEndTurn}
         onNewGame={() => setGameState(null)}
@@ -417,7 +429,7 @@ export default function App() {
 
         {/* Right: 6-Tab Hero-Centric Command Drawer */}
         <aside className="xl:col-span-4 ink-panel rounded-2xl overflow-hidden flex flex-col">
-          <div className="grid grid-cols-6 border-b border-white/10 bg-[#0d1015]/75">
+          <div className="grid grid-cols-6 border-b border-slate-700/60 bg-slate-950/65">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
@@ -427,8 +439,8 @@ export default function App() {
                   onClick={() => setActiveTab(tab.id)}
                   className={`flex flex-col items-center justify-center gap-1 py-2.5 px-1 text-[10px] font-semibold border-b-2 transition cursor-pointer ${
                     active
-                      ? 'border-[#d4a853] text-[#f7e7be] bg-white/[0.05]'
-                      : 'border-transparent text-[#8b92a1] hover:text-[#ebe5d5]'
+                      ? 'border-cyan-400 text-cyan-200 bg-cyan-500/10'
+                      : 'border-transparent text-slate-400 hover:text-slate-100'
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5" />

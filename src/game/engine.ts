@@ -28,6 +28,7 @@ import type {
   HeroEncounterMode,
   LocalizedText,
   PlayableFactionId,
+  PlayerProfile,
   Season,
   TacticId,
   TechId,
@@ -46,7 +47,18 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
-export function createNewGame(playerFaction: PlayableFactionId): GameState {
+export function createDefaultPlayerProfile(avatar: 'male' | 'female' = 'male', name = ''): PlayerProfile {
+  return {
+    name: name.trim(),
+    avatar,
+    portrait: avatar === 'female' ? '/portraits/traveler_female.jpg' : '/portraits/traveler_male.jpg',
+  };
+}
+
+export function createNewGame(
+  playerFaction: PlayableFactionId,
+  playerProfile: PlayerProfile = createDefaultPlayerProfile()
+): GameState {
   const factions = createInitialFactions();
   const cities = createInitialCities();
   const generals = createInitialGenerals();
@@ -71,6 +83,7 @@ export function createNewGame(playerFaction: PlayableFactionId): GameState {
     year: 214,
     season: 'spring',
     playerFaction,
+    playerProfile,
     actionPoints: MAX_ACTION_POINTS,
     maxActionPoints: MAX_ACTION_POINTS,
     factions,

@@ -266,11 +266,20 @@ export interface MarchEvent {
   captured?: boolean;
 }
 
+export type TravelerAvatarId = 'male' | 'female';
+
+export interface PlayerProfile {
+  name: string;
+  avatar: TravelerAvatarId;
+  portrait: string;
+}
+
 export interface GameState {
   turn: number;
   year: number;
   season: Season;
   playerFaction: PlayableFactionId;
+  playerProfile: PlayerProfile;
   actionPoints: number;
   maxActionPoints: number;
   factions: Record<PlayableFactionId, FactionState>;

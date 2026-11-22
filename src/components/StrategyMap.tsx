@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import {
+  Box,
   Compass,
   Layers,
   Map as MapIcon,
@@ -34,35 +35,41 @@ interface StrategyMapProps {
 
 const FACTION_PALETTE: Record<
   FactionId,
-  { fill: string; glow: string; stroke: string; badge: string; wash: string }
+  {
+    fill: string;
+    roofLight: string;
+    roofDark: string;
+    stroke: string;
+    badge: string;
+  }
 > = {
   wei: {
-    fill: '#2563eb',
-    glow: '#3b82f6',
+    fill: '#3b82f6',
+    roofLight: '#60a5fa',
+    roofDark: '#1d4ed8',
     stroke: '#93c5fd',
     badge: '魏',
-    wash: '#2563eb',
   },
   shu: {
-    fill: '#059669',
-    glow: '#10b981',
+    fill: '#10b981',
+    roofLight: '#34d399',
+    roofDark: '#047857',
     stroke: '#6ee7b7',
     badge: '蜀',
-    wash: '#10b981',
   },
   wu: {
-    fill: '#dc2626',
-    glow: '#ef4444',
-    stroke: '#fca5a5',
+    fill: '#f43f5e',
+    roofLight: '#fb7185',
+    roofDark: '#be123c',
+    stroke: '#fda4af',
     badge: '吴',
-    wash: '#ef4444',
   },
   neutral: {
-    fill: '#78716c',
-    glow: '#a8a29e',
-    stroke: '#e7e5e4',
+    fill: '#94a3b8',
+    roofLight: '#cbd5e1',
+    roofDark: '#475569',
+    stroke: '#e2e8f0',
     badge: '群',
-    wash: '#a8a29e',
   },
 };
 
@@ -70,22 +77,20 @@ const ELEVATION_STYLE: Record<
   (typeof ELEVATION_ZONES)[number]['kind'],
   { fill: string; opacity: number }
 > = {
-  alpine: { fill: '#6c5d4c', opacity: 0.65 },
-  plateau: { fill: '#6b573b', opacity: 0.45 },
-  mountain: { fill: '#524432', opacity: 0.55 },
-  basin: { fill: '#224535', opacity: 0.55 },
-  plain: { fill: '#2f4933', opacity: 0.5 },
-  hills: { fill: '#213a31', opacity: 0.45 },
+  alpine: { fill: '#64748b', opacity: 0.52 },
+  plateau: { fill: '#7c6a52', opacity: 0.42 },
+  mountain: { fill: '#4b5563', opacity: 0.5 },
+  basin: { fill: '#155e4b', opacity: 0.52 },
+  plain: { fill: '#1e4d40', opacity: 0.48 },
+  hills: { fill: '#16423c', opacity: 0.46 },
 };
 
-// Build a gentle curved quadratic Bezier road between two cities
 function curvedRoadPath(a: City, b: City): string {
   const mx = (a.x + b.x) / 2;
   const my = (a.y + b.y) / 2;
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const dist = Math.hypot(dx, dy) || 1;
-  // Deterministic subtle bend based on city IDs so roads look organic around terrain
   const hash = (a.id.charCodeAt(0) + b.id.charCodeAt(0)) % 2 === 0 ? 1 : -1;
   const curve = Math.min(22, dist * 0.14) * hash;
   const cx = mx - (dy / dist) * curve;
@@ -103,6 +108,7 @@ export function StrategyMap({
   const cities = Object.values(state.cities);
   const selectedCity = selectedCityId ? state.cities[selectedCityId] : null;
 
+  const [is3D, setIs3D] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -155,11 +161,8 @@ export function StrategyMap({
     setPan(clampPan(dragStart.current.panX + dx, dragStart.current.panY + dy, zoom));
   };
 
-  const handlePointerUp = () => {
-    setIsDragging(false);
-  };
+  const handlePointerUp = () => setIsDragging(false);
 
-  // Deduplicate road edges
   const edges: Array<{ a: City; b: City; isAdjacentToSelected: boolean; isRiverRoute: boolean }> =
     [];
   const seen = new Set<string>();
@@ -184,9 +187,9 @@ export function StrategyMap({
   const viewTransform = `translate(${MAP_WIDTH / 2 + pan.x}, ${MAP_HEIGHT / 2 + pan.y}) scale(${zoom}) translate(${-MAP_WIDTH / 2}, ${-MAP_HEIGHT / 2})`;
 
   return (
-    <div className="ink-panel rounded-2xl p-2 sm:p-3 relative overflow-hidden flex flex-col">
-      {/* Top Map Legend & Layer Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-2 pb-2 text-xs">
+    <div className="ink-panel rounded-2xl p-2.5 sm:p-3.5 relative overflow-hidden flex flex-col">
+      {/* Modern Glass Map Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2.5 text-xs">
         <div className="flex flex-wrap items-center gap-3">
           {(['wei', 'shu', 'wu', 'neutral'] as FactionId[]).map((fid) => {
             const count = cities.filter((c) => c.owner === fid).length;
@@ -199,10 +202,10 @@ export function StrategyMap({
             return (
               <div key={fid} className="flex items-center gap-1.5">
                 <span
-                  className="w-2.5 h-2.5 rounded-full ring-1 ring-white/30"
+                  className="w-2.5 h-2.5 rounded-full ring-2 ring-white/20"
                   style={{ backgroundColor: FACTION_PALETTE[fid].fill }}
                 />
-                <span className="text-[#d6ceb8] font-medium">
+                <span className="text-slate-200 font-medium">
                   {label} ({count})
                 </span>
               </div>
@@ -213,11 +216,24 @@ export function StrategyMap({
         <div className="flex items-center gap-1.5">
           <button
             type="button"
+            onClick={() => setIs3D((v) => !v)}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition cursor-pointer ${
+              is3D
+                ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200 shadow-[0_0_12px_rgba(56,189,248,0.2)]'
+                : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Box className="w-3.5 h-3.5" />
+            <span>{is3D ? (lang === 'zh' ? '3D 立体' : '3D Tilt') : '2D'}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setShowTerritory((v) => !v)}
-            className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition cursor-pointer ${
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
               showTerritory
-                ? 'bg-[#d4a853]/18 border-[#d4a853]/50 text-[#f5e3b3]'
-                : 'bg-white/5 border-white/10 text-[#9ea3ae]'
+                ? 'bg-indigo-500/20 border-indigo-400/45 text-indigo-200'
+                : 'bg-slate-800/60 border-slate-700 text-slate-400'
             }`}
           >
             <Layers className="w-3 h-3" />
@@ -227,35 +243,33 @@ export function StrategyMap({
           <button
             type="button"
             onClick={() => setShowGeoLabels((v) => !v)}
-            className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition cursor-pointer ${
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
               showGeoLabels
-                ? 'bg-[#d4a853]/18 border-[#d4a853]/50 text-[#f5e3b3]'
-                : 'bg-white/5 border-white/10 text-[#9ea3ae]'
+                ? 'bg-indigo-500/20 border-indigo-400/45 text-indigo-200'
+                : 'bg-slate-800/60 border-slate-700 text-slate-400'
             }`}
           >
             <MapIcon className="w-3 h-3" />
             <span>{lang === 'zh' ? '山川地名' : 'Geography'}</span>
           </button>
 
-          <div className="flex items-center rounded-md border border-white/10 bg-[#0d1015]/80 overflow-hidden ml-1">
+          <div className="flex items-center rounded-lg border border-slate-700/80 bg-slate-900/80 overflow-hidden ml-0.5">
             <button
               type="button"
               onClick={() => applyZoom(zoom - 0.3)}
               disabled={zoom <= 1}
-              title="Zoom Out"
-              className="p-1 text-[#cfc7b4] hover:bg-white/10 disabled:opacity-35 cursor-pointer"
+              className="p-1 text-slate-300 hover:bg-white/10 disabled:opacity-35 cursor-pointer"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
-            <span className="px-1.5 text-[10px] font-mono text-[#d4a853]">
+            <span className="px-1.5 text-[10px] font-mono text-cyan-300">
               {Math.round(zoom * 100)}%
             </span>
             <button
               type="button"
               onClick={() => applyZoom(zoom + 0.3)}
               disabled={zoom >= 2.4}
-              title="Zoom In"
-              className="p-1 text-[#cfc7b4] hover:bg-white/10 disabled:opacity-35 cursor-pointer"
+              className="p-1 text-slate-300 hover:bg-white/10 disabled:opacity-35 cursor-pointer"
             >
               <ZoomIn className="w-3.5 h-3.5" />
             </button>
@@ -263,8 +277,7 @@ export function StrategyMap({
               <button
                 type="button"
                 onClick={() => applyZoom(1)}
-                title="Reset View"
-                className="p-1 text-[#cfc7b4] hover:bg-white/10 border-l border-white/10 cursor-pointer"
+                className="p-1 text-slate-300 hover:bg-white/10 border-l border-slate-700 cursor-pointer"
               >
                 <Maximize2 className="w-3 h-3" />
               </button>
@@ -273,821 +286,834 @@ export function StrategyMap({
         </div>
       </div>
 
-      {/* Realistic Topographic SVG Map Viewport */}
-      <div className="relative w-full aspect-[1000/660] rounded-xl overflow-hidden border border-[#d4a853]/30 bg-[#081523] shadow-inner">
-        <svg
-          viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
-          className={`w-full h-full select-none ${
-            zoom > 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : ''
+      {/* 3D Perspective Tabletop Stage */}
+      <div className="relative w-full aspect-[1000/660] rounded-xl overflow-hidden border border-cyan-500/25 bg-[radial-gradient(ellipse_at_center,#0f2947_0%,#071526_70%,#040b16_100%)] shadow-[inset_0_0_50px_rgba(2,6,23,0.9)] map-3d-stage">
+        <div
+          className={`w-full h-full map-3d-surface ${
+            is3D ? 'rounded-xl overflow-hidden ring-1 ring-cyan-400/35 shadow-[0_24px_48px_rgba(2,6,23,0.85)]' : ''
           }`}
-          onWheel={handleWheel}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerLeave={handlePointerUp}
-          role="img"
-          aria-label="Realistic Topographic Map of Three Kingdoms China (214 AD)"
+          style={{
+            transform: is3D
+              ? 'rotateX(20deg) scale(0.95) translateY(-1%)'
+              : 'rotateX(0deg) scale(1)',
+          }}
         >
-          <defs>
-            {/* Deep Ocean Bathymetric Gradient */}
-            <radialGradient id="oceanDepth" cx="78%" cy="55%" r="72%">
-              <stop offset="0%" stopColor="#123047" />
-              <stop offset="48%" stopColor="#0c2236" />
-              <stop offset="100%" stopColor="#071320" />
-            </radialGradient>
+          <svg
+            viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
+            className={`w-full h-full select-none ${
+              zoom > 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : ''
+            }`}
+            onWheel={handleWheel}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerLeave={handlePointerUp}
+            role="img"
+            aria-label="3D Relief Strategic Map of Three Kingdoms China (214 AD)"
+          >
+            <defs>
+              {/* Luminous Modern Sapphire Ocean */}
+              <radialGradient id="modernOcean" cx="76%" cy="52%" r="74%">
+                <stop offset="0%" stopColor="#12456e" />
+                <stop offset="45%" stopColor="#0c2f4f" />
+                <stop offset="100%" stopColor="#06172b" />
+              </radialGradient>
 
-            {/* Physical Atlas Base Terrain Gradient (NW arid highland -> SE lush valleys) */}
-            <linearGradient id="chinaTerrainBase" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#463d2f" />
-              <stop offset="32%" stopColor="#3c3a2d" />
-              <stop offset="65%" stopColor="#2c3a2d" />
-              <stop offset="100%" stopColor="#23372d" />
-            </linearGradient>
+              {/* Modern Physical Relief Land Gradient */}
+              <linearGradient id="modernLandBase" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#3c4648" />
+                <stop offset="32%" stopColor="#2f413f" />
+                <stop offset="68%" stopColor="#213d3a" />
+                <stop offset="100%" stopColor="#193335" />
+              </linearGradient>
 
-            {/* River Water Gradients */}
-            <linearGradient id="yellowRiverGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#869e9e" />
-              <stop offset="50%" stopColor="#94a895" />
-              <stop offset="100%" stopColor="#7ca3b0" />
-            </linearGradient>
-            <linearGradient id="yangtzeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#2f85ad" />
-              <stop offset="50%" stopColor="#3ea2cc" />
-              <stop offset="100%" stopColor="#5cc0e4" />
-            </linearGradient>
+              {/* Vibrant 3D River Water Gradients */}
+              <linearGradient id="yellowRiver3D" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#38bdf8" />
+                <stop offset="45%" stopColor="#5ec2b7" />
+                <stop offset="100%" stopColor="#38bdf8" />
+              </linearGradient>
+              <linearGradient id="yangtze3D" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#0284c7" />
+                <stop offset="50%" stopColor="#38bdf8" />
+                <stop offset="100%" stopColor="#7dd3fc" />
+              </linearGradient>
 
-            {/* Lake Gradient */}
-            <radialGradient id="lakeWater" cx="40%" cy="35%" r="65%">
-              <stop offset="0%" stopColor="#4db6de" />
-              <stop offset="100%" stopColor="#1f6185" />
-            </radialGradient>
+              {/* Glossy 3D Lake Basin */}
+              <radialGradient id="lake3D" cx="35%" cy="30%" r="70%">
+                <stop offset="0%" stopColor="#7dd3fc" />
+                <stop offset="55%" stopColor="#0ea5e9" />
+                <stop offset="100%" stopColor="#0369a1" />
+              </radialGradient>
 
-            {/* Dynamic Faction Territory Influence Gradients */}
-            <radialGradient id="wash-wei" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.34" />
-              <stop offset="60%" stopColor="#2563eb" stopOpacity="0.14" />
-              <stop offset="100%" stopColor="#1d4ed8" stopOpacity="0" />
-            </radialGradient>
-            <radialGradient id="wash-shu" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#10b981" stopOpacity="0.34" />
-              <stop offset="60%" stopColor="#059669" stopOpacity="0.14" />
-              <stop offset="100%" stopColor="#047857" stopOpacity="0" />
-            </radialGradient>
-            <radialGradient id="wash-wu" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.34" />
-              <stop offset="60%" stopColor="#dc2626" stopOpacity="0.14" />
-              <stop offset="100%" stopColor="#b91c1c" stopOpacity="0" />
-            </radialGradient>
+              {/* Dynamic Faction Influence Glows */}
+              <radialGradient id="wash-wei" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.34" />
+                <stop offset="60%" stopColor="#2563eb" stopOpacity="0.14" />
+                <stop offset="100%" stopColor="#1d4ed8" stopOpacity="0" />
+              </radialGradient>
+              <radialGradient id="wash-shu" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#10b981" stopOpacity="0.34" />
+                <stop offset="60%" stopColor="#059669" stopOpacity="0.14" />
+                <stop offset="100%" stopColor="#047857" stopOpacity="0" />
+              </radialGradient>
+              <radialGradient id="wash-wu" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#f43f5e" stopOpacity="0.34" />
+                <stop offset="60%" stopColor="#e11d48" stopOpacity="0.14" />
+                <stop offset="100%" stopColor="#be123c" stopOpacity="0" />
+              </radialGradient>
 
-            {/* Procedural Topographic Hillshade & Relief Micro-Texture */}
-            <filter id="terrainRelief" x="0%" y="0%" width="100%" height="100%">
-              <feTurbulence
-                type="fractalNoise"
-                baseFrequency="0.025 0.036"
-                numOctaves="5"
-                seed="214"
-                result="noise"
-              />
-              <feDiffuseLighting
-                in="noise"
-                lightingColor="#efe1be"
-                surfaceScale="3.8"
-                diffuseConstant="1.08"
-                result="light"
-              >
-                <feDistantLight azimuth="225" elevation="42" />
-              </feDiffuseLighting>
-              <feColorMatrix
-                type="matrix"
-                in="light"
-                values="0.62 0 0 0 0
-                        0 0.58 0 0 0
-                        0 0 0.48 0 0
-                        0 0 0 0.36 0"
-              />
-            </filter>
-
-            {/* Soft Ridge Slope Feathering */}
-            <filter id="ridgeBlur" x="-15%" y="-15%" width="130%" height="130%">
-              <feGaussianBlur stdDeviation="2.6" />
-            </filter>
-
-            {/* Soft Elevation Zone Feathering */}
-            <filter id="zoneBlur" x="-15%" y="-15%" width="130%" height="130%">
-              <feGaussianBlur stdDeviation="16" />
-            </filter>
-
-            {/* Landmass Drop Shadow for Realistic Coastline Shelf */}
-            <filter id="landShadow" x="-10%" y="-10%" width="120%" height="120%">
-              <feDropShadow dx="1.5" dy="2.5" stdDeviation="3.5" floodColor="#030911" floodOpacity="0.7" />
-            </filter>
-
-            {/* City Selection Glow */}
-            <filter id="cityGlow" x="-60%" y="-60%" width="220%" height="220%">
-              <feGaussianBlur stdDeviation="4" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-
-            {/* Circular clip path for miniature hero portraits on map */}
-            <clipPath id="mapHeroPortraitClip" clipPathUnits="objectBoundingBox">
-              <circle cx="0.5" cy="0.5" r="0.5" />
-            </clipPath>
-
-            {/* Clip Path for Natural Earth Landmass */}
-            <clipPath id="chinaLandClip">
-              {LAND_PATHS.map((d, i) => (
-                <path key={`clip-${i}`} d={d} />
-              ))}
-            </clipPath>
-
-            {/* Arrow Markers */}
-            <marker
-              id="arrowAttackReal"
-              viewBox="0 0 10 10"
-              refX="8"
-              refY="5"
-              markerWidth="6.5"
-              markerHeight="6.5"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 1 L 10 5 L 0 9 z" fill="#fb923c" />
-            </marker>
-            <marker
-              id="arrowReinforceReal"
-              viewBox="0 0 10 10"
-              refX="8"
-              refY="5"
-              markerWidth="6.5"
-              markerHeight="6.5"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
-            </marker>
-          </defs>
-
-          <g transform={viewTransform}>
-            {/* 1. Ocean Base */}
-            <rect x="-100" y="-100" width={MAP_WIDTH + 200} height={MAP_HEIGHT + 200} fill="url(#oceanDepth)" />
-
-            {/* Subtle Ocean Bathymetric Contour Halos around Real Coastline */}
-            <g fill="none" strokeLinejoin="round" strokeLinecap="round">
-              {LAND_PATHS.map((d, i) => (
-                <g key={`shelf-${i}`}>
-                  <path d={d} stroke="#1d4c6b" strokeWidth="26" strokeOpacity="0.22" />
-                  <path d={d} stroke="#2a688d" strokeWidth="12" strokeOpacity="0.28" />
-                  <path d={d} stroke="#488cb0" strokeWidth="4" strokeOpacity="0.25" />
-                </g>
-              ))}
-            </g>
-
-            {/* Subtle Cartographic Lat/Lon Graticule over Ocean */}
-            <g stroke="#7dd3fc" strokeOpacity="0.07" strokeWidth="0.8" strokeDasharray="3 5">
-              {GRATICULE_LONS.map((g) => (
-                <line key={g.label} x1={g.x} y1={0} x2={g.x} y2={MAP_HEIGHT} />
-              ))}
-              {GRATICULE_LATS.map((g) => (
-                <line key={g.label} x1={0} y1={g.y} x2={MAP_WIDTH} y2={g.y} />
-              ))}
-            </g>
-
-            {/* 2. Real Natural Earth 1:50m Landmass Base */}
-            <g filter="url(#landShadow)">
-              {LAND_PATHS.map((d, i) => (
-                <path
-                  key={`land-${i}`}
-                  d={d}
-                  fill="url(#chinaTerrainBase)"
-                  stroke="#928362"
-                  strokeOpacity="0.55"
-                  strokeWidth="1.2"
+              {/* Crisp 3D Terrain Micro-Hillshade */}
+              <filter id="terrainRelief3D" x="0%" y="0%" width="100%" height="100%">
+                <feTurbulence
+                  type="fractalNoise"
+                  baseFrequency="0.024 0.036"
+                  numOctaves="5"
+                  seed="214"
+                  result="noise"
                 />
-              ))}
-            </g>
+                <feDiffuseLighting
+                  in="noise"
+                  lightingColor="#e2f1ff"
+                  surfaceScale="4.2"
+                  diffuseConstant="1.15"
+                  result="light"
+                >
+                  <feDistantLight azimuth="225" elevation="40" />
+                </feDiffuseLighting>
+                <feColorMatrix
+                  type="matrix"
+                  in="light"
+                  values="0.58 0 0 0 0
+                          0 0.62 0 0 0
+                          0 0 0.65 0 0
+                          0 0 0 0.34 0"
+                />
+              </filter>
 
-            {/* 3. Clipped Topographic Layers (Hypsometric Elevation + Relief Hillshade + Dynamic Faction Realms) */}
-            <g clipPath="url(#chinaLandClip)">
-              {/* Hypsometric Physical Relief Zones */}
-              <g filter="url(#zoneBlur)">
-                {ELEVATION_ZONES.map((zone) => {
-                  const st = ELEVATION_STYLE[zone.kind];
-                  return (
-                    <path
-                      key={zone.id}
-                      d={zone.d}
-                      fill={st.fill}
-                      fillOpacity={st.opacity}
-                    />
-                  );
-                })}
+              <filter id="zoneBlur3D" x="-15%" y="-15%" width="130%" height="130%">
+                <feGaussianBlur stdDeviation="16" />
+              </filter>
+              <filter id="ridgeBlur3D" x="-15%" y="-15%" width="130%" height="130%">
+                <feGaussianBlur stdDeviation="2.4" />
+              </filter>
+              <filter id="cityGlow3D" x="-60%" y="-60%" width="220%" height="220%">
+                <feGaussianBlur stdDeviation="4.5" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+
+              {/* Circular Hero Portrait Clip */}
+              <clipPath id="mapHeroPortraitClip" clipPathUnits="objectBoundingBox">
+                <circle cx="0.5" cy="0.5" r="0.5" />
+              </clipPath>
+
+              {/* Natural Earth Landmass Clip */}
+              <clipPath id="chinaLandClip3D">
+                {LAND_PATHS.map((d, i) => (
+                  <path key={`clip3d-${i}`} d={d} />
+                ))}
+              </clipPath>
+
+              <marker
+                id="arrowAttack3D"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="6.5"
+                markerHeight="6.5"
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#fb923c" />
+              </marker>
+              <marker
+                id="arrowReinforce3D"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="6.5"
+                markerHeight="6.5"
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+              </marker>
+            </defs>
+
+            <g transform={viewTransform}>
+              {/* 1. Luminous Deep Ocean */}
+              <rect
+                x="-120"
+                y="-120"
+                width={MAP_WIDTH + 240}
+                height={MAP_HEIGHT + 240}
+                fill="url(#modernOcean)"
+              />
+
+              {/* Continental Shelf Bathymetric Rings */}
+              <g fill="none" strokeLinejoin="round" strokeLinecap="round">
+                {LAND_PATHS.map((d, i) => (
+                  <g key={`shelf3d-${i}`}>
+                    <path d={d} stroke="#0ea5e9" strokeWidth="34" strokeOpacity="0.1" />
+                    <path d={d} stroke="#38bdf8" strokeWidth="16" strokeOpacity="0.18" />
+                    <path d={d} stroke="#7dd3fc" strokeWidth="5.5" strokeOpacity="0.26" />
+                  </g>
+                ))}
               </g>
 
-              {/* Procedural Physical Hillshade Texture */}
-              <rect
-                x="0"
-                y="0"
-                width={MAP_WIDTH}
-                height={MAP_HEIGHT}
-                filter="url(#terrainRelief)"
-                style={{ mixBlendMode: 'overlay' }}
-              />
+              {/* Subtle Holographic Lat/Lon Grid over Ocean */}
+              <g stroke="#38bdf8" strokeOpacity="0.09" strokeWidth="0.8" strokeDasharray="3 6">
+                {GRATICULE_LONS.map((g) => (
+                  <line key={g.label} x1={g.x} y1={0} x2={g.x} y2={MAP_HEIGHT} />
+                ))}
+                {GRATICULE_LATS.map((g) => (
+                  <line key={g.label} x1={0} y1={g.y} x2={MAP_WIDTH} y2={g.y} />
+                ))}
+              </g>
 
-              {/* Dynamic Faction Territorial Control Influence Wash */}
-              {showTerritory && (
-                <g>
-                  {cities
-                    .filter((c) => c.owner !== 'neutral')
-                    .map((city) => (
-                      <circle
-                        key={`wash-${city.id}`}
-                        cx={city.x}
-                        cy={city.y}
-                        r={city.isCapital ? 132 : 108}
-                        fill={`url(#wash-${city.owner})`}
+              {/* 2. 3D CONTINENTAL EXTRUSION (Raised Tabletop Bedrock Cliff Walls!) */}
+              <g pointerEvents="none">
+                {/* Deep Cast Ocean Shadow */}
+                <g transform="translate(5, 13)">
+                  {LAND_PATHS.map((d, i) => (
+                    <path key={`cast-${i}`} d={d} fill="#020610" fillOpacity="0.65" />
+                  ))}
+                </g>
+                {/* Lower Basalt Cliff Layer */}
+                <g transform="translate(0, 8.5)">
+                  {LAND_PATHS.map((d, i) => (
+                    <path key={`cliff2-${i}`} d={d} fill="#0f1e2e" stroke="#08111c" strokeWidth="1" />
+                  ))}
+                </g>
+                {/* Upper Coastal Cliff Wall */}
+                <g transform="translate(0, 4.5)">
+                  {LAND_PATHS.map((d, i) => (
+                    <path key={`cliff1-${i}`} d={d} fill="#1f3142" stroke="#132231" strokeWidth="1" />
+                  ))}
+                </g>
+              </g>
+
+              {/* 3. Main Raised Continental Surface */}
+              <g>
+                {LAND_PATHS.map((d, i) => (
+                  <path
+                    key={`land3d-${i}`}
+                    d={d}
+                    fill="url(#modernLandBase)"
+                    stroke="#67e8f9"
+                    strokeOpacity="0.32"
+                    strokeWidth="1.2"
+                  />
+                ))}
+              </g>
+
+              {/* 4. Clipped 3D Physical Relief, Elevation Zones, Mountains, Rivers & Lakes */}
+              <g clipPath="url(#chinaLandClip3D)">
+                {/* Hypsometric Elevation Biomes */}
+                <g filter="url(#zoneBlur3D)">
+                  {ELEVATION_ZONES.map((zone) => {
+                    const st = ELEVATION_STYLE[zone.kind];
+                    return (
+                      <path
+                        key={zone.id}
+                        d={zone.d}
+                        fill={st.fill}
+                        fillOpacity={st.opacity}
                       />
-                    ))}
+                    );
+                  })}
+                </g>
+
+                {/* Procedural Physical Hillshade Texture */}
+                <rect
+                  x="0"
+                  y="0"
+                  width={MAP_WIDTH}
+                  height={MAP_HEIGHT}
+                  filter="url(#terrainRelief3D)"
+                  style={{ mixBlendMode: 'overlay' }}
+                />
+
+                {/* Dynamic Kingdom Territory Glow Wash */}
+                {showTerritory && (
+                  <g>
+                    {cities
+                      .filter((c) => c.owner !== 'neutral')
+                      .map((city) => (
+                        <circle
+                          key={`wash3d-${city.id}`}
+                          cx={city.x}
+                          cy={city.y}
+                          r={city.isCapital ? 135 : 110}
+                          fill={`url(#wash-${city.owner})`}
+                        />
+                      ))}
+                  </g>
+                )}
+
+                {/* Topographic Contour Lines */}
+                <g fill="none" stroke="#94a3b8" strokeOpacity="0.16" strokeWidth="0.9" pointerEvents="none">
+                  {CONTOUR_PATHS.map((d, idx) => (
+                    <path key={`c3d-${idx}`} d={d} />
+                  ))}
+                </g>
+
+                {/* 3D Extruded Mountain Ridgelines with Deep SE Cast Shadows */}
+                <g pointerEvents="none">
+                  {MOUNTAIN_RIDGES.map((ridge) => (
+                    <g key={ridge.id}>
+                      {/* Deep cast valley shadow */}
+                      <g transform="translate(3.5, 4.5)" filter="url(#ridgeBlur3D)">
+                        <path d={ridge.darkPath} fill="#040812" fillOpacity="0.48" />
+                      </g>
+                      {/* Sunlit NW & Shadowed SE Mountain Slopes */}
+                      <g filter="url(#ridgeBlur3D)">
+                        <path
+                          d={ridge.litPath}
+                          fill={ridge.alpine ? '#cbd5e1' : '#809190'}
+                          fillOpacity={ridge.alpine ? 0.58 : 0.42}
+                        />
+                        <path
+                          d={ridge.darkPath}
+                          fill={ridge.alpine ? '#1e293b' : '#131d26'}
+                          fillOpacity={ridge.alpine ? 0.72 : 0.62}
+                        />
+                      </g>
+                      {/* Sculpted Spur Ribs */}
+                      <g fill="none" strokeLinecap="round">
+                        {ridge.spurs.map((sp, sIdx) => (
+                          <path
+                            key={`${ridge.id}-sp3d-${sIdx}`}
+                            d={sp.d}
+                            stroke={
+                              sp.side === 'lit'
+                                ? ridge.alpine
+                                  ? '#f1f5f9'
+                                  : '#94a3b8'
+                                : '#0b121c'
+                            }
+                            strokeOpacity={sp.side === 'lit' ? 0.44 : 0.48}
+                            strokeWidth={ridge.alpine ? 1.65 : 1.25}
+                          />
+                        ))}
+                      </g>
+                      {/* Bright Alpine Snow / Ridge Crest */}
+                      <path
+                        d={ridge.crestPath}
+                        fill="none"
+                        stroke={ridge.alpine ? '#f8fafc' : '#cbd5e1'}
+                        strokeOpacity={ridge.alpine ? 0.78 : 0.42}
+                        strokeWidth={ridge.alpine ? 2.1 : 1.3}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </g>
+                  ))}
+                </g>
+
+                {/* 5. 3D CARVED ANIMATED RIVER NETWORK */}
+                <g fill="none" strokeLinecap="round" strokeLinejoin="round" pointerEvents="none">
+                  {RIVER_FEATURES.map((river) => {
+                    const isYellow =
+                      river.id.includes('yellow') ||
+                      river.id === 'wei-river' ||
+                      river.id === 'fen-river';
+                    return (
+                      <g key={river.id}>
+                        {/* Recessed 3D Riverbed Canyon Wall (North Shadow) */}
+                        <path
+                          d={river.d}
+                          transform="translate(0, -1)"
+                          stroke="#040c18"
+                          strokeOpacity="0.72"
+                          strokeWidth={river.width + 3.2}
+                        />
+                        {/* Sunlit South Bank Rim Bevel */}
+                        <path
+                          d={river.d}
+                          transform="translate(0, 1.4)"
+                          stroke="#67e8f9"
+                          strokeOpacity="0.22"
+                          strokeWidth={river.width + 1.4}
+                        />
+                        {/* Main Vibrant Water Channel */}
+                        <path
+                          d={river.d}
+                          stroke={isYellow ? 'url(#yellowRiver3D)' : 'url(#yangtze3D)'}
+                          strokeOpacity="0.92"
+                          strokeWidth={river.width}
+                        />
+                        {/* Animated Flowing Current Shimmer */}
+                        <path
+                          d={river.d}
+                          stroke={isYellow ? '#fef3c7' : '#e0f2fe'}
+                          strokeOpacity="0.52"
+                          strokeWidth={Math.max(0.9, river.width * 0.34)}
+                          strokeDasharray="6 12"
+                          className="animate-river-flow"
+                        />
+                      </g>
+                    );
+                  })}
+                </g>
+
+                {/* 6. 3D Recessed Natural Lakes with Water Glint */}
+                <g pointerEvents="none">
+                  {LAKE_FEATURES.map((lake) => (
+                    <g key={lake.id}>
+                      <path
+                        d={lake.d}
+                        transform="translate(0, -1.2)"
+                        fill="#040c18"
+                        fillOpacity="0.6"
+                      />
+                      <path
+                        d={lake.d}
+                        fill="url(#lake3D)"
+                        fillOpacity="0.9"
+                        stroke="#bae6fd"
+                        strokeOpacity="0.55"
+                        strokeWidth="1.1"
+                      />
+                    </g>
+                  ))}
+                </g>
+              </g>
+
+              {/* Crisp Luminous Coastline Highlight */}
+              <g fill="none" pointerEvents="none">
+                {LAND_PATHS.map((d, i) => (
+                  <path
+                    key={`rim3d-${i}`}
+                    d={d}
+                    stroke="#bae6fd"
+                    strokeOpacity="0.38"
+                    strokeWidth="1.1"
+                  />
+                ))}
+              </g>
+
+              {/* 7. Geographic Labels */}
+              {showGeoLabels && (
+                <g pointerEvents="none">
+                  {GEO_LABELS.map((lbl, i) => {
+                    const styleByKind = {
+                      sea: { fill: '#7dd3fc', opacity: 0.48, size: lang === 'zh' ? 13 : 10, ls: '2.5' },
+                      region: { fill: '#e2e8f0', opacity: 0.24, size: lang === 'zh' ? 14 : 11, ls: '2' },
+                      mountain: { fill: '#cbd5e1', opacity: 0.54, size: lang === 'zh' ? 10.5 : 9, ls: '1' },
+                      river: { fill: '#bae6fd', opacity: 0.72, size: lang === 'zh' ? 10 : 8.5, ls: '1' },
+                    }[lbl.kind];
+
+                    return (
+                      <text
+                        key={`glbl3d-${i}`}
+                        x={lbl.x}
+                        y={lbl.y}
+                        textAnchor="middle"
+                        fill={styleByKind.fill}
+                        fillOpacity={styleByKind.opacity}
+                        fontSize={styleByKind.size}
+                        letterSpacing={styleByKind.ls}
+                        fontStyle={lbl.kind === 'sea' || lbl.kind === 'river' ? 'italic' : 'normal'}
+                        className="font-seal"
+                      >
+                        {tLoc(lbl.text, lang)}
+                      </text>
+                    );
+                  })}
                 </g>
               )}
 
-              {/* Subtle Inner Land Graticule */}
-              <g stroke="#e6d6ae" strokeOpacity="0.06" strokeWidth="0.6">
-                {GRATICULE_LONS.map((g) => (
-                  <line key={`l-${g.label}`} x1={g.x} y1={0} x2={g.x} y2={MAP_HEIGHT} />
-                ))}
-                {GRATICULE_LATS.map((g) => (
-                  <line key={`la-${g.label}`} x1={0} y1={g.y} x2={MAP_WIDTH} y2={g.y} />
-                ))}
-              </g>
-
-              {/* Subtle Topographic Elevation Contour Lines */}
-              <g fill="none" stroke="#d9c69e" strokeOpacity="0.14" strokeWidth="0.9" pointerEvents="none">
-                {CONTOUR_PATHS.map((d, idx) => (
-                  <path key={`contour-${idx}`} d={d} />
-                ))}
-              </g>
-
-              {/* 4. Connected 3D Shaded Mountain Ridgelines (Organic Physical Relief) */}
-              <g pointerEvents="none">
-                {MOUNTAIN_RIDGES.map((ridge) => (
-                  <g key={ridge.id}>
-                    {/* Softly feathered sunlit NW flank & shadowed SE flank */}
-                    <g filter="url(#ridgeBlur)">
-                      <path
-                        d={ridge.litPath}
-                        fill={ridge.alpine ? '#b8a88d' : '#857456'}
-                        fillOpacity={ridge.alpine ? 0.56 : 0.42}
-                      />
-                      <path
-                        d={ridge.darkPath}
-                        fill={ridge.alpine ? '#211c17' : '#1b1a15'}
-                        fillOpacity={ridge.alpine ? 0.65 : 0.56}
-                      />
-                    </g>
-
-                    {/* Branching Mountain Spur Hachures */}
-                    <g fill="none" strokeLinecap="round">
-                      {ridge.spurs.map((sp, sIdx) => (
-                        <path
-                          key={`${ridge.id}-sp-${sIdx}`}
-                          d={sp.d}
-                          stroke={
-                            sp.side === 'lit'
-                              ? ridge.alpine
-                                ? '#d9ccb2'
-                                : '#a69370'
-                              : '#171612'
-                          }
-                          strokeOpacity={sp.side === 'lit' ? 0.36 : 0.44}
-                          strokeWidth={ridge.alpine ? 1.5 : 1.15}
-                        />
-                      ))}
-                    </g>
-
-                    {/* Crisp Jagged Ridge Crest Highlight */}
-                    <path
-                      d={ridge.crestPath}
-                      fill="none"
-                      stroke={ridge.alpine ? '#ece5d3' : '#bfa982'}
-                      strokeOpacity={ridge.alpine ? 0.62 : 0.36}
-                      strokeWidth={ridge.alpine ? 1.6 : 1.15}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </g>
-                ))}
-              </g>
-
-              {/* 5. Authentic River Network (Bank Shadow + Channel + Specular Shimmer) */}
-              <g fill="none" strokeLinecap="round" strokeLinejoin="round" pointerEvents="none">
-                {RIVER_FEATURES.map((river) => {
-                  const isYellow = river.id.includes('yellow') || river.id === 'wei-river' || river.id === 'fen-river';
+              {/* 8. Curved Elevated Campaign Supply Routes */}
+              <g fill="none" strokeLinecap="round">
+                {edges.map(({ a, b, isAdjacentToSelected, isRiverRoute }) => {
+                  const d = curvedRoadPath(a, b);
                   return (
-                    <g key={river.id}>
-                      {/* River Valley Bank Shadow */}
+                    <g key={`road3d-${a.id}-${b.id}`}>
                       <path
-                        d={river.d}
-                        stroke="#0a1622"
-                        strokeOpacity="0.55"
-                        strokeWidth={river.width + 2.4}
+                        d={d}
+                        stroke="#020617"
+                        strokeOpacity={isAdjacentToSelected ? 0.75 : 0.45}
+                        strokeWidth={isAdjacentToSelected ? 4.6 : 2.8}
                       />
-                      {/* Main Water Course */}
                       <path
-                        d={river.d}
-                        stroke={isYellow ? 'url(#yellowRiverGrad)' : 'url(#yangtzeGrad)'}
-                        strokeOpacity={isYellow ? 0.82 : 0.88}
-                        strokeWidth={river.width}
-                      />
-                      {/* Center Water Glint */}
-                      <path
-                        d={river.d}
-                        stroke={isYellow ? '#d4d0b2' : '#bae6fd'}
-                        strokeOpacity="0.32"
-                        strokeWidth={Math.max(0.7, river.width * 0.28)}
+                        d={d}
+                        stroke={
+                          isAdjacentToSelected
+                            ? '#38bdf8'
+                            : isRiverRoute
+                              ? '#7dd3fc'
+                              : '#cbd5e1'
+                        }
+                        strokeOpacity={isAdjacentToSelected ? 0.95 : 0.36}
+                        strokeWidth={isAdjacentToSelected ? 2.2 : 1.25}
+                        strokeDasharray={isAdjacentToSelected ? '7 4' : '4 5'}
                       />
                     </g>
                   );
                 })}
               </g>
 
-              {/* 6. Major Natural Lakes */}
-              <g pointerEvents="none">
-                {LAKE_FEATURES.map((lake) => (
-                  <path
-                    key={lake.id}
-                    d={lake.d}
-                    fill="url(#lakeWater)"
-                    fillOpacity="0.82"
-                    stroke="#93c5fd"
-                    strokeOpacity="0.4"
-                    strokeWidth="0.9"
-                  />
-                ))}
-              </g>
-            </g>
-
-            {/* Crisp Coastline Rim Overlay */}
-            <g fill="none" pointerEvents="none">
-              {LAND_PATHS.map((d, i) => (
-                <path
-                  key={`coast-${i}`}
-                  d={d}
-                  stroke="#c9b485"
-                  strokeOpacity="0.45"
-                  strokeWidth="0.95"
-                />
-              ))}
-            </g>
-
-            {/* 7. Geographic Place Labels (Seas, Rivers, Mountains, Basins) */}
-            {showGeoLabels && (
-              <g pointerEvents="none">
-                {GEO_LABELS.map((lbl, i) => {
-                  const styleByKind = {
-                    sea: {
-                      fill: '#7dd3fc',
-                      opacity: 0.42,
-                      size: lang === 'zh' ? 13 : 10,
-                      letterSpacing: '2.5',
-                    },
-                    region: {
-                      fill: '#ebe0c5',
-                      opacity: 0.24,
-                      size: lang === 'zh' ? 14 : 11,
-                      letterSpacing: '2',
-                    },
-                    mountain: {
-                      fill: '#d6c39c',
-                      opacity: 0.52,
-                      size: lang === 'zh' ? 10.5 : 9,
-                      letterSpacing: '1',
-                    },
-                    river: {
-                      fill: '#bae6fd',
-                      opacity: 0.62,
-                      size: lang === 'zh' ? 10 : 8.5,
-                      letterSpacing: '1',
-                    },
-                  }[lbl.kind];
-
+              {/* 9. Animated Campaign March Arcs */}
+              <g fill="none">
+                {state.recentMarches.slice(0, 3).map((march) => {
+                  const from = state.cities[march.fromCityId];
+                  const to = state.cities[march.toCityId];
+                  if (!from || !to) return null;
+                  const dx = to.x - from.x;
+                  const dy = to.y - from.y;
+                  const dist = Math.hypot(dx, dy) || 1;
+                  const pad = 24;
+                  const sx = from.x + (dx / dist) * pad;
+                  const sy = from.y + (dy / dist) * pad;
+                  const ex = to.x - (dx / dist) * pad;
+                  const ey = to.y - (dy / dist) * pad;
+                  const mx = (sx + ex) / 2 - (dy / dist) * 16;
+                  const my = (sy + ey) / 2 + (dx / dist) * 16;
                   return (
-                    <text
-                      key={`glbl-${i}`}
-                      x={lbl.x}
-                      y={lbl.y}
-                      textAnchor="middle"
-                      fill={styleByKind.fill}
-                      fillOpacity={styleByKind.opacity}
-                      fontSize={styleByKind.size}
-                      letterSpacing={styleByKind.letterSpacing}
-                      fontStyle={lbl.kind === 'sea' || lbl.kind === 'river' ? 'italic' : 'normal'}
-                      className="font-seal"
-                    >
-                      {tLoc(lbl.text, lang)}
-                    </text>
-                  );
-                })}
-              </g>
-            )}
-
-            {/* 8. Curved Historical Campaign Roads & River Shipping Routes */}
-            <g fill="none" strokeLinecap="round">
-              {edges.map(({ a, b, isAdjacentToSelected, isRiverRoute }) => {
-                const d = curvedRoadPath(a, b);
-                return (
-                  <g key={`road-${a.id}-${b.id}`}>
-                    {/* Road Shadow Casing */}
                     <path
-                      d={d}
-                      stroke="#0a0e14"
-                      strokeOpacity={isAdjacentToSelected ? 0.72 : 0.42}
-                      strokeWidth={isAdjacentToSelected ? 4.4 : 2.8}
-                    />
-                    {/* Track Line */}
-                    <path
-                      d={d}
-                      stroke={
-                        isAdjacentToSelected
-                          ? '#f0c665'
-                          : isRiverRoute
-                            ? '#7dd3fc'
-                            : '#b8a27a'
+                      key={march.id}
+                      d={`M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}`}
+                      stroke={march.type === 'attack' ? '#fb923c' : '#38bdf8'}
+                      strokeWidth="3.2"
+                      strokeDasharray="7 5"
+                      className="animate-march-line"
+                      markerEnd={
+                        march.type === 'attack'
+                          ? 'url(#arrowAttack3D)'
+                          : 'url(#arrowReinforce3D)'
                       }
-                      strokeOpacity={isAdjacentToSelected ? 0.92 : 0.48}
-                      strokeWidth={isAdjacentToSelected ? 2.1 : 1.3}
-                      strokeDasharray={isAdjacentToSelected ? '6 4' : '4 4'}
                     />
-                  </g>
-                );
-              })}
-            </g>
+                  );
+                })}
+              </g>
 
-            {/* 9. Animated Recent Campaign March Arrows */}
-            <g fill="none">
-              {state.recentMarches.slice(0, 3).map((march) => {
-                const from = state.cities[march.fromCityId];
-                const to = state.cities[march.toCityId];
-                if (!from || !to) return null;
-                const dx = to.x - from.x;
-                const dy = to.y - from.y;
-                const dist = Math.hypot(dx, dy) || 1;
-                const pad = 22;
-                const sx = from.x + (dx / dist) * pad;
-                const sy = from.y + (dy / dist) * pad;
-                const ex = to.x - (dx / dist) * pad;
-                const ey = to.y - (dy / dist) * pad;
-                const mx = (sx + ex) / 2 - (dy / dist) * 14;
-                const my = (sy + ey) / 2 + (dx / dist) * 14;
+              {/* 10. 3D ISOMETRIC CHINESE CITADELS & IMPERIAL PALACE CITIES */}
+              {cities.map((city) => {
+                const palette = FACTION_PALETTE[city.owner];
+                const isSelected = city.id === selectedCityId;
+                const isHovered = city.id === hoveredCityId;
+                const isAdjacent = Boolean(selectedCity?.neighbors.includes(city.id));
+                const generals = getCityGenerals(state, city.id);
+                const wanderingHere = getCityWanderingHeroes(state, city.id);
+
                 return (
-                  <path
-                    key={march.id}
-                    d={`M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}`}
-                    stroke={march.type === 'attack' ? '#fb923c' : '#38bdf8'}
-                    strokeWidth="3"
-                    strokeDasharray="7 5"
-                    className="animate-march-line"
-                    markerEnd={
-                      march.type === 'attack'
-                        ? 'url(#arrowAttackReal)'
-                        : 'url(#arrowReinforceReal)'
-                    }
-                  />
-                );
-              })}
-            </g>
-
-            {/* 10. Realistic Fortified Chinese Citadel / Capital City Markers */}
-            {cities.map((city) => {
-              const palette = FACTION_PALETTE[city.owner];
-              const isSelected = city.id === selectedCityId;
-              const isHovered = city.id === hoveredCityId;
-              const isAdjacent = Boolean(selectedCity?.neighbors.includes(city.id));
-              const generals = getCityGenerals(state, city.id);
-              const wanderingHere = getCityWanderingHeroes(state, city.id);
-
-              return (
-                <g
-                  key={city.id}
-                  transform={`translate(${city.x}, ${city.y})`}
-                  onClick={() => {
-                    if (!dragStart.current.moved) onSelectCity(city.id);
-                  }}
-                  onMouseEnter={() => setHoveredCityId(city.id)}
-                  onMouseLeave={() => setHoveredCityId((prev) => (prev === city.id ? null : prev))}
-                  className="cursor-pointer"
-                >
-                  {/* Selection / Target Pulse Halo */}
-                  {isSelected && (
-                    <circle
-                      r="27"
-                      fill="none"
-                      stroke="#f7e7be"
-                      strokeWidth="2.2"
-                      className="animate-city-ring"
-                    />
-                  )}
-                  {!isSelected && isAdjacent && (
-                    <circle
-                      r="23"
-                      fill="none"
-                      stroke={city.owner === state.playerFaction ? '#38bdf8' : '#fb923c'}
-                      strokeWidth="1.9"
-                      strokeDasharray="4 3"
-                      strokeOpacity="0.88"
-                    />
-                  )}
-
-                  {/* Ground Contact Shadow */}
-                  <ellipse cx="0" cy="8" rx="18" ry="8" fill="#06090e" fillOpacity="0.65" />
-
-                  {/* Citadel Base Plate */}
                   <g
-                    transform={isHovered || isSelected ? 'scale(1.08)' : 'scale(1)'}
-                    style={{ transition: 'transform 160ms ease' }}
-                    filter={isSelected ? 'url(#cityGlow)' : undefined}
+                    key={city.id}
+                    transform={`translate(${city.x}, ${city.y})`}
+                    onClick={() => {
+                      if (!dragStart.current.moved) onSelectCity(city.id);
+                    }}
+                    onMouseEnter={() => setHoveredCityId(city.id)}
+                    onMouseLeave={() => setHoveredCityId((prev) => (prev === city.id ? null : prev))}
+                    className="cursor-pointer"
                   >
-                    {/* Outer Walled Rampart Ring */}
-                    <circle
-                      r={city.isCapital ? 17.5 : 14.5}
-                      fill="#121720"
-                      stroke={isSelected ? '#f7e7be' : palette.fill}
-                      strokeWidth={isSelected ? 2.8 : 2.3}
-                    />
-                    <circle
-                      r={city.isCapital ? 13.5 : 11}
-                      fill={palette.fill}
-                      fillOpacity="0.9"
-                    />
-
-                    {/* Fortified Gatehouse / Imperial Pagoda Roof Silhouette */}
-                    {city.isCapital ? (
-                      <g fill="#fdf6e3" stroke="#1e293b" strokeWidth="0.6">
-                        {/* Upper eaves */}
-                        <path d="M -8 -3 Q 0 -10 8 -3 L 5 -1 L -5 -1 Z" />
-                        {/* Lower eaves */}
-                        <path d="M -10 2 Q 0 -4 10 2 L 7 4 L -7 4 Z" />
-                        {/* Citadel stone wall base */}
-                        <rect x="-7" y="4" width="14" height="5" rx="0.8" />
-                        <rect x="-2" y="5.8" width="4" height="3.2" fill="#1e293b" />
-                      </g>
-                    ) : (
-                      <g fill="#f8f2e2" stroke="#1e293b" strokeWidth="0.5">
-                        {/* Battlement crenellations */}
-                        <path d="M -7 -1 L -7 -4 L -4 -4 L -4 -2 L -1.5 -2 L -1.5 -4 L 1.5 -4 L 1.5 -2 L 4 -2 L 4 -4 L 7 -4 L 7 -1 Z" />
-                        {/* Fortress wall body */}
-                        <rect x="-7" y="-1" width="14" height="7" rx="0.8" />
-                        {/* Arched gate */}
-                        <path d="M -2.2 6 L -2.2 2.2 A 2.2 2.2 0 0 1 2.2 2.2 L 2.2 6 Z" fill="#1e293b" />
-                      </g>
+                    {/* Glowing Ground Tactical Ring */}
+                    {isSelected && (
+                      <ellipse
+                        cx="0"
+                        cy="6"
+                        rx="30"
+                        ry="17"
+                        fill="none"
+                        stroke="#38bdf8"
+                        strokeWidth="2.4"
+                        className="animate-city-ring"
+                      />
+                    )}
+                    {!isSelected && isAdjacent && (
+                      <ellipse
+                        cx="0"
+                        cy="6"
+                        rx="26"
+                        ry="15"
+                        fill="none"
+                        stroke={city.owner === state.playerFaction ? '#38bdf8' : '#fb923c'}
+                        strokeWidth="2"
+                        strokeDasharray="5 3"
+                        strokeOpacity="0.9"
+                      />
                     )}
 
-                    {/* Faction Pennant Flag */}
-                    <g transform={`translate(${city.isCapital ? 13 : 11}, ${city.isCapital ? -15 : -13})`}>
-                      <line x1="0" y1="0" x2="0" y2="14" stroke="#e2d4b0" strokeWidth="1.2" />
-                      <path
-                        d="M 0 0 L 12 2.5 L 9.5 5.5 L 12 8.5 L 0 9.5 Z"
-                        fill={palette.fill}
-                        stroke={palette.stroke}
-                        strokeWidth="0.6"
-                      />
-                      <text
-                        x="5.2"
-                        y="7.2"
-                        textAnchor="middle"
-                        fill="#ffffff"
-                        fontSize="6.8"
-                        fontWeight="800"
-                        className="font-seal pointer-events-none"
-                      >
-                        {palette.badge}
-                      </text>
-                    </g>
+                    {/* Ambient Cast Ground Shadow */}
+                    <ellipse cx="4" cy="9" rx={city.isCapital ? 24 : 20} ry={city.isCapital ? 12 : 10} fill="#020617" fillOpacity="0.68" />
 
-                    {/* Stationed Hero Painted Portrait Medallions (up to 2 around top-left/left) */}
-                    {generals.slice(0, 2).map((gen, gIdx) => {
-                      const gx = gIdx === 0 ? -18 : -24;
-                      const gy = gIdx === 0 ? -14 : 4;
-                      return (
+                    {/* 3D Isometric Fortress / Palace Model */}
+                    <g
+                      transform={isHovered || isSelected ? 'translate(0, -3) scale(1.09)' : 'translate(0, 0) scale(1)'}
+                      style={{ transition: 'transform 180ms ease' }}
+                      filter={isSelected ? 'url(#cityGlow3D)' : undefined}
+                    >
+                      {/* 3D Stepped Isometric Stone Plinth */}
+                      <polygon
+                        points="-18,4 0,13 18,4 0,-5"
+                        fill="#334155"
+                        stroke={palette.stroke}
+                        strokeOpacity="0.55"
+                        strokeWidth="0.9"
+                      />
+                      {/* Left Sunlit Plinth Wall */}
+                      <polygon points="-18,4 0,13 0,18 -18,9" fill="#64748b" />
+                      {/* Right Shadowed Plinth Wall */}
+                      <polygon points="0,13 18,4 18,9 0,18" fill="#1e293b" />
+
+                      {/* Main Fortress Inner Wall Box (3D Extruded) */}
+                      {/* Left sunlit wall */}
+                      <polygon points="-13,1 0,8 0,-2 -13,-9" fill="#cbd5e1" />
+                      {/* Right shadowed wall */}
+                      <polygon points="0,8 13,1 13,-9 0,-2" fill="#475569" />
+                      {/* Top courtyard floor */}
+                      <polygon points="-13,-9 0,-2 13,-9 0,-16" fill="#94a3b8" />
+                      {/* Arched dark city gate on left sunlit face */}
+                      <path d="M -8.5 3.2 L -8.5 -0.8 Q -6.2 -2.2 -4 0.5 L -4 5.5 Z" fill="#0f172a" />
+
+                      {/* Extra 3D Corner Watchtowers for High-Defense Fortresses (Def >= 4) */}
+                      {city.defense >= 4 && (
+                        <g>
+                          <polygon points="-17,-4 -13,-2 -13,-11 -17,-13" fill="#e2e8f0" />
+                          <polygon points="-13,-2 -10,-4 -10,-13 -13,-11" fill="#475569" />
+                          <polygon points="-18,-12 -13.5,-16.5 -9,-12 -13.5,-10" fill={palette.roofLight} />
+                          <polygon points="10,-4 13,-2 13,-11 10,-13" fill="#cbd5e1" />
+                          <polygon points="13,-2 17,-4 17,-13 13,-11" fill="#334155" />
+                          <polygon points="9,-12 13.5,-16.5 18,-12 13.5,-10" fill={palette.roofDark} />
+                        </g>
+                      )}
+
+                      {/* 3D Glazed Sloped Pagoda Roofs (Tiered Imperial Palace for Capitals!) */}
+                      {city.isCapital ? (
+                        <g>
+                          {/* Lower Palace Tier Roof */}
+                          <polygon points="-16,-8 0,0 0,-12 -15,-14" fill={palette.roofLight} stroke="#f8fafc" strokeOpacity="0.35" strokeWidth="0.5" />
+                          <polygon points="0,0 16,-8 15,-14 0,-12" fill={palette.roofDark} />
+                          {/* Upper Imperial Pagoda Body */}
+                          <polygon points="-8,-13 0,-9 0,-17 -8,-21" fill="#f1f5f9" />
+                          <polygon points="0,-9 8,-13 8,-21 0,-17" fill="#64748b" />
+                          {/* Upper Swept Golden-Trimmed Eaves */}
+                          <polygon points="-12,-19 0,-13 0,-26" fill={palette.roofLight} stroke="#fef08a" strokeWidth="0.7" />
+                          <polygon points="0,-13 12,-19 0,-26" fill={palette.roofDark} stroke="#fef08a" strokeOpacity="0.6" strokeWidth="0.6" />
+                          {/* Golden Imperial Spire */}
+                          <circle cx="0" cy="-27" r="2.2" fill="#facc15" />
+                        </g>
+                      ) : (
+                        <g>
+                          {/* Citadel Gatehouse Swept Roof */}
+                          <polygon points="-15,-9 0,-2 0,-17" fill={palette.roofLight} stroke="#f8fafc" strokeOpacity="0.4" strokeWidth="0.6" />
+                          <polygon points="0,-2 15,-9 0,-17" fill={palette.roofDark} />
+                          <line x1="-5" y1="-13.5" x2="5" y2="-13.5" stroke="#fef08a" strokeWidth="1.2" strokeLinecap="round" />
+                        </g>
+                      )}
+
+                      {/* Fluttering Faction Pennant */}
+                      <g transform={`translate(${city.isCapital ? 14 : 13}, ${city.isCapital ? -24 : -18})`}>
+                        <line x1="0" y1="0" x2="0" y2="16" stroke="#e2e8f0" strokeWidth="1.2" />
+                        <path
+                          d="M 0 0 L 13 2.5 L 10.5 5.8 L 13 9 L 0 10 Z"
+                          fill={palette.fill}
+                          stroke={palette.stroke}
+                          strokeWidth="0.6"
+                        />
+                        <text
+                          x="5.6"
+                          y="7.4"
+                          textAnchor="middle"
+                          fill="#ffffff"
+                          fontSize="7"
+                          fontWeight="800"
+                          className="font-seal pointer-events-none"
+                        >
+                          {palette.badge}
+                        </text>
+                      </g>
+
+                      {/* Stationed Hero Circular Portrait Medallions */}
+                      {generals.slice(0, 2).map((gen, gIdx) => {
+                        const gx = gIdx === 0 ? -20 : -26;
+                        const gy = gIdx === 0 ? -15 : 4;
+                        return (
+                          <g
+                            key={gen.id}
+                            transform={`translate(${gx}, ${gy})`}
+                            onClick={(e) => {
+                              if (onInspectHero && !dragStart.current.moved) {
+                                e.stopPropagation();
+                                onInspectHero(gen.id);
+                              }
+                            }}
+                            className="cursor-pointer"
+                          >
+                            <circle r="11" fill="#090d16" stroke="#38bdf8" strokeWidth="1.4" />
+                            <image
+                              href={gen.portrait}
+                              x="-10"
+                              y="-10"
+                              width="20"
+                              height="20"
+                              preserveAspectRatio="xMidYMin slice"
+                              clipPath="url(#mapHeroPortraitClip)"
+                            />
+                          </g>
+                        );
+                      })}
+
+                      {/* Wandering Legendary Hero Golden Beacon */}
+                      {wanderingHere.length > 0 && (
                         <g
-                          key={gen.id}
-                          transform={`translate(${gx}, ${gy})`}
+                          transform="translate(22, 4)"
                           onClick={(e) => {
                             if (onInspectHero && !dragStart.current.moved) {
                               e.stopPropagation();
-                              onInspectHero(gen.id);
+                              onInspectHero(wanderingHere[0].id);
                             }
                           }}
                           className="cursor-pointer"
                         >
-                          <circle r="10.5" fill="#0d1118" stroke="#d4a853" strokeWidth="1.4" />
+                          <circle
+                            r="12.5"
+                            fill="none"
+                            stroke="#facc15"
+                            strokeWidth="1.5"
+                            strokeOpacity="0.9"
+                            className="animate-city-ring"
+                          />
+                          <circle r="10" fill="#171207" stroke="#facc15" strokeWidth="1.5" />
                           <image
-                            href={gen.portrait}
-                            x="-9.5"
-                            y="-9.5"
-                            width="19"
-                            height="19"
+                            href={wanderingHere[0].portrait}
+                            x="-9"
+                            y="-9"
+                            width="18"
+                            height="18"
                             preserveAspectRatio="xMidYMin slice"
                             clipPath="url(#mapHeroPortraitClip)"
                           />
                         </g>
-                      );
-                    })}
+                      )}
+                    </g>
 
-                    {/* Wandering Legendary Hero Golden Beacon (bottom-right of citadel) */}
-                    {wanderingHere.length > 0 && (
-                      <g
-                        transform="translate(20, 4)"
-                        onClick={(e) => {
-                          if (onInspectHero && !dragStart.current.moved) {
-                            e.stopPropagation();
-                            onInspectHero(wanderingHere[0].id);
-                          }
-                        }}
-                        className="cursor-pointer"
+                    {/* Floating Modern Glass Nameplate & Troop Pill */}
+                    <g transform="translate(0, 27)">
+                      <rect
+                        x="-40"
+                        y="-9"
+                        width="80"
+                        height="16.5"
+                        rx="5"
+                        fill="#090f1d"
+                        fillOpacity="0.9"
+                        stroke={isSelected ? '#38bdf8' : palette.stroke}
+                        strokeOpacity={isSelected ? 0.95 : 0.45}
+                        strokeWidth="1"
+                      />
+                      <text
+                        y="2.4"
+                        textAnchor="middle"
+                        fill="#f8fafc"
+                        fontSize="10.2"
+                        fontWeight="700"
+                        className="pointer-events-none"
                       >
-                        <circle
-                          r="12"
-                          fill="none"
-                          stroke="#facc15"
-                          strokeWidth="1.4"
-                          strokeOpacity="0.85"
-                          className="animate-city-ring"
-                        />
-                        <circle r="9.5" fill="#1a150a" stroke="#facc15" strokeWidth="1.4" />
-                        <image
-                          href={wanderingHere[0].portrait}
-                          x="-8.5"
-                          y="-8.5"
-                          width="17"
-                          height="17"
-                          preserveAspectRatio="xMidYMin slice"
-                          clipPath="url(#mapHeroPortraitClip)"
-                        />
-                      </g>
-                    )}
+                        {tLoc(city.name, lang)}
+                      </text>
+                    </g>
+
+                    <g transform="translate(0, 42)">
+                      <rect
+                        x="-25"
+                        y="-6"
+                        width="50"
+                        height="12.5"
+                        rx="6.2"
+                        fill={palette.fill}
+                        fillOpacity="0.95"
+                        stroke="#020617"
+                        strokeWidth="0.7"
+                      />
+                      <text
+                        y="2.8"
+                        textAnchor="middle"
+                        fill="#ffffff"
+                        fontSize="8.8"
+                        fontWeight="700"
+                        className="pointer-events-none"
+                      >
+                        {(city.troops / 1000).toFixed(1)}k
+                      </text>
+                    </g>
                   </g>
-
-                  {/* City Nameplate + Troop Banner */}
-                  <g transform="translate(0, 24)">
-                    <rect
-                      x="-39"
-                      y="-9"
-                      width="78"
-                      height="16"
-                      rx="3.5"
-                      fill="#0b1017"
-                      fillOpacity="0.9"
-                      stroke={isSelected ? '#f0c665' : palette.stroke}
-                      strokeOpacity={isSelected ? 0.95 : 0.4}
-                      strokeWidth="0.95"
-                    />
-                    <text
-                      y="2.2"
-                      textAnchor="middle"
-                      fill="#f7efe0"
-                      fontSize="10.2"
-                      fontWeight="700"
-                      className="pointer-events-none"
-                    >
-                      {tLoc(city.name, lang)}
-                    </text>
-                  </g>
-
-                  <g transform="translate(0, 38.5)">
-                    <rect
-                      x="-24"
-                      y="-6"
-                      width="48"
-                      height="12"
-                      rx="6"
-                      fill={palette.fill}
-                      fillOpacity="0.94"
-                      stroke="#0a0e14"
-                      strokeWidth="0.7"
-                    />
-                    <text
-                      y="2.5"
-                      textAnchor="middle"
-                      fill="#ffffff"
-                      fontSize="8.6"
-                      fontWeight="700"
-                      className="pointer-events-none"
-                    >
-                      {(city.troops / 1000).toFixed(1)}k
-                    </text>
-                  </g>
-                </g>
-              );
-            })}
-          </g>
-
-          {/* Fixed Map Frame Chrome (Graticule Edge Labels, Compass Rose, Scale Bar, Cartographer Seal) */}
-          <g pointerEvents="none">
-            {/* Coordinate Edge Ticks */}
-            {GRATICULE_LONS.map((g) => (
-              <text
-                key={`tick-lon-${g.label}`}
-                x={g.x}
-                y={14}
-                textAnchor="middle"
-                fill="#d4a853"
-                fillOpacity="0.48"
-                fontSize="8.5"
-                fontFamily="monospace"
-              >
-                {g.label}
-              </text>
-            ))}
-            {GRATICULE_LATS.map((g) => (
-              <text
-                key={`tick-lat-${g.label}`}
-                x={18}
-                y={g.y + 3}
-                textAnchor="start"
-                fill="#d4a853"
-                fillOpacity="0.48"
-                fontSize="8.5"
-                fontFamily="monospace"
-              >
-                {g.label}
-              </text>
-            ))}
-
-            {/* Compass Rose (bottom-left) */}
-            <g transform="translate(56, 598)" opacity="0.78">
-              <circle r="22" fill="#0b131e" fillOpacity="0.75" stroke="#d4a853" strokeOpacity="0.45" strokeWidth="1" />
-              <polygon points="0,-16 4,-2 0,-5 -4,-2" fill="#d4a853" />
-              <polygon points="0,16 4,2 0,5 -4,2" fill="#94a3b8" />
-              <polygon points="16,0 2,4 5,0 2,-4" fill="#94a3b8" />
-              <polygon points="-16,0 -2,4 -5,0 -2,-4" fill="#94a3b8" />
-              <text y="-25" textAnchor="middle" fill="#e6cfa0" fontSize="8.5" fontWeight="700">
-                {lang === 'zh' ? '北' : 'N'}
-              </text>
+                );
+              })}
             </g>
 
-            {/* Geographic Scale Bar (bottom-left beside compass) */}
-            <g transform="translate(96, 610)" opacity="0.82">
-              <rect x="0" y="-12" width="110" height="20" rx="4" fill="#0b131e" fillOpacity="0.72" />
-              <line x1="10" y1="0" x2="96" y2="0" stroke="#e6cfa0" strokeWidth="1.5" />
-              <line x1="10" y1="-4" x2="10" y2="3" stroke="#e6cfa0" strokeWidth="1.2" />
-              <line x1="53" y1="-3" x2="53" y2="3" stroke="#e6cfa0" strokeWidth="1" />
-              <line x1="96" y1="-4" x2="96" y2="3" stroke="#e6cfa0" strokeWidth="1.2" />
-              <text x="53" y="-4" textAnchor="middle" fill="#e6cfa0" fontSize="8" fontFamily="monospace">
-                {lang === 'zh' ? '500 里 · 250 km' : '250 km · 500 Li'}
-              </text>
-            </g>
+            {/* Fixed Map HUD Chrome */}
+            <g pointerEvents="none">
+              {GRATICULE_LONS.map((g) => (
+                <text
+                  key={`tick-lon3d-${g.label}`}
+                  x={g.x}
+                  y={14}
+                  textAnchor="middle"
+                  fill="#38bdf8"
+                  fillOpacity="0.45"
+                  fontSize="8.5"
+                  fontFamily="monospace"
+                >
+                  {g.label}
+                </text>
+              ))}
+              {GRATICULE_LATS.map((g) => (
+                <text
+                  key={`tick-lat3d-${g.label}`}
+                  x={18}
+                  y={g.y + 3}
+                  textAnchor="start"
+                  fill="#38bdf8"
+                  fillOpacity="0.45"
+                  fontSize="8.5"
+                  fontFamily="monospace"
+                >
+                  {g.label}
+                </text>
+              ))}
 
-            {/* Vermilion Seal Stamp (bottom-right) */}
-            <g transform="translate(946, 608)">
-              <rect
-                x="-24"
-                y="-24"
-                width="48"
-                height="48"
-                rx="5"
-                fill="#7f1d1d"
-                fillOpacity="0.34"
-                stroke="#c84b31"
-                strokeOpacity="0.75"
-                strokeWidth="1.4"
-              />
-              <text
-                y="-4"
-                textAnchor="middle"
-                fill="#fca5a5"
-                fontSize="12.5"
-                fontWeight="800"
-                className="font-seal"
-              >
-                三国
-              </text>
-              <text
-                y="13"
-                textAnchor="middle"
-                fill="#fca5a5"
-                fontSize="12.5"
-                fontWeight="800"
-                className="font-seal"
-              >
-                舆图
-              </text>
-            </g>
-          </g>
-        </svg>
+              {/* Modern Cyan Compass Rose (tucked cleanly inside frame) */}
+              <g transform="translate(88, 592)" opacity="0.86">
+                <circle r="20" fill="#09111f" fillOpacity="0.85" stroke="#38bdf8" strokeOpacity="0.5" strokeWidth="1.1" />
+                <polygon points="0,-14 3.8,-2 0,-4.5 -3.8,-2" fill="#38bdf8" />
+                <polygon points="0,14 3.8,2 0,4.5 -3.8,2" fill="#64748b" />
+                <polygon points="14,0 2,3.8 4.5,0 2,-3.8" fill="#64748b" />
+                <polygon points="-14,0 -2,3.8 -4.5,0 -2,-3.8" fill="#64748b" />
+                <text y="-23" textAnchor="middle" fill="#bae6fd" fontSize="8.5" fontWeight="700">
+                  {lang === 'zh' ? '北' : 'N'}
+                </text>
+              </g>
 
-        {/* Floating City Inspector Tooltip on Hover */}
+              {/* Scale Bar */}
+              <g transform="translate(124, 604)" opacity="0.86">
+                <rect x="0" y="-12" width="112" height="20" rx="5" fill="#09111f" fillOpacity="0.82" />
+                <line x1="10" y1="0" x2="98" y2="0" stroke="#7dd3fc" strokeWidth="1.5" />
+                <line x1="10" y1="-4" x2="10" y2="3" stroke="#7dd3fc" strokeWidth="1.2" />
+                <line x1="54" y1="-3" x2="54" y2="3" stroke="#7dd3fc" strokeWidth="1" />
+                <line x1="98" y1="-4" x2="98" y2="3" stroke="#7dd3fc" strokeWidth="1.2" />
+                <text x="54" y="-4" textAnchor="middle" fill="#e0f2fe" fontSize="8" fontFamily="monospace">
+                  {lang === 'zh' ? '500 里 · 250 km' : '250 km · 500 Li'}
+                </text>
+              </g>
+            </g>
+          </svg>
+        </div>
+
+        {/* Floating City Inspector Tooltip */}
         {hoveredCity && (
-          <div className="pointer-events-none absolute top-3 left-3 z-20 rounded-xl bg-[#0b1018]/92 border border-[#d4a853]/45 px-3.5 py-2.5 shadow-2xl backdrop-blur-md text-xs max-w-[240px]">
+          <div className="pointer-events-none absolute top-3 left-3 z-20 rounded-xl bg-slate-950/90 border border-cyan-400/45 px-3.5 py-2.5 shadow-2xl backdrop-blur-md text-xs max-w-[240px]">
             <div className="flex items-center justify-between gap-3 mb-1">
-              <span className="font-display font-bold text-sm text-[#f7efe0]">
+              <span className="font-display font-bold text-sm text-white">
                 {tLoc(hoveredCity.name, lang)}
               </span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-[#d4a853]">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-200">
                 {tLoc(TERRAIN_TEXT[hoveredCity.terrain], lang)}
               </span>
             </div>
-            <div className="text-[11px] text-[#b8b2a2] space-y-0.5">
+            <div className="text-[11px] text-slate-300 space-y-0.5">
               <div>
                 {lang === 'zh' ? '兵力' : 'Garrison'}:{' '}
                 <span className="text-white font-semibold">
@@ -1099,7 +1125,7 @@ export function StrategyMap({
                 {lang === 'zh' ? '繁荣' : 'Prosperity'} Lv.{hoveredCity.development}
               </div>
               {hoveredGenerals.length > 0 && (
-                <div className="text-[#f0c665] pt-0.5">
+                <div className="text-cyan-300 pt-0.5">
                   {lang === 'zh' ? '驻将：' : 'Generals: '}
                   {hoveredGenerals.map((g) => tLoc(g.name, lang)).join(', ')}
                 </div>
@@ -1108,11 +1134,15 @@ export function StrategyMap({
           </div>
         )}
 
-        {/* Subtle Zoom Hint */}
+        {/* Zoom / 3D Hint */}
         {zoom === 1 && (
-          <div className="pointer-events-none absolute bottom-2.5 left-1/2 -translate-x-1/2 text-[10px] text-[#cbd5e1]/75 bg-[#0b1018]/70 px-2.5 py-1 rounded-full border border-white/10 flex items-center gap-1.5">
-            <Compass className="w-3 h-3 text-[#d4a853]/85" />
-            <span>{lang === 'zh' ? '滚轮缩放 · 拖动浏览' : 'Scroll to zoom · Drag to pan'}</span>
+          <div className="pointer-events-none absolute bottom-2.5 left-1/2 -translate-x-1/2 text-[10px] text-slate-200/80 bg-slate-950/75 px-3 py-1 rounded-full border border-cyan-400/25 flex items-center gap-1.5 backdrop-blur-md">
+            <Compass className="w-3 h-3 text-cyan-400" />
+            <span>
+              {lang === 'zh'
+                ? '3D 沙盘视图 · 滚轮缩放 · 点击头像查看名将档案'
+                : '3D Tabletop View · Scroll to zoom · Click portraits to inspect heroes'}
+            </span>
           </div>
         )}
       </div>

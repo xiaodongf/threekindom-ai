@@ -127,17 +127,26 @@ export function AdvisorPanel({ state, lang, aiConfig }: AdvisorPanelProps) {
             key={m.id}
             className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}
           >
-            <div
-              className={`max-w-[90%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap ${
-                m.role === 'user'
-                  ? 'bg-[#d4a853]/20 border border-[#d4a853]/40 text-[#f7efe0]'
-                  : 'bg-[#0d1015]/90 border border-white/10 text-[#e4ddcc]'
-              }`}
-            >
-              {m.text}
+            <div className={`flex items-end gap-2 max-w-[94%] ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
+              {m.role === 'user' && (
+                <img
+                  src={state.playerProfile.portrait}
+                  alt="You"
+                  className="w-7 h-7 rounded-lg object-cover object-top border border-cyan-400 shrink-0"
+                />
+              )}
+              <div
+                className={`rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap ${
+                  m.role === 'user'
+                    ? 'bg-cyan-500/20 border border-cyan-400/40 text-white'
+                    : 'bg-slate-900/90 border border-slate-700/70 text-slate-200'
+                }`}
+              >
+                {m.text}
+              </div>
             </div>
             {m.meta && (
-              <span className="text-[10px] text-[#7c8496] mt-1 px-1 flex items-center gap-1">
+              <span className="text-[10px] text-slate-500 mt-1 px-1 flex items-center gap-1">
                 <ScrollText className="w-2.5 h-2.5" />
                 {m.meta}
               </span>
