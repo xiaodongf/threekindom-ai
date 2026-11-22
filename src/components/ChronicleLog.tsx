@@ -13,6 +13,8 @@ const CATEGORY_STYLES: Record<ChronicleEntry['category'], string> = {
   economy: 'border-l-amber-500 bg-amber-950/10',
   ai: 'border-l-sky-500 bg-sky-950/15',
   system: 'border-l-[#d4a853] bg-[#d4a853]/10',
+  hero: 'border-l-fuchsia-400 bg-fuchsia-950/20',
+  chrono: 'border-l-cyan-400 bg-cyan-950/20',
 };
 
 export function ChronicleLog({ entries, lang }: ChronicleLogProps) {

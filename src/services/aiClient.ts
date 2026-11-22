@@ -6,6 +6,8 @@ import type {
   AdvisorResponse,
   DiplomacyRequest,
   DiplomacyResponse,
+  HeroEncounterRequest,
+  HeroEncounterResponse,
 } from '../game/types.js';
 
 export interface ProvidersListResponse {
@@ -42,6 +44,12 @@ export function requestDiplomacyNegotiation(
   payload: DiplomacyRequest
 ): Promise<DiplomacyResponse> {
   return postJson<DiplomacyRequest, DiplomacyResponse>('/api/ai/diplomacy', payload);
+}
+
+export function requestHeroEncounter(
+  payload: HeroEncounterRequest
+): Promise<HeroEncounterResponse> {
+  return postJson<HeroEncounterRequest, HeroEncounterResponse>('/api/ai/hero-encounter', payload);
 }
 
 export function requestAITurnDecision(

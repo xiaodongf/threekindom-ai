@@ -8,15 +8,19 @@ import type {
   AdvisorResponse,
   DiplomacyRequest,
   DiplomacyResponse,
+  HeroEncounterRequest,
+  HeroEncounterResponse,
   ResolvedProviderId,
   TacticId,
 } from '../../src/game/types.js';
 import {
   AI_TURN_SCHEMA,
   DIPLOMACY_RESPONSE_SCHEMA,
+  HERO_ENCOUNTER_SCHEMA,
   buildAITurnPrompt,
   buildAdvisorPrompt,
   buildDiplomacyPrompt,
+  buildHeroEncounterPrompt,
 } from './prompts.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { GeminiProvider } from './providers/gemini.js';
@@ -24,6 +28,7 @@ import {
   generateHeuristicAITurn,
   generateHeuristicAdvisorReply,
   generateHeuristicDiplomacy,
+  generateHeuristicHeroEncounter,
 } from './providers/heuristic.js';
 import { OpenAIProvider } from './providers/openai.js';
 import type { LLMProvider } from './types.js';
@@ -260,6 +265,74 @@ function validateAITurnAction(req: AITurnDecisionRequest, raw: Partial<AITurnAct
   }
 
   return null;
+}
+
+export async function handleHeroEncounterRequest(
+  req: HeroEncounterRequest
+): Promise<HeroEncounterResponse> {
+  const provider = resolveProvider(req.aiConfig);
+  const hero = req.gameState.generals[req.heroId];
+  const hasVendetta = Boolean(hero?.vendettaAgainst.includes(req.gameState.playerFaction));
+
+  if (!provider) {
+    const fallback = generateHeuristicHeroEncounter(req);
+    return {
+      ...fallback,
+      providerUsed: 'heuristic',
+      modelUsed: 'three-kingdoms-heuristic-v1',
+      fallbackUsed: req.aiConfig?.provider !== 'heuristic',
+    };
+  }
+
+  try {
+    const { systemInstruction, prompt } = buildHeroEncounterPrompt(req);
+    const result = await provider.generate({
+      systemInstruction,
+      prompt,
+      jsonSchema: HERO_ENCOUNTER_SCHEMA,
+      maxTokens: 420,
+      model: req.aiConfig?.model || undefined,
+      apiKey: req.aiConfig?.apiKey || undefined,
+      baseUrl: req.aiConfig?.baseUrl || undefined,
+    });
+
+    const parsed = JSON.parse(stripJsonFences(result.text)) as Partial<HeroEncounterResponse>;
+    if (!parsed.reply || typeof parsed.reply !== 'string') {
+      throw new Error('Missing reply in LLM hero encounter JSON');
+    }
+
+    let outcome: HeroEncounterResponse['outcome'] =
+      req.mode === 'chat'
+        ? 'bonded'
+        : parsed.outcome === 'join' || parsed.outcome === 'impressed' || parsed.outcome === 'refuse'
+          ? parsed.outcome
+          : 'impressed';
+
+    // Hard rule enforcement: sworn vendetta NEVER joins!
+    if (req.mode !== 'chat' && hasVendetta) {
+      outcome = 'refuse';
+    }
+
+    return {
+      reply: parsed.reply,
+      outcome,
+      loyaltyDelta: Math.max(-5, Math.min(10, Math.round(Number(parsed.loyaltyDelta ?? 0)))),
+      trustDelta: Math.max(-3, Math.min(6, Math.round(Number(parsed.trustDelta ?? 0)))),
+      divergenceDelta: Math.max(0, Math.min(10, Math.round(Number(parsed.divergenceDelta ?? 0)))),
+      providerUsed: provider.id,
+      modelUsed: result.modelUsed,
+      fallbackUsed: false,
+    };
+  } catch (err) {
+    console.warn(`[AI HeroEncounter] ${provider.id} failed, falling back to heuristic:`, err);
+    const fallback = generateHeuristicHeroEncounter(req);
+    return {
+      ...fallback,
+      providerUsed: 'heuristic',
+      modelUsed: 'three-kingdoms-heuristic-v1',
+      fallbackUsed: true,
+    };
+  }
 }
 
 export async function handleAITurnRequest(req: AITurnDecisionRequest): Promise<AITurnDecisionResponse> {

@@ -1,22 +1,23 @@
 import type {
   DiplomacyProposalType,
   GameState,
+  HeroEncounterRequest,
   Language,
   PlayableFactionId,
 } from '../../src/game/types.js';
 
 const RULER_PERSONAS: Record<PlayableFactionId, { en: string; zh: string }> = {
   wei: {
-    en: 'Cao Cao (曹操): Ambitious, pragmatic, poetic, razor-sharp Realpolitik strategist. Respects strength, despises naive weakness, speaks with commanding authority.',
-    zh: '曹操：雄才大略、务实权谋、横槊赋诗的乱世枭雄。重实力轻空谈，言辞威严果决。',
+    en: 'Cao Cao (曹操): Ambitious, pragmatic, poetic, razor-sharp Realpolitik strategist. Intrigued yet wary of strange modern inventions and uncanny prophecies.',
+    zh: '曹操：雄才大略、务实权谋的乱世枭雄。对穿越者的奇器与先知既感惊异又暗存戒心。',
   },
   shu: {
-    en: 'Liu Bei (刘备): Benevolent, charismatic, deeply committed to restoring the Han dynasty, righteous yet shrewd in survival and alliance-building.',
-    zh: '刘备：仁德宽厚、礼贤下士、志在兴复汉室。言辞恳切重义，却亦深谙合纵自保之道。',
+    en: 'Liu Bei (刘备): Benevolent, charismatic, devoted to restoring the Han dynasty and protecting his sworn brothers. Respects righteous foresight.',
+    zh: '刘备：仁德宽厚、志在兴复汉室。对能救苍生、护结义兄弟的奇谋深怀敬意。',
   },
   wu: {
-    en: 'Sun Quan (孙权): Shrewd, proud defender of Jiangdong and the Yangtze riverfront. Balances Wei and Shu carefully, values trade, maritime supremacy, and dignity.',
-    zh: '孙权：坐断东南、老成持重的江东之主。善衡魏蜀两强，重江防、水师与江东基业。',
+    en: 'Sun Quan (孙权): Shrewd, proud lord of Jiangdong and the Yangtze riverfront. Watches northern ambitions and naval balance with eagle eyes.',
+    zh: '孙权：坐断东南、老成持重的江东之主。最重长江水师与江东尊严。',
   },
 };
 
@@ -31,7 +32,11 @@ export function summarizeGameStateForAI(state: GameState, lang: Language): strin
           `${lang === 'zh' ? c.name.zh : c.name.en}(id:${c.id}, troops:${c.troops}, def:${c.defense}, dev:${c.development}, terrain:${c.terrain}, neighbors:[${c.neighbors.join(',')}])`
       )
       .join('; ');
-    return `- ${fid.toUpperCase()} (${lang === 'zh' ? f.rulerName.zh : f.rulerName.en}): gold=${f.gold}, food=${f.food}, totalTroops=${totalTroops}, cities(${owned.length}): ${cityList || 'NONE'}`;
+    const rivalTechs =
+      fid === state.playerFaction
+        ? state.chrono.unlockedTechs
+        : state.chrono.rivalTechs[fid] || [];
+    return `- ${fid.toUpperCase()} (${lang === 'zh' ? f.rulerName.zh : f.rulerName.en}): gold=${f.gold}, food=${f.food}, totalTroops=${totalTroops}, tech=[${rivalTechs.join(',')}], cities(${owned.length}): ${cityList || 'NONE'}`;
   });
 
   const neutralCities = Object.values(state.cities)
@@ -41,6 +46,11 @@ export function summarizeGameStateForAI(state: GameState, lang: Language): strin
         `${lang === 'zh' ? c.name.zh : c.name.en}(id:${c.id}, troops:${c.troops}, def:${c.defense}, neighbors:[${c.neighbors.join(',')}])`
     )
     .join('; ');
+
+  const wandering = Object.values(state.generals)
+    .filter((g) => g.status === 'wandering')
+    .map((g) => `${lang === 'zh' ? g.name.zh : g.name.en}@${g.cityId}`)
+    .join(', ');
 
   const diploLines = Object.values(state.diplomacy)
     .map(
@@ -55,8 +65,9 @@ export function summarizeGameStateForAI(state: GameState, lang: Language): strin
     .join('\n');
 
   return [
-    `Turn ${state.turn} (${state.year} AD, ${state.season}). Player controls: ${state.playerFaction.toUpperCase()}.`,
-    `Victory goal: Control 9 cities.`,
+    `Turn ${state.turn} (${state.year} AD, ${state.season}). Player is a Time-Traveler ("Chrono-Strategist") advising ${state.playerFaction.toUpperCase()}.`,
+    `Chrono Status: LordTrust=${state.chrono.trust}/100, CourtSuspicion=${state.chrono.suspicion}/100, TimelineDivergence=${state.chrono.divergence}%, CoalitionActive=${state.chrono.coalitionActive}, PlayerModernTech=[${state.chrono.unlockedTechs.join(',') || 'none'}].`,
+    `Wandering Heroes: ${wandering || 'none'}.`,
     `Factions:`,
     ...factionLines,
     `Neutral cities: ${neutralCities || 'None'}`,
@@ -76,10 +87,10 @@ export function buildAdvisorPrompt(
 
   const systemInstruction =
     lang === 'zh'
-      ? `你是三国演义与史实背景下的顶级军师「${advisorName}」，效忠于${faction.name.zh}主公${rulerName}。请严格根据当前战局数据给出简明、具体、富有古风谋略感的战术建议（3-5句话，点出具体城池名、兵力对比与行动建议）。切勿编造不存在的城池。`
-      : `You are ${advisorName}, Chief Strategist of ${faction.name.en} serving ${rulerName} in 214 AD Three Kingdoms China. Give concise, actionable, atmospheric strategic counsel (3-5 sentences) grounded strictly in the live map numbers, naming exact cities, troop counts, and next moves. Never invent cities.`;
+      ? `你是三国顶级军师「${advisorName}」，与来自异世的神秘奇士（玩家，拥有超前格物奇技与先知洞察）共同辅佐${faction.name.zh}主公${rulerName}。请严格根据当前战局、名将动向、朝堂猜忌与历史偏移度，给出简明、具体、富有古风谋略感的建议（3-5句话）。切勿编造不存在的城池。`
+      : `You are ${advisorName}, Chief Strategist of ${faction.name.en} serving ${rulerName} alongside the mysterious "Chrono-Strategist" (the player, whose uncanny foresight and bizarre modern inventions awe and unsettle the court). Give concise, actionable strategic counsel (3-5 sentences) referencing exact cities, heroes, wandering legends, Court Suspicion, or Butterfly Effect risks.`;
 
-  const prompt = `${summarizeGameStateForAI(state, lang)}\n\nLord's Question: ${question}`;
+  const prompt = `${summarizeGameStateForAI(state, lang)}\n\nChrono-Strategist's Question: ${question}`;
   return { systemInstruction, prompt };
 }
 
@@ -93,7 +104,6 @@ export const DIPLOMACY_RESPONSE_SCHEMA: Record<string, unknown> = {
     decision: {
       type: 'string',
       enum: ['accept', 'reject', 'acknowledge'],
-      description: 'accept if agreeing to alliance/gift, reject if refusing, acknowledge for general envoy messages or war.',
     },
     relationDelta: {
       type: 'integer',
@@ -123,14 +133,87 @@ export function buildDiplomacyPrompt(
 
   const systemInstruction =
     lang === 'zh'
-      ? `你正在扮演三国君主：${persona}。请根据当前天下大势、双方实力对比与外交关系，以君主口吻回复${playerName}派来的使者，并返回严格的 JSON 对象（reply, decision, relationDelta, truceTurns）。若对方宣战，decision 为 "acknowledge"，truceTurns 为 0；若对方赠金，通常接受并提升好感；若对方提议结盟，结合共同强敌与关系决定是否接受（接受时 truceTurns=3）。reply 必须使用中文。`
-      : `You are roleplaying a Three Kingdoms warlord: ${persona}. Evaluate the map balance, relative military strength, and existing relations to respond in character to ${playerName}'s envoy. Return strictly valid JSON matching the schema (reply, decision, relationDelta, truceTurns). If war is declared, set decision="acknowledge", truceTurns=0, negative relationDelta. If alliance accepted, set truceTurns=3. Reply in English.`;
+      ? `你正在扮演三国君主：${persona}。${playerName}麾下有一位号称能预知未来、造出奇器的神秘谋士（玩家）。若对方已解锁黑火药、热气球或蒸汽战船，或天下合纵已开启，你的措辞应对此流露警觉或忌惮。根据实力与外交关系返回严格 JSON（reply, decision, relationDelta, truceTurns）。reply 使用中文。`
+      : `You are roleplaying a Three Kingdoms warlord: ${persona}. ${playerName} is advised by a mysterious Chrono-Strategist rumored to possess uncanny foresight and unnatural weapons. If they unlocked gunpowder/balloons/steamships or if the Grand Coalition is active, react with alarm or defiance! Return strictly valid JSON (reply, decision, relationDelta, truceTurns) in English.`;
 
   const prompt = [
     summarizeGameStateForAI(state, lang),
     `\nIncoming Envoy from: ${state.playerFaction.toUpperCase()}`,
     `Proposal Type: ${proposalType}${giftGold ? ` (Gift: ${giftGold} gold)` : ''}`,
     `Envoy Message: "${message || '(Formal diplomatic dispatch)'}"`,
+  ].join('\n');
+
+  return { systemInstruction, prompt };
+}
+
+export const HERO_ENCOUNTER_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    reply: {
+      type: 'string',
+      description: 'In-character response from the Three Kingdoms hero (2-4 vivid sentences).',
+    },
+    outcome: {
+      type: 'string',
+      enum: ['join', 'impressed', 'refuse', 'bonded'],
+      description:
+        'For recruit/persuade: "join" if convinced to swear allegiance, "impressed" if moved but hesitant, "refuse" if rejecting. For private chat: always "bonded".',
+    },
+    loyaltyDelta: {
+      type: 'integer',
+      description: 'Loyalty shift (-5 to +10).',
+    },
+    trustDelta: {
+      type: 'integer',
+      description: 'Lord trust shift (-3 to +6).',
+    },
+    divergenceDelta: {
+      type: 'integer',
+      description: 'Timeline divergence increase (0 to 8; higher if player revealed shocking future history).',
+    },
+  },
+  required: ['reply', 'outcome', 'loyaltyDelta', 'trustDelta', 'divergenceDelta'],
+};
+
+export function buildHeroEncounterPrompt(
+  req: HeroEncounterRequest
+): { systemInstruction: string; prompt: string } {
+  const { gameState, heroId, envoyHeroId, mode, approach, message, giftGold, language: lang } = req;
+  const hero = gameState.generals[heroId];
+  const envoy = envoyHeroId ? gameState.generals[envoyHeroId] : undefined;
+  const playerFaction = gameState.factions[gameState.playerFaction];
+  const hasVendetta = hero.vendettaAgainst.includes(gameState.playerFaction);
+  const hasPrinting = gameState.chrono.unlockedTechs.includes('printing');
+
+  const systemInstruction =
+    lang === 'zh'
+      ? `你正在扮演三国名将「${hero.name.zh}（${hero.title.zh}）」。
+人物长处：${hero.dossier.historicalStrength.zh}
+人物软肋：${hero.dossier.fatalFlaw.zh}
+历史命数：${hero.dossier.fatedDestiny.zh}
+当前身份：${hero.status}，忠诚：${hero.loyalty}，对玩家势力是否有血海深仇：${hasVendetta ? '是（誓死不降！）' : '否'}。
+对话对象是辅佐${playerFaction.name.zh}${playerFaction.rulerName.zh}的神秘「天命奇士」（来自未来的穿越者）。
+如果对方在话语中点破你未曾向人道出的私密抱负、弱点或未来死劫（如落凤坡、麦城、病疾等），你会感到由衷震惊与骇然！
+- 若 mode="chat"，你已是其同僚，回复亲切富有古风，outcome 必为 "bonded"，loyaltyDelta 在 3~6 之间。
+- 若 mode="recruit"（三顾茅庐招贤）或 "persuade"（劝降俘虏）：若有血海深仇则必为 "refuse"；若对方诚意打动你或以先知点破命运（且契合你的性格），可设为 "join"；若对方仅用你不屑的方式（如对关羽重金收买），应严词 "refuse"。
+请严格返回符合 schema 的中文 JSON。`
+      : `You are roleplaying legendary Three Kingdoms hero ${hero.name.en} (${hero.title.en}).
+Historical Strength: ${hero.dossier.historicalStrength.en}
+Fatal Flaw: ${hero.dossier.fatalFlaw.en}
+Fated Destiny: ${hero.dossier.fatedDestiny.en}
+Current Status: ${hero.status}, Loyalty: ${hero.loyalty}, Sworn Vendetta vs player faction: ${hasVendetta ? 'YES (NEVER JOIN!)' : 'No'}.
+You are speaking to the mysterious "Chrono-Strategist" (a time-traveler from the future serving ${playerFaction.rulerName.en} of ${playerFaction.name.en}).
+If they reveal uncanny future knowledge about your secret ambitions, hidden flaw, or fated doom (e.g., Fallen Phoenix Slope, Maicheng, fatal illness), react with genuine astonishment and awe!
+- If mode="chat": You serve the same kingdom; reply warmly in character, set outcome="bonded", loyaltyDelta 3..6.
+- If mode="recruit" or "persuade": If Sworn Vendetta is YES, ALWAYS set outcome="refuse". Otherwise judge their pitch, envoy charisma, and whether they hit your true values (e.g., honor vs rank vs future warning; printing propaganda=${hasPrinting}) to return "join", "impressed", or "refuse".
+Return strictly valid JSON in English.`;
+
+  const prompt = [
+    summarizeGameStateForAI(gameState, lang),
+    `\nEncounter Mode: ${mode.toUpperCase()}`,
+    `Approach: ${approach}${giftGold ? ` (Offering ${giftGold} gold)` : ''}`,
+    `Envoy: ${envoy ? `${envoy.name.en} (Charisma ${envoy.charisma})` : 'Chrono-Strategist personally'}`,
+    `Player's Pitch: "${message || '(A formal appeal tailored to your legacy)'}"`,
   ].join('\n');
 
   return { systemInstruction, prompt };
@@ -143,31 +226,15 @@ export const AI_TURN_SCHEMA: Record<string, unknown> = {
       type: 'string',
       enum: ['attack', 'recruit', 'develop', 'fortify', 'reinforce', 'hold'],
     },
-    cityId: {
-      type: 'string',
-      description: 'ID of one of your owned cities to act from.',
-    },
-    targetCityId: {
-      type: 'string',
-      description: 'Required for attack or reinforce: an adjacent neighbor city ID.',
-    },
+    cityId: { type: 'string' },
+    targetCityId: { type: 'string' },
     tactic: {
       type: 'string',
       enum: ['assault', 'fire', 'ambush', 'siege'],
-      description: 'Required when type is attack.',
     },
-    troopsRatio: {
-      type: 'number',
-      description: 'Fraction of troops from cityId to send (0.45 to 0.78).',
-    },
-    proclamation: {
-      type: 'string',
-      description: 'Short, dramatic 1-sentence warlord proclamation in character.',
-    },
-    reasoning: {
-      type: 'string',
-      description: 'Brief 1-sentence strategic reason for this move.',
-    },
+    troopsRatio: { type: 'number' },
+    proclamation: { type: 'string' },
+    reasoning: { type: 'string' },
   },
   required: ['type', 'cityId', 'proclamation', 'reasoning'],
 };
@@ -180,21 +247,26 @@ export function buildAITurnPrompt(
   const persona = RULER_PERSONAS[factionId][lang];
   const ownedCities = Object.values(state.cities).filter((c) => c.owner === factionId);
   const ownedIds = ownedCities.map((c) => c.id).join(', ');
+  const coalitionNote = state.chrono.coalitionActive
+    ? lang === 'zh'
+      ? '【天下合纵已启动】：请优先集结兵力猛攻玩家势力，切勿攻打盟友！'
+      : 'GRAND COALITION ACTIVE: Prioritize attacking the player faction and respect your coalition ally!'
+    : '';
 
   const systemInstruction =
     lang === 'zh'
-      ? `你是三国策略游戏中的 AI 君主：${persona}。你当前掌管城池 ID：[${ownedIds}]。请为本回合选择最佳单一战略行动，严格返回 JSON。规则：
-1. attack 必须选择自己兵力 >= 4500 的城池 cityId 攻打其 neighbors 中的敌方或中立城池 targetCityId（尽量避免攻打处于 truce/allied 状态的势力，除非胜算极大）。
+      ? `你是三国策略游戏中的 AI 君主：${persona}。你当前掌管城池 ID：[${ownedIds}]。${coalitionNote}
+请为本回合选择最佳单一战略行动，严格返回 JSON：
+1. attack 需 cityId 兵力 >= 4500 且 targetCityId 在其 neighbors 中（避开 truce 盟友）。
 2. recruit 需国库 >= 180 且粮草 >= 140。
-3. develop 需国库 >= 220 且繁荣度 < 5。
-4. fortify 需国库 >= 200 且城防 < 5。
-5. proclamation 与 reasoning 请用简短中文书写。`
-      : `You are an autonomous Three Kingdoms AI warlord: ${persona}. You currently own city IDs: [${ownedIds}]. Choose the single strongest strategic action this turn and return strictly valid JSON. Rules:
-1. For "attack", choose an owned cityId with >= 4500 troops and an adjacent enemy/neutral targetCityId from its neighbors list. Respect active truces unless an overwhelming opportunity appears.
+3. develop 需国库 >= 220 且繁荣度 < 5；fortify 需国库 >= 200 且城防 < 5。
+4. proclamation 与 reasoning 使用简短中文。`
+      : `You are an autonomous Three Kingdoms AI warlord: ${persona}. You own city IDs: [${ownedIds}]. ${coalitionNote}
+Choose the single strongest strategic action and return strictly valid JSON:
+1. For "attack", choose owned cityId with >= 4500 troops and adjacent enemy/neutral targetCityId (respect active truces).
 2. For "recruit", ensure gold >= 180 and food >= 140.
-3. For "develop", ensure gold >= 220 and development < 5.
-4. For "fortify", ensure gold >= 200 and defense < 5.
-5. Write proclamation and reasoning concisely in English.`;
+3. For "develop" (gold >= 220, dev < 5) or "fortify" (gold >= 200, def < 5).
+4. Write proclamation and reasoning concisely in English.`;
 
   const prompt = `${summarizeGameStateForAI(state, lang)}\n\nSelect the best move for ${factionId.toUpperCase()} now.`;
   return { systemInstruction, prompt };

@@ -3,12 +3,14 @@ import type {
   AITurnDecisionRequest,
   AdvisorRequest,
   DiplomacyRequest,
+  HeroEncounterRequest,
 } from '../src/game/types.js';
 import {
   getProviderStatuses,
   handleAITurnRequest,
   handleAdvisorRequest,
   handleDiplomacyRequest,
+  handleHeroEncounterRequest,
 } from './ai/registry.js';
 
 export function createApiRouter(): Router {
@@ -50,6 +52,20 @@ export function createApiRouter(): Router {
       res.json(response);
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : 'Diplomacy error' });
+    }
+  });
+
+  router.post('/ai/hero-encounter', async (req, res) => {
+    try {
+      const body = req.body as HeroEncounterRequest;
+      if (!body?.gameState || !body?.heroId || !body?.mode) {
+        res.status(400).json({ error: 'Missing hero encounter payload' });
+        return;
+      }
+      const response = await handleHeroEncounterRequest(body);
+      res.json(response);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : 'Hero encounter error' });
     }
   });
 

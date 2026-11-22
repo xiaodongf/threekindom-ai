@@ -1,23 +1,32 @@
 # Three Kingdoms AI · 三国志 AI
 
-A bilingual (**English / 中文**) interactive Three Kingdoms grand strategy web game powered by a **pluggable LLM architecture** (**Google Gemini**, **OpenAI / Compatible**, **Anthropic Claude**) with an intelligent **zero-key built-in tactical AI fallback**.
+A bilingual (**English / 中文**) **Time-Traveler × Hero-Centric** Three Kingdoms grand strategy web game set on a **realistic topographic map of 214 AD China**, powered by a **pluggable LLM engine** (**Google Gemini**, **OpenAI / Compatible**, **Anthropic Claude**) with an intelligent **zero-key tactical AI fallback**.
 
-一款支持 **中英双语切换** 的三国大战略网页游戏，内置 **可插拔大模型引擎**（支持 Google Gemini、OpenAI 及兼容接口、Anthropic Claude），并在未配置 API Key 时自动回退至内置战术规则 AI，开箱即玩。
+一款 **穿越三国 · 名将核心** 中英双语大战略网页游戏：你乘时空穿梭机降临建安十九年（214年），在 **真实地形山川兵图** 上携二十一世纪现代科技与二十四位名将的历史命数档案辅佐明主，同时对抗 **硬核蝴蝶效应、朝堂猜忌、敌国窃密与天下合纵**！
 
 ---
 
-## Features · 核心特性
+## Core Features · 核心玩法
 
-- **Interactive Strategic Map of 214 AD China (十三城汉末兵图)**: Custom SVG map featuring Wei (魏), Shu (蜀), Wu (吴), and contested border commanderies along the Yellow River and Yangtze River, complete with animated march routes and stationed general seals.
-- **Turn-Based Grand Strategy (回合制内政与征伐)**: Manage treasury, grain, seasonal taxes, domestic development, fortifications, troop levies, and tactical battles (`Frontal Assault`, `Fire Attack`, `Mountain Ambush`, `Siege Engines`) led by 12 historical generals (Cao Cao, Sima Yi, Zhuge Liang, Guan Yu, Zhang Fei, Zhao Yun, Sun Quan, Lu Xun, etc.).
-- **AI Chief Strategist — War Council (军师献策)**: Consult Sima Yi (司马懿), Zhuge Liang (诸葛亮), or Lu Xun (陆逊) in real time using live map telemetry.
-- **AI Warlord Diplomacy (AI 敌国君主外交)**: Propose 3-season truces, send gold gifts, declare war, or write custom diplomatic dispatches; rival warlords respond in character with structured accept/reject decisions and relation shifts.
-- **Autonomous Rival AI Turns (敌国自主推演)**: Rival kingdoms evaluate threats, recruit, fortify, reinforce, and launch invasions with in-character proclamations.
-- **Pluggable AI Engine (可插拔 AI 提供商)**:
-  - **Google Gemini** via official `@google/genai` Interactions API (`gemini-4-hydrogen`)
-  - **OpenAI / OpenAI-Compatible** (supports OpenAI, Ollama, DeepSeek, OpenRouter via `OPENAI_BASE_URL`)
-  - **Anthropic Claude**
-  - **Built-in Heuristic Tactical AI** (automatic offline fallback, zero setup required)
+- **Time-Traveler Plot & Hardcore Butterfly Effect (`穿越三国 · 硬核蝴蝶效应`)**:
+  - Pledge to **Cao Cao (曹操)**, **Liu Bei (刘备)**, or **Sun Quan (孙权)** as a mysterious **Chrono-Strategist (`天命奇士`)**.
+  - Balance **Lord's Trust (`主公信任`)**, **Court Suspicion (`朝堂猜忌`)**, and **Timeline Divergence (`历史偏移度`)**:
+    - `0–29%` **Sharp Foresight**: Full historical dossiers & `+18%` Chrono-Insight counters.
+    - `30–59%` **Distorted Timeline**: Foresight weakens while rival geniuses (**Zhuge Liang / Sima Yi / Lu Xun**) **reverse-engineer your modern inventions** within 2 seasons!
+    - `60%+` **Shattered Timeline**: Textbook weaknesses are obscured (until restored with **Optical Spyglasses**), What-If crises erupt, and rival kingdoms forge a two-front **Anti-Anomaly Grand Coalition (`天下合纵讨逆`)**.
+    - If **Court Suspicion > Lord's Trust**, conservative elders launch harsh **Sorcerer Court Trials (`妖言惑众`)**!
+- **24 Iconic Heroes with Painted Portraits (`二十四名将 · 羁绊绝技`)**:
+  - 18 starting legends across Wei/Shu/Wu + **6 Wandering Heroes** (**Ma Chao, Huang Zhong, Pang Tong, Xu Huang, Taishi Ci, Diaochan**) visible on the map with golden beacons.
+  - 5 classic stats (`War`, `Intellect`, `Command`, `Politics`, `Charisma`), Levels 1–5 + XP, Loyalty, unique **Signature Skills (`专属绝技`)**, **Sworn Bonds (`桃园结义 / 五虎上将 / 卧龙凤雏` 等)**, and **1-AP strategic hero relocation**.
+- **Interactive 3-Round Pre-Battle Hero Duels (`阵前单挑`)**:
+  - Challenge opposing heroes before army battles using Stances, Signature Skills, and Chrono-Insight Counters to swing army morale and capture odds.
+- **AI "Three Visits" Recruitment, Prisoner Drama & Execute Vendettas (`三顾茅庐 · 劝降斩首`)**:
+  - Recruit wandering legends, persuade captured prisoners, or hold private hero councils via `POST /api/ai/hero-encounter` — heroes react with awe when you invoke their real historical secrets!
+  - Full prisoner fate drama: **Persuade (`劝降`)**, **Ransom (+350 Gold)**, **Release with Honor (`义释`)**, or **Execute (`斩首`)** — permanently removing the hero and igniting a **Sworn Vendetta (`血海深仇`, +20% vengeance combat)** on all bonded comrades!
+- **Modern Tech Lab (`格物工坊 · 现代科技树`)**:
+  - 3 tiers of inventions (**Steel Stirrups, Field Antiseptics, Crop Rotation, Black Powder, Optical Spyglasses, Movable-Type Printing, Recon Hot-Air Balloons, Steam Paddle Warships**) engineered alongside scholar heroes.
+- **Realistic 214 AD Topographic Map (`自然地球真实舆图`)**:
+  - Built from **Natural Earth 1:50m** coastlines, connected 3D hillshaded mountain ranges, real river systems & lakes, zoom/pan, realm overlays, and clickable hero portrait medallions.
 
 ---
 
@@ -29,10 +38,10 @@ npm install
 
 # 2. (Optional) Configure LLM API keys
 cp .env.example .env
-# Edit .env and add GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.
-# Or leave empty to play immediately with the built-in tactical AI!
+# Add GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY
+# (or leave empty to play immediately with the built-in heuristic AI!)
 
-# 3. Run development server (API + Web UI)
+# 3. Start API + Web Dev Server
 npm run dev
 ```
 
@@ -40,39 +49,12 @@ Open **http://localhost:5173** in your browser.
 
 ---
 
-## Scripts · 常用命令
+## Scripts
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Starts Express API (`:3001`) + Vite React dev server (`:5173`) |
-| `npm run build` | Type-checks and builds both frontend (`dist/`) and server (`dist-server/`) |
-| `npm start` | Runs the production server serving both API and built static UI |
-| `npm test` | Runs Vitest game engine unit tests |
-| `npm run typecheck` | Runs TypeScript checks for client and server |
-
----
-
-## Project Structure · 目录结构
-
-```text
-├── server/
-│   ├── index.ts                 # Express server entrypoint
-│   ├── api.ts                   # /api/ai/* REST routes
-│   └── ai/
-│       ├── prompts.ts           # Bilingual prompts & JSON schemas
-│       ├── registry.ts          # Pluggable provider router + automatic fallback
-│       └── providers/
-│           ├── gemini.ts        # @google/genai Interactions API
-│           ├── openai.ts        # OpenAI & compatible endpoints
-│           ├── anthropic.ts     # Anthropic Messages API
-│           └── heuristic.ts     # Offline bilingual tactical AI fallback
-└── src/
-    ├── game/
-    │   ├── types.ts             # Shared TypeScript interfaces
-    │   ├── data.ts              # 13 cities, 3 factions, 12 historical generals
-    │   ├── engine.ts            # Pure deterministic strategy & combat engine
-    │   └── engine.test.ts       # Unit tests
-    ├── i18n/translations.ts     # English + 中文 localization
-    ├── services/aiClient.ts     # Frontend API client
-    └── components/              # Interactive Map, War Council, Diplomacy, Modals
-```
+| `npm run dev` | Runs Express API (`:3001`) + Vite React dev server (`:5173`) |
+| `npm run build` | Type-checks and builds frontend (`dist/`) + server (`dist-server/`) |
+| `npm start` | Starts production server serving both API and built UI |
+| `npm test` | Runs Vitest game engine & Butterfly Effect unit tests |
+| `npm run typecheck` | Type-checks client and server TypeScript |

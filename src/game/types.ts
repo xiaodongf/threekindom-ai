@@ -18,18 +18,166 @@ export type ResolvedProviderId = 'gemini' | 'openai' | 'anthropic' | 'heuristic'
 export type DiplomaticStatus = 'war' | 'hostile' | 'neutral' | 'truce' | 'allied';
 export type DiplomacyProposalType = 'alliance' | 'gift' | 'tribute' | 'war' | 'message';
 
+// --- Hero-Centric & Time-Traveler Types ---
+
+export type HeroArchetype = 'vanguard' | 'strategist' | 'marshal' | 'statesman';
+export type HeroStatus = 'active' | 'wounded' | 'captured' | 'wandering' | 'executed';
+export type DuelStance = 'strike' | 'feint' | 'guard' | 'skill' | 'chrono_counter';
+
+export type HeroSkillEffect =
+  | 'assault_boost'
+  | 'fire_ignore_def'
+  | 'morale_shatter'
+  | 'casualty_shield'
+  | 'ambush_reflect'
+  | 'river_pierce'
+  | 'raid_plunder'
+  | 'mandate_rally'
+  | 'charisma_charm'
+  | 'siege_breaker';
+
+export interface HeroSignatureSkill {
+  id: string;
+  name: LocalizedText;
+  desc: LocalizedText;
+  battleCry: LocalizedText;
+  effect: HeroSkillEffect;
+  powerBonus: number;
+  duelDamage: number;
+  cooldownTurns: number;
+}
+
+export interface HeroDossier {
+  historicalStrength: LocalizedText;
+  fatalFlaw: LocalizedText;
+  fatedDestiny: LocalizedText;
+  weakToTactic: TacticId;
+  counterStance: Exclude<DuelStance, 'skill' | 'chrono_counter'>;
+  persuasionHook: LocalizedText;
+}
+
+export interface HeroBond {
+  id: string;
+  name: LocalizedText;
+  desc: LocalizedText;
+  memberIds: string[];
+  combatBonus: number;
+  loyaltyBonus: number;
+}
+
 export interface General {
   id: string;
   name: LocalizedText;
   title: LocalizedText;
-  faction: PlayableFactionId;
+  faction: FactionId;
+  originalFaction: FactionId;
+  portrait: string;
+  archetype: HeroArchetype;
   war: number;
   intellect: number;
   command: number;
+  politics: number;
+  charisma: number;
   specialty: TacticId;
   cityId: string;
   seal: string;
+  level: number;
+  xp: number;
+  loyalty: number;
+  status: HeroStatus;
+  woundedTurns: number;
+  capturedBy?: PlayableFactionId;
+  skillCooldown: number;
+  chattedThisTurn?: boolean;
+  vendettaAgainst: PlayableFactionId[];
+  signatureSkill: HeroSignatureSkill;
+  dossier: HeroDossier;
+  bondIds: string[];
 }
+
+export type TechId =
+  | 'stirrups'
+  | 'medicine'
+  | 'agriculture'
+  | 'gunpowder'
+  | 'spyglass'
+  | 'printing'
+  | 'balloon'
+  | 'steamship';
+
+export interface TechDefinition {
+  id: TechId;
+  tier: 1 | 2 | 3;
+  name: LocalizedText;
+  desc: LocalizedText;
+  historicalNote: LocalizedText;
+  goldCost: number;
+  innovationCost: number;
+  divergenceGain: number;
+  suspicionGain: number;
+  copyableByRivals: boolean;
+}
+
+export type TimelineStage = 'sharp' | 'distorted' | 'shattered';
+
+export interface PendingTechCopy {
+  factionId: PlayableFactionId;
+  techId: TechId;
+  turnsRemaining: number;
+}
+
+export interface ChronoState {
+  trust: number; // 0..100 Lord's Trust
+  suspicion: number; // 0..100 Court Suspicion
+  divergence: number; // 0..100 Timeline Divergence (Butterfly Effect)
+  innovationPoints: number;
+  techFrozenTurns: number;
+  coalitionActive: boolean;
+  unlockedTechs: TechId[];
+  rivalTechs: Record<PlayableFactionId, TechId[]>;
+  pendingTechCopies: PendingTechCopy[];
+  triggeredEventIds: string[];
+}
+
+export interface StoryEventChoice {
+  id: string;
+  label: LocalizedText;
+  desc: LocalizedText;
+  requiresTech?: TechId;
+  goldCost?: number;
+}
+
+export interface StoryEvent {
+  id: string;
+  kind: 'fated_crisis' | 'what_if' | 'suspicion_trial' | 'hero_vignette';
+  title: LocalizedText;
+  subtitle: LocalizedText;
+  body: LocalizedText;
+  heroId?: string;
+  choices: StoryEventChoice[];
+}
+
+export interface DuelRoundLog {
+  round: number;
+  playerStance: DuelStance;
+  enemyStance: DuelStance;
+  playerDamage: number;
+  enemyDamage: number;
+  summary: LocalizedText;
+}
+
+export interface DuelResult {
+  winner: 'attacker' | 'defender' | 'draw';
+  attackerHeroId: string;
+  defenderHeroId: string;
+  attackerHpLeft: number;
+  defenderHpLeft: number;
+  rounds: DuelRoundLog[];
+  moraleBonus: number;
+  skillUsed: boolean;
+}
+
+// --- Core Map & Faction Types ---
 
 export interface City {
   id: string;
@@ -83,8 +231,14 @@ export interface BattleReport {
   fromCityId: string;
   toCityId: string;
   attackerGeneralId?: string;
+  deputyGeneralId?: string;
   defenderGeneralId?: string;
   tactic: TacticId;
+  skillTriggered?: LocalizedText;
+  bondsTriggered?: LocalizedText[];
+  duelWinner?: 'attacker' | 'defender' | 'draw';
+  capturedHeroId?: string;
+  woundedHeroId?: string;
   attackerStartTroops: number;
   defenderStartTroops: number;
   attackerLosses: number;
@@ -98,7 +252,7 @@ export interface ChronicleEntry {
   turn: number;
   year: number;
   season: Season;
-  category: 'battle' | 'diplomacy' | 'economy' | 'ai' | 'system';
+  category: 'battle' | 'diplomacy' | 'economy' | 'ai' | 'system' | 'hero' | 'chrono';
   faction?: FactionId;
   text: LocalizedText;
 }
@@ -123,12 +277,16 @@ export interface GameState {
   cities: Record<string, City>;
   generals: Record<string, General>;
   diplomacy: Record<string, DiplomacyRelation>;
+  chrono: ChronoState;
+  activeEvent: StoryEvent | null;
   chronicle: ChronicleEntry[];
   lastBattle: BattleReport | null;
   recentMarches: MarchEvent[];
   winner: PlayableFactionId | null;
   isPlayerDefeated: boolean;
 }
+
+// --- AI API Types ---
 
 export interface AIProviderStatus {
   id: ResolvedProviderId;
@@ -174,6 +332,32 @@ export interface DiplomacyResponse {
   decision: 'accept' | 'reject' | 'acknowledge';
   relationDelta: number;
   truceTurns: number;
+  providerUsed: ResolvedProviderId;
+  modelUsed: string;
+  fallbackUsed: boolean;
+}
+
+export type HeroEncounterMode = 'recruit' | 'persuade' | 'chat';
+export type HeroEncounterApproach = 'righteous' | 'rank' | 'gold' | 'future_intel' | 'custom';
+
+export interface HeroEncounterRequest {
+  gameState: GameState;
+  heroId: string;
+  envoyHeroId?: string;
+  mode: HeroEncounterMode;
+  approach: HeroEncounterApproach;
+  message: string;
+  giftGold?: number;
+  language: Language;
+  aiConfig: AIRequestConfig;
+}
+
+export interface HeroEncounterResponse {
+  reply: string;
+  outcome: 'join' | 'impressed' | 'refuse' | 'bonded';
+  loyaltyDelta: number;
+  trustDelta: number;
+  divergenceDelta: number;
   providerUsed: ResolvedProviderId;
   modelUsed: string;
   fallbackUsed: boolean;

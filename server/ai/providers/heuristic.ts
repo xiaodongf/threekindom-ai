@@ -3,6 +3,7 @@ import type {
   City,
   DiplomacyProposalType,
   GameState,
+  HeroEncounterRequest,
   Language,
   PlayableFactionId,
   TacticId,
@@ -36,11 +37,32 @@ export function generateHeuristicAdvisorReply(
 
   if (owned.length === 0) {
     return lang === 'zh'
-      ? '主公，我军已无立锥之地，当重整旗鼓再图霸业。'
-      : 'My Lord, we hold no commanderies left. We must begin anew.';
+      ? '奇士先生，我军已无立锥之地，当重整旗鼓再图霸业。'
+      : 'Chrono-Strategist, we hold no commanderies left. We must begin anew.';
   }
 
-  // Find best attack opportunity
+  // Warn about Court Suspicion if dangerously close to Trust!
+  if (state.chrono.suspicion >= state.chrono.trust - 8) {
+    return lang === 'zh'
+      ? `奇士慎之！如今朝堂猜忌已达 ${state.chrono.suspicion}（主公信任 ${state.chrono.trust}），守旧老臣蠢蠢欲动。眼下宜暂缓奇器研发、先以实打实的胜仗或义释俘将稳固主公信任，再图格物大计！`
+      : `Careful, Chrono-Strategist! Court Suspicion (${state.chrono.suspicion}) is nearing Lord's Trust (${state.chrono.trust}). Pause radical inventions briefly and win a decisive battle or release a captive honorably before conservatives call a sorcery trial!`;
+  }
+
+  // Mention wandering legends if player asks about heroes
+  const qLower = question.toLowerCase();
+  const asksHero = /hero|recruit|general|wander|将|招|贤|名将/.test(qLower);
+  const wandering = Object.values(state.generals).filter((g) => g.status === 'wandering');
+  if (asksHero && wandering.length > 0) {
+    const topW = [...wandering].sort(
+      (a, b) => b.war + b.intellect - (a.war + a.intellect)
+    )[0];
+    const loc = state.cities[topW.cityId];
+    return lang === 'zh'
+      ? `探马来报：绝世奇才「${topW.name.zh}」（武 ${topW.war} / 智 ${topW.intellect}）此刻正在${loc ? loc.name.zh : '江湖'}隐居！先生既知其生平命数，何不遣高魅力名将亲往「三顾茅庐」，点破其心中隐秘必能一举收归麾下！`
+      : `Scouts report that ${topW.name.en} (War ${topW.war} / Int ${topW.intellect}) is currently wandering near ${loc ? loc.name.en : 'the borderlands'}! Send a high-Charisma envoy from the Hall of Heroes and leverage your historical dossier to bring this legend under our banner!`;
+  }
+
+  // Best attack opportunity
   let bestAttack: { from: City; to: City; advantage: number } | null = null;
   for (const from of owned) {
     for (const nid of from.neighbors) {
@@ -50,14 +72,13 @@ export function generateHeuristicAdvisorReply(
         const rel = getRelationBetween(state, player, to.owner);
         if (rel && rel.truceTurnsLeft > 0) continue;
       }
-      const advantage = from.troops * 0.7 - to.troops * (1 + to.defense * 0.1);
+      const advantage = from.troops * 0.72 - to.troops * (1 + to.defense * 0.1);
       if (!bestAttack || advantage > bestAttack.advantage) {
         bestAttack = { from, to, advantage };
       }
     }
   }
 
-  // Find most threatened border city
   let mostThreatened: { city: City; threat: number; enemyCity: City } | null = null;
   for (const city of owned) {
     for (const nid of city.neighbors) {
@@ -70,7 +91,6 @@ export function generateHeuristicAdvisorReply(
     }
   }
 
-  // Diplomacy suggestion
   const rivals = (['wei', 'shu', 'wu'] as PlayableFactionId[]).filter(
     (f) => f !== player && !state.factions[f].isEliminated
   );
@@ -85,7 +105,6 @@ export function generateHeuristicAdvisorReply(
   })[0];
   const potentialAlly = rivals.find((r) => r !== strongestRival) ?? strongestRival;
 
-  const qLower = question.toLowerCase();
   const asksDefense = /defen|vulnerab|safe|threat|防|隐忧|守|危/.test(qLower);
   const asksDiplo = /ally|diplom|truce|peace|联|盟|外|和/.test(qLower);
 
@@ -93,16 +112,18 @@ export function generateHeuristicAdvisorReply(
     const cName = cityName(mostThreatened.city, lang);
     const eName = cityName(mostThreatened.enemyCity, lang);
     return lang === 'zh'
-      ? `启禀主公：${cName}（守军 ${mostThreatened.city.troops.toLocaleString()}，城防 Lv.${mostThreatened.city.defense}）紧邻敌军重镇${eName}（兵力 ${mostThreatened.enemyCity.troops.toLocaleString()}），实乃心腹之患。建议优先在${cName}征兵或修筑城防，并从后方调兵驰援，方保无虞。`
-      : `My Lord, ${cName} (${mostThreatened.city.troops.toLocaleString()} troops, Def Lv.${mostThreatened.city.defense}) faces heavy pressure from ${eName} (${mostThreatened.enemyCity.troops.toLocaleString()} troops). I urge you to fortify ${cName}, levy troops there, or march reinforcements from a safer interior city.`;
+      ? `启禀先生：${cName}（守军 ${mostThreatened.city.troops.toLocaleString()}，城防 Lv.${mostThreatened.city.defense}）紧邻敌镇${eName}（兵力 ${mostThreatened.enemyCity.troops.toLocaleString()}），实乃心腹之患。宜速调一名猛将驻守${cName}并增兵固防。`
+      : `Strategist, ${cName} (${mostThreatened.city.troops.toLocaleString()} troops, Def Lv.${mostThreatened.city.defense}) faces heavy pressure from ${eName} (${mostThreatened.enemyCity.troops.toLocaleString()} troops). Relocate a top hero to ${cName}, fortify walls, and levy reinforcements.`;
   }
 
   if (asksDiplo && potentialAlly && strongestRival) {
-    const allyName = lang === 'zh' ? state.factions[potentialAlly].name.zh : state.factions[potentialAlly].name.en;
-    const bossName = lang === 'zh' ? state.factions[strongestRival].name.zh : state.factions[strongestRival].name.en;
+    const allyName =
+      lang === 'zh' ? state.factions[potentialAlly].name.zh : state.factions[potentialAlly].name.en;
+    const bossName =
+      lang === 'zh' ? state.factions[strongestRival].name.zh : state.factions[strongestRival].name.en;
     return lang === 'zh'
-      ? `主公明鉴：当今${bossName}兵强马壮，势大难制。上策乃是遣使向${allyName}赠金示好并缔结停战盟约，免除两线受敌之忧，集中精锐各个击破！`
-      : `My Lord, ${bossName} currently poses the gravest threat on the board. Grand strategy favors sending an envoy or gold gift to ${allyName} to secure a 3-season truce, freeing our armies to strike without risking a two-front war.`;
+      ? `当今${bossName}兵强马壮${state.chrono.coalitionActive ? '，且敌国已合纵讨我' : ''}。上策当速遣使向${allyName}示好缓和局势，同时在格物工坊研造「活字印刷」或「望远镜」扭转乾坤！`
+      : `${bossName} poses our greatest strategic threat${state.chrono.coalitionActive ? ' — and the Grand Coalition is hunting us' : ''}. Try easing pressure from ${allyName} while leveraging hero bonds and modern engineering wisely!`;
   }
 
   if (bestAttack && bestAttack.advantage > -1800) {
@@ -116,14 +137,14 @@ export function generateHeuristicAdvisorReply(
       siege: '围城器械',
     };
     return lang === 'zh'
-      ? `启禀主公（${faction.advisorName.zh}献策）：良机已至！${fromN}屯兵 ${bestAttack.from.troops.toLocaleString()}，而邻城${toN}仅有守军 ${bestAttack.to.troops.toLocaleString()}（城防 Lv.${bestAttack.to.defense}）。若遣名将率军自${fromN}出击，施以「${tacticZh[tactic]}」，大概率可一战而下！`
-      : `My Lord (${faction.advisorName.en}'s Counsel): An opening awaits! ${fromN} holds ${bestAttack.from.troops.toLocaleString()} soldiers while neighboring ${toN} is defended by only ${bestAttack.to.troops.toLocaleString()} (Def Lv.${bestAttack.to.defense}). Launch a campaign from ${fromN} using ${tactic.toUpperCase()} tactics to seize ${toN}!`;
+      ? `${faction.advisorName.zh}献策：良机已至！${fromN}屯兵 ${bestAttack.from.troops.toLocaleString()}，而邻城${toN}守军仅 ${bestAttack.to.troops.toLocaleString()}。若遣羁绊名将主副联手、发动绝技并施以「${tacticZh[tactic]}」，极有把握阵前斩将夺城！`
+      : `${faction.advisorName.en}'s Counsel: Strike while the iron glows! ${fromN} holds ${bestAttack.from.troops.toLocaleString()} troops against ${toN}'s ${bestAttack.to.troops.toLocaleString()}. Deploy bonded heroes with their Signature Skill and challenge their defender to a duel using ${tactic.toUpperCase()} tactics!`;
   }
 
   const richest = [...owned].sort((a, b) => b.baseGold - a.baseGold)[0];
   return lang === 'zh'
-    ? `主公暂宜深沟高垒、蓄势待发。当前国库 ${faction.gold} 金、粮草 ${faction.food}，建议先在${cityName(richest, lang)}发展内政或征募精兵，待兵力超过敌方守军三成后再行北伐/东进。`
-    : `My Lord, patience wins empires. With ${faction.gold} gold and ${faction.food} food in reserve, strengthen ${cityName(richest, lang)} via Develop or Recruit until our frontline garrison outnumbers neighboring defenders by at least 30%.`;
+    ? `当前历史偏移度 ${state.chrono.divergence}%，国库 ${faction.gold} 金、灵感 ${state.chrono.innovationPoints} 点。建议先在${cityName(richest, lang)}厉兵秣马，或往「名将录」寻访在野英杰、在「格物工坊」择机研造实用农医科技。`
+    : `Timeline Divergence sits at ${state.chrono.divergence}% with ${faction.gold} gold and ${state.chrono.innovationPoints} Innovation. Build strength in ${cityName(richest, lang)}, recruit wandering legends in the Hall of Heroes, or unlock Field Medicine / Stirrups in the Tech Lab.`;
 }
 
 export function generateHeuristicDiplomacy(
@@ -143,6 +164,9 @@ export function generateHeuristicDiplomacy(
   const currentScore = rel?.score ?? 0;
   const targetRuler = state.factions[targetFaction].rulerName;
   const playerRuler = state.factions[player].rulerName;
+  const hasScaryTech =
+    state.chrono.unlockedTechs.includes('gunpowder') ||
+    state.chrono.unlockedTechs.includes('steamship');
 
   const playerCities = Object.values(state.cities).filter((c) => c.owner === player).length;
   const targetCities = Object.values(state.cities).filter((c) => c.owner === targetFaction).length;
@@ -154,8 +178,8 @@ export function generateHeuristicDiplomacy(
       truceTurns: 0,
       reply:
         lang === 'zh'
-          ? `哼！${playerRuler.zh}既敢下此战书，孤便点齐三军与君决一死战，看看这天下究竟鹿死谁手！`
-          : `So ${playerRuler.en} chooses the sword! Sound the war drums — we shall meet upon the battlefield and let Heaven decide who rules China!`,
+          ? `哼！纵使${playerRuler.zh}麾下有异世奇士相助，孤亦不惧！点齐三军，沙场见真章！`
+          : `Even with your uncanny Chrono-Strategist whispering in ${playerRuler.en}'s ear, we will never kneel! Sound the war drums!`,
     };
   }
 
@@ -166,14 +190,24 @@ export function generateHeuristicDiplomacy(
       truceTurns: rel?.truceTurnsLeft ?? 0,
       reply:
         lang === 'zh'
-          ? `使者远道而来，厚礼孤便收下了。${playerRuler.zh}诚意可嘉，两家之谊当增进三分。`
-          : `Your generous tribute is well received. ${playerRuler.en} shows rare courtesy — ${targetRuler.en} shall remember this gesture of goodwill.`,
+          ? `厚礼孤便收下了。听说贵营近日奇技频出，望两家以和为贵。`
+          : `Your generous gold is received. Rumors of your camp's strange inventions echo far — ${targetRuler.en} values peace when it serves our realm.`,
     };
   }
 
   if (proposalType === 'alliance') {
-    // More willing if relations >= -25 or if target is weaker/equal
-    const willingness = currentScore + (targetCities <= playerCities ? 25 : -10);
+    if (state.chrono.coalitionActive) {
+      return {
+        decision: 'reject',
+        relationDelta: -8,
+        truceTurns: 0,
+        reply:
+          lang === 'zh'
+            ? `休想分化联军！你等以妖奇之术搅乱天下，群雄已誓同进退，绝不议和！`
+            : `We will not break the Grand Coalition! Your unnatural weapons threaten the entire balance of China — prepare for war!`,
+      };
+    }
+    const willingness = currentScore + (targetCities <= playerCities ? 25 : -10) - (hasScaryTech ? 10 : 0);
     if (willingness >= -15) {
       return {
         decision: 'accept',
@@ -181,8 +215,8 @@ export function generateHeuristicDiplomacy(
         truceTurns: 3,
         reply:
           lang === 'zh'
-            ? `善！当今强敌环伺，正宜休兵息民。孤允准缔结三季停战盟约，望${playerRuler.zh}谨守信义，切勿背盟！`
-            : `Agreed. With rival banners crowding the horizon, a 3-season truce serves both our realms. Honor this oath, ${playerRuler.en}, and our borders shall know peace.`,
+            ? `善！当今强敌环伺，孤允准缔结三季停战盟约，望${playerRuler.zh}与那位奇士谨守信义！`
+            : `Agreed. A 3-season truce serves us both well. Honor this oath, ${playerRuler.en} — and keep your strange war machines off our borders.`,
       };
     }
     return {
@@ -191,12 +225,11 @@ export function generateHeuristicDiplomacy(
       truceTurns: 0,
       reply:
         lang === 'zh'
-          ? `哈哈，${playerRuler.zh}未免太过天真！两军积怨尚深，岂是一纸空文所能化解？先以诚意或实力来说话吧！`
-          : `A truce now? ${targetRuler.en} is not so easily swayed by sweet words while old grudges burn. Send gold to prove your sincerity—or prepare your walls!`,
+          ? `哈哈，${playerRuler.zh}未免太过天真！两军积怨尚深，先以诚意或实力来说话吧！`
+          : `A truce now? ${targetRuler.en} is not so easily swayed while old grudges burn. Send gold to prove your sincerity—or prepare your walls!`,
     };
   }
 
-  // Free-form envoy message
   const positiveBonus = currentScore >= 0 ? 8 : 5;
   return {
     decision: 'acknowledge',
@@ -204,8 +237,130 @@ export function generateHeuristicDiplomacy(
     truceTurns: rel?.truceTurnsLeft ?? 0,
     reply:
       lang === 'zh'
-        ? `使者所言，孤已尽知。天下大势瞬息万变，${targetRuler.zh}自会权衡利弊，再作计较。`
+        ? `奇士之言，孤已尽知。天下大势瞬息万变，${targetRuler.zh}自会权衡利弊。`
         : `Your envoy's words have been heard in full. The winds of Heaven shift swiftly — ${targetRuler.en} will weigh your counsel carefully.`,
+  };
+}
+
+export function generateHeuristicHeroEncounter(req: HeroEncounterRequest): {
+  reply: string;
+  outcome: 'join' | 'impressed' | 'refuse' | 'bonded';
+  loyaltyDelta: number;
+  trustDelta: number;
+  divergenceDelta: number;
+} {
+  const { gameState, heroId, envoyHeroId, mode, approach, message, language: lang } = req;
+  const hero = gameState.generals[heroId];
+  const envoy = envoyHeroId ? gameState.generals[envoyHeroId] : undefined;
+  const player = gameState.playerFaction;
+  const ruler = gameState.factions[player].rulerName;
+
+  if (!hero) {
+    return {
+      reply: lang === 'zh' ? '此将不知所踪。' : 'This hero could not be found.',
+      outcome: 'refuse',
+      loyaltyDelta: 0,
+      trustDelta: 0,
+      divergenceDelta: 0,
+    };
+  }
+
+  // Private Council Chat with owned hero
+  if (mode === 'chat') {
+    const mentionsTech = /tech|gunpowder|medicine|steam|future|科技|火药|医|未来|穿越/i.test(message);
+    return {
+      outcome: 'bonded',
+      loyaltyDelta: 4,
+      trustDelta: 1,
+      divergenceDelta: mentionsTech ? 1 : 0,
+      reply:
+        lang === 'zh'
+          ? mentionsTech
+            ? `「先生所言格物奇理实令${hero.name.zh}大开眼界！昔日只觉荒诞，如今方知天下之大无奇不有。末将愿与先生并肩辅佐${ruler.zh}！」`
+            : `「得先生推心置腹一席话，${hero.name.zh}胸中豁然开朗！但凭主公与先生差遣，万死不辞！」`
+          : mentionsTech
+            ? `"The strange sciences you describe astonish me, Strategist! At first I doubted them, yet now I see you truly command heaven-sent craft. ${hero.name.en} stands ready beside you!"`
+            : `"Your frank counsel warms my spirit, Strategist. ${hero.name.en} pledges blade and mind to ${ruler.en}'s cause!"`,
+    };
+  }
+
+  // Sworn Vendetta check — NEVER joins the executioner of their sworn brother!
+  if (hero.vendettaAgainst.includes(player)) {
+    return {
+      outcome: 'refuse',
+      loyaltyDelta: 0,
+      trustDelta: -1,
+      divergenceDelta: 0,
+      reply:
+        lang === 'zh'
+          ? `「住口！你等与我有血海深仇，${hero.name.zh}宁可血溅五步，绝不屈膝事贼！」`
+          : `"Silence! Blood demands blood — ${hero.name.en} will die standing before ever bowing to your cursed banner!"`,
+    };
+  }
+
+  // Calculate recruitment / persuasion score
+  const envoyCharisma = envoy ? envoy.charisma : 82;
+  const trustBonus = gameState.chrono.trust >= 80 ? 15 : gameState.chrono.trust >= 55 ? 5 : -8;
+  const printingBonus = gameState.chrono.unlockedTechs.includes('printing') ? 16 : 0;
+  const divergencePenalty = gameState.chrono.divergence >= 60 && approach === 'future_intel' ? -18 : 0;
+
+  let approachScore = 0;
+  if (approach === 'future_intel') {
+    approachScore = 26 + divergencePenalty;
+  } else if (approach === 'gold') {
+    // High-honor heroes (Guan Yu, Zhao Yun, Zhuge Liang, Diaochan) dislike plain bribes!
+    approachScore = ['guanyu', 'zhaoyun', 'zhugeliang', 'diaochan'].includes(hero.id) ? -25 : 18;
+  } else if (approach === 'righteous') {
+    approachScore = hero.charisma >= 85 || hero.originalFaction === 'shu' ? 22 : 12;
+  } else if (approach === 'rank') {
+    approachScore = hero.archetype === 'vanguard' || hero.id === 'weiyan' || hero.id === 'pangtong' ? 22 : 12;
+  } else {
+    approachScore = message.trim().length >= 16 ? 20 : 10;
+  }
+
+  const difficulty = mode === 'persuade' ? Math.max(45, hero.loyalty - 8) : 52;
+  const totalScore = Math.round(envoyCharisma * 0.48 + approachScore + trustBonus + printingBonus);
+
+  if (totalScore >= difficulty) {
+    const usedFuture = approach === 'future_intel';
+    return {
+      outcome: 'join',
+      loyaltyDelta: 0,
+      trustDelta: 5,
+      divergenceDelta: usedFuture ? 7 : 3,
+      reply:
+        lang === 'zh'
+          ? usedFuture
+            ? `「什么？！阁下竟连${hero.name.zh}心中隐秘与未来凶险都一语道破！莫非真是天人降世？既然如此，${hero.name.zh}愿倾心相托，拜见${ruler.zh}！」`
+            : `「听君一席话，胜读十年书！${ruler.zh}帐下既有先生这般奇士，${hero.name.zh}愿执鞭坠镫、共图大业！」`
+          : usedFuture
+            ? `"Impossible!! How could a mortal know ${hero.name.en}'s hidden fate and private burdens?! Heaven itself must have sent you — I swear my sword and counsel to ${ruler.en}!"`
+            : `"Your words ring with rare conviction. If ${ruler.en} commands minds such as yours, then ${hero.name.en} gladly joins your banner!"`,
+    };
+  }
+
+  if (totalScore >= difficulty - 14) {
+    return {
+      outcome: 'impressed',
+      loyaltyDelta: -6,
+      trustDelta: 1,
+      divergenceDelta: approach === 'future_intel' ? 4 : 0,
+      reply:
+        lang === 'zh'
+          ? `「先生言辞颇有见地，令${hero.name.zh}暗暗称奇……只是兹事体大，容我再观贵军气数与诚意，改日再议！」`
+          : `"Your words carry unexpected weight, Strategist... yet ${hero.name.en} does not swear oaths lightly. Prove your realm's virtue and visit me again!"`,
+    };
+  }
+
+  return {
+    outcome: 'refuse',
+    loyaltyDelta: 0,
+    trustDelta: -1,
+    divergenceDelta: 0,
+    reply:
+      lang === 'zh'
+        ? `「哼！区区巧言岂能动摇${hero.name.zh}之志？请回吧！」`
+        : `"Hmph! Empty flattery cannot sway ${hero.name.en}'s resolve. Return to your camp!"`,
   };
 }
 
@@ -225,7 +380,6 @@ export function generateHeuristicAITurn(
     };
   }
 
-  // 1. Evaluate favorable attacks (respecting truces!)
   let bestAttack: { from: City; to: City; score: number } | null = null;
   for (const from of owned) {
     if (from.troops < 5500) continue;
@@ -242,11 +396,12 @@ export function generateHeuristicAITurn(
       const defStrength = to.troops * (1 + to.defense * 0.11);
       const ratio = sendTroops / Math.max(1000, defStrength);
 
-      // Neutral cities are slightly more tempting
-      const bonus = to.owner === 'neutral' ? 0.18 : 0;
-      const score = ratio + bonus;
+      const neutralBonus = to.owner === 'neutral' ? 0.18 : 0;
+      const coalitionFocus =
+        state.chrono.coalitionActive && to.owner === state.playerFaction ? 0.28 : 0;
+      const score = ratio + neutralBonus + coalitionFocus;
 
-      if (score >= 1.08 && (!bestAttack || score > bestAttack.score)) {
+      if (score >= 1.04 && (!bestAttack || score > bestAttack.score)) {
         bestAttack = { from, to, score };
       }
     }
@@ -266,16 +421,16 @@ export function generateHeuristicAITurn(
       },
       proclamation:
         lang === 'zh'
-          ? `三军听令！即刻自${fromN}拔营，直取${toN}！`
-          : `Sound the horns! March from ${fromN} and claim ${toN} for our banner!`,
-      reasoning:
-        lang === 'zh'
-          ? `${fromN}兵力占优，趁势攻取${toN}。`
-          : `${fromN} enjoys a decisive troop advantage over ${toN}.`,
+          ? state.chrono.coalitionActive && bestAttack.to.owner === state.playerFaction
+            ? `联军齐动！即刻自${fromN}发兵讨伐异数，直取${toN}！`
+            : `三军听令！即刻自${fromN}拔营，直取${toN}！`
+          : state.chrono.coalitionActive && bestAttack.to.owner === state.playerFaction
+            ? `For the Grand Coalition! March from ${fromN} and purge the anomaly at ${toN}!`
+            : `Sound the horns! March from ${fromN} and claim ${toN} for our banner!`,
+      reasoning: `${fromN} holds an assault advantage over ${toN}.`,
     };
   }
 
-  // 2. Recruit troops at most exposed frontline city if affordable
   const recruitGold = factionId === 'wei' ? 153 : 180;
   const frontline = owned
     .filter((c) => c.neighbors.some((n) => state.cities[n]?.owner !== factionId))
@@ -287,16 +442,12 @@ export function generateHeuristicAITurn(
       action: { type: 'recruit', cityId: targetCity.id },
       proclamation:
         lang === 'zh'
-          ? `传令${cityName(targetCity, lang)}广募精锐，厉兵秣马！`
+          ? `传令${cityName(targetCity, lang)}广募精锐，严阵以待！`
           : `Levy fresh regiments in ${cityName(targetCity, lang)} — war draws near!`,
-      reasoning:
-        lang === 'zh'
-          ? `充实前线重镇${cityName(targetCity, lang)}兵力。`
-          : `Bolster frontline garrison in ${cityName(targetCity, lang)}.`,
+      reasoning: `Bolster frontline garrison in ${cityName(targetCity, lang)}.`,
     };
   }
 
-  // 3. Reinforce frontline from interior city with surplus troops
   const interiorSurplus = owned
     .filter(
       (c) =>
@@ -327,8 +478,9 @@ export function generateHeuristicAITurn(
     }
   }
 
-  // 4. Develop economy or fortify
-  const developable = [...owned].filter((c) => c.development < 5).sort((a, b) => a.development - b.development)[0];
+  const developable = [...owned]
+    .filter((c) => c.development < 5)
+    .sort((a, b) => a.development - b.development)[0];
   if (faction.gold >= 220 && developable) {
     return {
       action: { type: 'develop', cityId: developable.id },
@@ -340,7 +492,9 @@ export function generateHeuristicAITurn(
     };
   }
 
-  const fortifiable = [...owned].filter((c) => c.defense < 5).sort((a, b) => a.defense - b.defense)[0];
+  const fortifiable = [...owned]
+    .filter((c) => c.defense < 5)
+    .sort((a, b) => a.defense - b.defense)[0];
   if (faction.gold >= 200 && fortifiable) {
     return {
       action: { type: 'fortify', cityId: fortifiable.id },
@@ -354,8 +508,7 @@ export function generateHeuristicAITurn(
 
   return {
     action: { type: 'hold', cityId: owned[0].id },
-    proclamation:
-      lang === 'zh' ? '按兵不动，静观天下之变。' : 'Hold position and watch the realm.',
+    proclamation: lang === 'zh' ? '按兵不动，静观天下之变。' : 'Hold position and watch the realm.',
     reasoning: 'Conserving treasury.',
   };
 }

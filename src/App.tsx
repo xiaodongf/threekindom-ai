@@ -2,30 +2,47 @@ import { useEffect, useState } from 'react';
 import {
   Castle,
   Crown,
+  FlaskConical,
   Handshake,
   ScrollText,
   Skull,
   Sparkles,
+  Users,
 } from 'lucide-react';
 import { AdvisorPanel } from './components/AdvisorPanel.js';
-import { AttackSetupModal, BattleReportModal } from './components/BattleModal.js';
+import {
+  AttackSetupModal,
+  BattleReportModal,
+  type LaunchCampaignPayload,
+} from './components/BattleModal.js';
 import { ChronicleLog } from './components/ChronicleLog.js';
 import { CityPanel } from './components/CityPanel.js';
 import { DiplomacyPanel } from './components/DiplomacyPanel.js';
+import { DuelModal } from './components/DuelModal.js';
 import { FactionSelect } from './components/FactionSelect.js';
+import { HeroEventModal } from './components/HeroEventModal.js';
+import { HeroRecruitModal } from './components/HeroRecruitModal.js';
+import { HeroesPanel } from './components/HeroesPanel.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { StrategyMap } from './components/StrategyMap.js';
+import { TechLabPanel } from './components/TechLabPanel.js';
 import { TopBar } from './components/TopBar.js';
 import {
   advanceSeason,
   applyDiplomacyOutcome,
+  applyHeroEncounterOutcome,
   createNewGame,
   executeAITurnAction,
   performAttackCity,
   performDevelopCity,
   performFortifyCity,
+  performPrisonerAction,
   performRecruitTroops,
   performReinforceCity,
+  performRelocateHero,
+  performResearchTech,
+  performRewardHero,
+  resolveStoryEventChoice,
 } from './game/engine.js';
 import type {
   AIProviderStatus,
@@ -33,15 +50,18 @@ import type {
   BattleReport,
   DiplomacyProposalType,
   DiplomacyResponse,
+  DuelResult,
   GameState,
+  HeroEncounterMode,
+  HeroEncounterResponse,
   Language,
   PlayableFactionId,
-  TacticId,
+  TechId,
 } from './game/types.js';
 import { UI_TEXT, tLoc } from './i18n/translations.js';
 import { fetchProviders, requestAITurnDecision } from './services/aiClient.js';
 
-type RightTab = 'city' | 'advisor' | 'diplomacy' | 'chronicle';
+type RightTab = 'city' | 'heroes' | 'tech' | 'advisor' | 'diplomacy' | 'chronicle';
 
 const DEFAULT_PROVIDERS: AIProviderStatus[] = [
   { id: 'gemini', name: 'Google Gemini', configured: false, model: 'gemini-4-hydrogen' },
@@ -56,17 +76,55 @@ const DEFAULT_PROVIDERS: AIProviderStatus[] = [
 ];
 
 export default function App() {
-  const [lang, setLang] = useState<Language>('en');
-  const [gameState, setGameState] = useState<GameState | null>(null);
-  const [selectedCityId, setSelectedCityId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<RightTab>('city');
+  const [lang, setLang] = useState<Language>(() => {
+    const p = new URLSearchParams(window.location.search).get('lang');
+    return p === 'zh' ? 'zh' : 'en';
+  });
+  const [gameState, setGameState] = useState<GameState | null>(() => {
+    const f = new URLSearchParams(window.location.search).get('faction');
+    if (f === 'wei' || f === 'shu' || f === 'wu') {
+      return createNewGame(f);
+    }
+    return null;
+  });
+  const [selectedCityId, setSelectedCityId] = useState<string | null>(() => {
+    const f = new URLSearchParams(window.location.search).get('faction');
+    if (f === 'wei') return 'luoyang';
+    if (f === 'shu') return 'chengdu';
+    if (f === 'wu') return 'jianye';
+    return null;
+  });
+  const [activeTab, setActiveTab] = useState<RightTab>(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (
+      tab === 'city' ||
+      tab === 'heroes' ||
+      tab === 'tech' ||
+      tab === 'advisor' ||
+      tab === 'diplomacy' ||
+      tab === 'chronicle'
+    ) {
+      return tab;
+    }
+    return 'heroes';
+  });
+  const [focusedHeroId, setFocusedHeroId] = useState<string | null>(null);
   const [isEndingTurn, setIsEndingTurn] = useState(false);
 
   const [pendingAttack, setPendingAttack] = useState<{
     fromCityId: string;
     toCityId: string;
   } | null>(null);
+  const [activeDuel, setActiveDuel] = useState<{
+    fromCityId: string;
+    toCityId: string;
+    payload: LaunchCampaignPayload;
+  } | null>(null);
   const [battleReportModal, setBattleReportModal] = useState<BattleReport | null>(null);
+  const [heroEncounter, setHeroEncounter] = useState<{
+    heroId: string;
+    mode: HeroEncounterMode;
+  } | null>(null);
 
   const [showSettings, setShowSettings] = useState(false);
   const [providers, setProviders] = useState<AIProviderStatus[]>(DEFAULT_PROVIDERS);
@@ -78,7 +136,7 @@ export default function App() {
         if (res.providers?.length) setProviders(res.providers);
       })
       .catch(() => {
-        // Keep defaults if backend not reachable yet
+        // Keep defaults if offline
       });
   }, []);
 
@@ -89,9 +147,12 @@ export default function App() {
     );
     setGameState(fresh);
     setSelectedCityId(capital?.id || null);
-    setActiveTab('city');
+    setActiveTab('heroes');
+    setFocusedHeroId(null);
     setBattleReportModal(null);
     setPendingAttack(null);
+    setActiveDuel(null);
+    setHeroEncounter(null);
   }
 
   function handleSelectCity(cityId: string) {
@@ -99,23 +160,54 @@ export default function App() {
     setActiveTab('city');
   }
 
-  function handleLaunchAttack(troops: number, tactic: TacticId, generalId?: string) {
-    if (!gameState || !pendingAttack) return;
+  function handleInspectHero(heroId: string) {
+    setFocusedHeroId(heroId);
+    setActiveTab('heroes');
+  }
+
+  function executeBattle(
+    fromCityId: string,
+    toCityId: string,
+    payload: LaunchCampaignPayload,
+    duelResult?: DuelResult
+  ) {
+    if (!gameState) return;
     const updated = performAttackCity(
       gameState,
       gameState.playerFaction,
-      pendingAttack.fromCityId,
-      pendingAttack.toCityId,
-      troops,
-      tactic,
-      generalId,
-      true
+      fromCityId,
+      toCityId,
+      payload.troops,
+      payload.tactic,
+      payload.generalId,
+      true,
+      Math.random,
+      {
+        deputyGeneralId: payload.deputyId,
+        useSignatureSkill: payload.useSignatureSkill && !duelResult?.skillUsed,
+        duelResult,
+      }
     );
     setGameState(updated);
     setPendingAttack(null);
+    setActiveDuel(null);
     if (updated.lastBattle) {
       setBattleReportModal(updated.lastBattle);
     }
+  }
+
+  function handleLaunchCampaign(payload: LaunchCampaignPayload) {
+    if (!gameState || !pendingAttack) return;
+    if (payload.startDuel && payload.generalId && payload.defenderHeroId) {
+      setActiveDuel({
+        fromCityId: pendingAttack.fromCityId,
+        toCityId: pendingAttack.toCityId,
+        payload,
+      });
+      setPendingAttack(null);
+      return;
+    }
+    executeBattle(pendingAttack.fromCityId, pendingAttack.toCityId, payload);
   }
 
   function handleReinforce(fromCityId: string, toCityId: string) {
@@ -125,6 +217,47 @@ export default function App() {
     const amount = Math.round(fromCity.troops * 0.4);
     setGameState(
       performReinforceCity(gameState, gameState.playerFaction, fromCityId, toCityId, amount, true)
+    );
+  }
+
+  function handleHeroEncounterResolved(
+    heroId: string,
+    mode: HeroEncounterMode,
+    res: HeroEncounterResponse,
+    giftGold: number
+  ) {
+    if (!gameState) return;
+    const hero = gameState.generals[heroId];
+    if (!hero) return;
+
+    const summary =
+      mode === 'chat'
+        ? {
+            en: `Held private council with ${hero.name.en} (Loyalty strengthened).`,
+            zh: `与${hero.name.zh}帷幄密谈，主客相得，忠诚度提升。`,
+          }
+        : res.outcome === 'join'
+          ? {
+              en: `${hero.name.en} swore allegiance to ${gameState.factions[gameState.playerFaction].name.en}!`,
+              zh: `大喜！绝世名将${hero.name.zh}感佩你的先知诚意，正式归顺麾下！`,
+            }
+          : {
+              en: `Encounter with ${hero.name.en} (${mode}): ${res.outcome.toUpperCase()}.`,
+              zh: `拜访${hero.name.zh}（${mode === 'recruit' ? '招贤' : '劝降'}）：结果 ${res.outcome}。`,
+            };
+
+    setGameState(
+      applyHeroEncounterOutcome(
+        gameState,
+        heroId,
+        mode,
+        res.outcome,
+        res.loyaltyDelta,
+        res.trustDelta,
+        res.divergenceDelta,
+        giftGold,
+        summary
+      )
     );
   }
 
@@ -225,11 +358,20 @@ export default function App() {
   }
 
   const tabs: Array<{ id: RightTab; label: string; icon: typeof Castle }> = [
-    { id: 'city', label: tLoc(UI_TEXT.tabCity, lang), icon: Castle },
-    { id: 'advisor', label: tLoc(UI_TEXT.tabAdvisor, lang), icon: Sparkles },
-    { id: 'diplomacy', label: tLoc(UI_TEXT.tabDiplomacy, lang), icon: Handshake },
-    { id: 'chronicle', label: tLoc(UI_TEXT.tabChronicle, lang), icon: ScrollText },
+    { id: 'city', label: lang === 'zh' ? '城池' : 'City', icon: Castle },
+    { id: 'heroes', label: lang === 'zh' ? '名将录' : 'Heroes', icon: Users },
+    { id: 'tech', label: lang === 'zh' ? '科技' : 'Tech', icon: FlaskConical },
+    { id: 'advisor', label: lang === 'zh' ? '军师' : 'Council', icon: Sparkles },
+    { id: 'diplomacy', label: lang === 'zh' ? '外交' : 'Diplo', icon: Handshake },
+    { id: 'chronicle', label: lang === 'zh' ? '史记' : 'Log', icon: ScrollText },
   ];
+
+  const duelAttacker = activeDuel?.payload.generalId
+    ? gameState.generals[activeDuel.payload.generalId]
+    : undefined;
+  const duelDefender = activeDuel?.payload.defenderHeroId
+    ? gameState.generals[activeDuel.payload.defenderHeroId]
+    : undefined;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -244,18 +386,17 @@ export default function App() {
         onNewGame={() => setGameState(null)}
       />
 
-      {/* Main Workspace */}
       <main className="flex-1 max-w-[1440px] w-full mx-auto px-3 sm:px-5 py-4 grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
-        {/* Left: Strategic Map + Quick Chronicle Strip */}
+        {/* Left: Realistic Topographic Map + Chronicle Strip */}
         <div className="xl:col-span-8 space-y-3">
           <StrategyMap
             state={gameState}
             lang={lang}
             selectedCityId={selectedCityId}
             onSelectCity={handleSelectCity}
+            onInspectHero={handleInspectHero}
           />
 
-          {/* Latest Dispatch Ticker */}
           {gameState.chronicle[0] && (
             <div className="ink-panel rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-2 min-w-0">
@@ -274,9 +415,9 @@ export default function App() {
           )}
         </div>
 
-        {/* Right: Tabbed Command Panel */}
+        {/* Right: 6-Tab Hero-Centric Command Drawer */}
         <aside className="xl:col-span-4 ink-panel rounded-2xl overflow-hidden flex flex-col">
-          <div className="grid grid-cols-4 border-b border-white/10 bg-[#0d1015]/70">
+          <div className="grid grid-cols-6 border-b border-white/10 bg-[#0d1015]/75">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
@@ -284,20 +425,20 @@ export default function App() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex flex-col items-center justify-center gap-1 py-2.5 px-1 text-[11px] font-semibold border-b-2 transition cursor-pointer ${
+                  className={`flex flex-col items-center justify-center gap-1 py-2.5 px-1 text-[10px] font-semibold border-b-2 transition cursor-pointer ${
                     active
-                      ? 'border-[#d4a853] text-[#f7e7be] bg-white/[0.04]'
+                      ? 'border-[#d4a853] text-[#f7e7be] bg-white/[0.05]'
                       : 'border-transparent text-[#8b92a1] hover:text-[#ebe5d5]'
                   }`}
                 >
-                  <Icon className="w-4 h-4" />
+                  <Icon className="w-3.5 h-3.5" />
                   <span className="truncate max-w-full">{tab.label}</span>
                 </button>
               );
             })}
           </div>
 
-          <div className="flex-1 min-h-[540px]">
+          <div className="flex-1 min-h-[580px]">
             {activeTab === 'city' && (
               <CityPanel
                 state={gameState}
@@ -315,6 +456,47 @@ export default function App() {
                 onOpenAttack={(fromCityId, toCityId) => setPendingAttack({ fromCityId, toCityId })}
                 onReinforce={handleReinforce}
                 onSelectCity={handleSelectCity}
+                onInspectHero={handleInspectHero}
+                onRecruitWanderingHero={(heroId) =>
+                  setHeroEncounter({ heroId, mode: 'recruit' })
+                }
+              />
+            )}
+
+            {activeTab === 'heroes' && (
+              <HeroesPanel
+                state={gameState}
+                lang={lang}
+                focusedHeroId={focusedHeroId}
+                onSelectFocusHero={setFocusedHeroId}
+                onRelocateHero={(heroId, targetCityId) =>
+                  setGameState(
+                    performRelocateHero(
+                      gameState,
+                      gameState.playerFaction,
+                      heroId,
+                      targetCityId,
+                      true
+                    )
+                  )
+                }
+                onRewardHero={(heroId) =>
+                  setGameState(performRewardHero(gameState, gameState.playerFaction, heroId))
+                }
+                onOpenEncounter={(heroId, mode) => setHeroEncounter({ heroId, mode })}
+                onPrisonerAction={(heroId, action) =>
+                  setGameState(performPrisonerAction(gameState, heroId, action))
+                }
+              />
+            )}
+
+            {activeTab === 'tech' && (
+              <TechLabPanel
+                state={gameState}
+                lang={lang}
+                onResearchTech={(techId: TechId, researcherId?: string) =>
+                  setGameState(performResearchTech(gameState, techId, researcherId))
+                }
               />
             )}
 
@@ -338,7 +520,7 @@ export default function App() {
         </aside>
       </main>
 
-      {/* Modals */}
+      {/* Campaign Launch Modal */}
       {pendingAttack && (
         <AttackSetupModal
           state={gameState}
@@ -346,16 +528,62 @@ export default function App() {
           fromCityId={pendingAttack.fromCityId}
           toCityId={pendingAttack.toCityId}
           onCancel={() => setPendingAttack(null)}
-          onLaunch={handleLaunchAttack}
+          onLaunch={handleLaunchCampaign}
         />
       )}
 
+      {/* Interactive 3-Round Pre-Battle Hero Duel Modal */}
+      {activeDuel && duelAttacker && duelDefender && (
+        <DuelModal
+          state={gameState}
+          lang={lang}
+          attacker={duelAttacker}
+          defender={duelDefender}
+          onComplete={(duelResult) =>
+            executeBattle(
+              activeDuel.fromCityId,
+              activeDuel.toCityId,
+              activeDuel.payload,
+              duelResult
+            )
+          }
+        />
+      )}
+
+      {/* Battle Report + Prisoner Fate Modal */}
       {battleReportModal && (
         <BattleReportModal
           report={battleReportModal}
           state={gameState}
           lang={lang}
           onClose={() => setBattleReportModal(null)}
+          onPersuadePrisoner={(heroId) => setHeroEncounter({ heroId, mode: 'persuade' })}
+          onPrisonerAction={(heroId, action) =>
+            setGameState(performPrisonerAction(gameState, heroId, action))
+          }
+        />
+      )}
+
+      {/* AI Hero Recruitment / Persuasion / Private Chat Modal */}
+      {heroEncounter && (
+        <HeroRecruitModal
+          state={gameState}
+          lang={lang}
+          aiConfig={aiConfig}
+          heroId={heroEncounter.heroId}
+          mode={heroEncounter.mode}
+          onResolved={handleHeroEncounterResolved}
+          onClose={() => setHeroEncounter(null)}
+        />
+      )}
+
+      {/* Fated History Crisis / Court Suspicion Trial / What-If Event Modal */}
+      {gameState.activeEvent && (
+        <HeroEventModal
+          event={gameState.activeEvent}
+          state={gameState}
+          lang={lang}
+          onChoose={(choiceId) => setGameState(resolveStoryEventChoice(gameState, choiceId))}
         />
       )}
 
@@ -386,8 +614,8 @@ export default function App() {
             <p className="text-sm text-[#cfc7b4]">
               {gameState.winner
                 ? lang === 'zh'
-                  ? `${gameState.factions[gameState.winner].name.zh}（${gameState.factions[gameState.winner].rulerName.zh}）于公元 ${gameState.year} 年一统华夏！`
-                  : `${gameState.factions[gameState.winner].name.en} under ${gameState.factions[gameState.winner].rulerName.en} unified the realm in ${gameState.year} AD!`
+                  ? `${gameState.factions[gameState.winner].name.zh}（${gameState.factions[gameState.winner].rulerName.zh}）于公元 ${gameState.year} 年改写历史、一统华夏！（最终历史偏移度：${gameState.chrono.divergence}%）`
+                  : `${gameState.factions[gameState.winner].name.en} under ${gameState.factions[gameState.winner].rulerName.en} rewrote history and unified China in ${gameState.year} AD! (Timeline Divergence: ${gameState.chrono.divergence}%)`
                 : ''}
             </p>
             <button
