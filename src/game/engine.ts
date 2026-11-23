@@ -3,6 +3,7 @@ import {
   MAX_ACTION_POINTS,
   TACTICS,
   VICTORY_CITY_TARGET,
+  YANGTZE_PORT_IDS,
   createInitialCities,
   createInitialDiplomacy,
   createInitialFactions,
@@ -14,6 +15,8 @@ import { HERO_BONDS } from './heroes.js';
 import { MODERN_TECHS } from './tech.js';
 import type {
   AITurnAction,
+  BattleModifierTag,
+  BattlePreview,
   BattleReport,
   ChronicleEntry,
   City,
@@ -27,6 +30,8 @@ import type {
   HeroBond,
   HeroEncounterMode,
   LocalizedText,
+  MarchEvent,
+  OperationReport,
   PlayableFactionId,
   PlayerProfile,
   Season,
@@ -105,6 +110,7 @@ export function createNewGame(
     activeEvent: null,
     chronicle: [introEntry],
     lastBattle: null,
+    lastOperation: null,
     recentMarches: [],
     winner: null,
     isPlayerDefeated: false,
@@ -1002,6 +1008,268 @@ export interface AttackOptions {
   deputyGeneralId?: string;
   useSignatureSkill?: boolean;
   duelResult?: DuelResult;
+  pincerFromCityId?: string;
+  pincerTroops?: number;
+  isRiverStrike?: boolean;
+}
+
+export function isYangtzePort(cityId: string): boolean {
+  return (YANGTZE_PORT_IDS as readonly string[]).includes(cityId);
+}
+
+export function canLaunchRiverStrike(
+  state: GameState,
+  factionId: PlayableFactionId
+): boolean {
+  return factionId === 'wu' || factionHasTech(state, factionId, 'steamship');
+}
+
+export function getEligibleStagingCities(
+  state: GameState,
+  factionId: PlayableFactionId,
+  targetCityId: string,
+  mode: 'adjacent' | 'river' = 'adjacent'
+): City[] {
+  const target = state.cities[targetCityId];
+  if (!target || target.owner === factionId) return [];
+
+  const owned = getFactionCities(state, factionId);
+  if (mode === 'river') {
+    if (!isYangtzePort(targetCityId) || !canLaunchRiverStrike(state, factionId)) return [];
+    return owned
+      .filter((c) => isYangtzePort(c.id) && c.id !== targetCityId && c.troops > 2000)
+      .sort((a, b) => b.troops - a.troops);
+  }
+
+  return owned
+    .filter((c) => c.neighbors.includes(targetCityId) && c.troops > 2000)
+    .sort((a, b) => b.troops - a.troops);
+}
+
+export function getStrikeableEnemyCityIds(
+  state: GameState,
+  factionId: PlayableFactionId
+): string[] {
+  const hasSpyglass = factionHasTech(state, factionId, 'spyglass');
+  const riverCapable = canLaunchRiverStrike(state, factionId);
+  const ownedPorts = getFactionCities(state, factionId).filter(
+    (c) => isYangtzePort(c.id) && c.troops > 2000
+  );
+
+  return Object.values(state.cities)
+    .filter((city) => {
+      if (city.owner === factionId) return false;
+      if (hasSpyglass) return true;
+      const hasAdjacentStaging = city.neighbors.some(
+        (nid) => state.cities[nid]?.owner === factionId
+      );
+      if (hasAdjacentStaging) return true;
+      if (riverCapable && ownedPorts.length > 0 && isYangtzePort(city.id)) return true;
+      return false;
+    })
+    .map((c) => c.id);
+}
+
+export function estimateBattlePreview(
+  state: GameState,
+  attackerFaction: PlayableFactionId,
+  fromCityId: string,
+  toCityId: string,
+  troopsToSend: number,
+  tactic: TacticId,
+  attackerGeneralId?: string,
+  options: AttackOptions = {}
+): BattlePreview {
+  const fromCity = state.cities[fromCityId];
+  const toCity = state.cities[toCityId];
+  if (!fromCity || !toCity) {
+    return { estimatedWinChance: 50, atkPower: 0, defPower: 0, modifiers: [] };
+  }
+
+  const modifiers: BattleModifierTag[] = [];
+  const defenderFaction = toCity.owner;
+
+  const pincerCity =
+    options.pincerFromCityId &&
+    options.pincerFromCityId !== fromCityId &&
+    state.cities[options.pincerFromCityId]?.owner === attackerFaction &&
+    state.cities[options.pincerFromCityId]?.neighbors.includes(toCityId)
+      ? state.cities[options.pincerFromCityId]
+      : undefined;
+  const pincerTroops =
+    pincerCity && options.pincerTroops
+      ? Math.min(Math.max(0, Math.round(options.pincerTroops)), Math.max(0, pincerCity.troops - 1000))
+      : 0;
+
+  const totalAttackingTroops = Math.max(1000, troopsToSend) + pincerTroops;
+
+  const attackerGeneral =
+    (attackerGeneralId &&
+    state.generals[attackerGeneralId]?.faction === attackerFaction &&
+    state.generals[attackerGeneralId]?.status === 'active'
+      ? state.generals[attackerGeneralId]
+      : undefined) || getBestGeneralInCity(state, fromCityId, attackerFaction);
+  const deputyGeneral =
+    options.deputyGeneralId &&
+    options.deputyGeneralId !== attackerGeneral?.id &&
+    state.generals[options.deputyGeneralId]?.faction === attackerFaction &&
+    state.generals[options.deputyGeneralId]?.status === 'active'
+      ? state.generals[options.deputyGeneralId]
+      : undefined;
+  const defenderGeneral = getBestGeneralInCity(state, toCityId, defenderFaction);
+
+  let atkMult = 1.0;
+  let defMult = 1.0 + toCity.defense * 0.11;
+  modifiers.push({
+    label: { en: `City Walls Lv.${toCity.defense}`, zh: `敌城防 Lv.${toCity.defense}` },
+    value: `-${Math.round(toCity.defense * 11)}%`,
+    positive: false,
+  });
+
+  if (pincerTroops >= 1000) {
+    atkMult += 0.2;
+    modifiers.push({
+      label: { en: 'Joint Pincer Flank', zh: '多路合围夹击' },
+      value: '+20%',
+      positive: true,
+    });
+  }
+
+  if (options.isRiverStrike) {
+    atkMult += 0.12;
+    modifiers.push({
+      label: { en: 'Amphibious Surprise', zh: '水师奔袭奇袭' },
+      value: '+12%',
+      positive: true,
+    });
+  }
+
+  if (tactic === 'assault' && toCity.terrain === 'plains') {
+    atkMult += 0.16;
+    modifiers.push({ label: { en: 'Plains Charge', zh: '平原冲阵' }, value: '+16%', positive: true });
+  }
+  if (tactic === 'fire' && (toCity.terrain === 'river' || toCity.troops >= 10000)) {
+    atkMult += 0.2;
+    modifiers.push({ label: { en: 'Fire Synergy', zh: '火攻天时' }, value: '+20%', positive: true });
+  }
+  if (tactic === 'ambush' && toCity.terrain === 'mountain') {
+    atkMult += 0.22;
+    modifiers.push({ label: { en: 'Mountain Ambush', zh: '山地伏击' }, value: '+22%', positive: true });
+  }
+  if (tactic === 'siege' && (toCity.terrain === 'fortress' || toCity.defense >= 4)) {
+    atkMult += 0.18;
+    defMult -= 0.14;
+    modifiers.push({ label: { en: 'Siege Breach', zh: '器械破城' }, value: '+32%', positive: true });
+  }
+
+  if (attackerFaction === 'shu' && attackerGeneral) atkMult += 0.15;
+  if (defenderFaction === 'shu' && toCity.terrain === 'mountain') defMult += 0.16;
+  if (attackerFaction === 'wu' && (tactic === 'fire' || toCity.terrain === 'river')) atkMult += 0.22;
+  if (defenderFaction === 'wu' && toCity.terrain === 'river') defMult += 0.15;
+
+  if (tactic === 'assault' && factionHasTech(state, attackerFaction, 'stirrups')) {
+    atkMult += 0.18;
+    modifiers.push({ label: { en: 'Steel Stirrups', zh: '双边马镫' }, value: '+18%', positive: true });
+  }
+  if ((tactic === 'siege' || tactic === 'fire') && factionHasTech(state, attackerFaction, 'gunpowder')) {
+    atkMult += 0.3;
+    defMult -= 0.12;
+    modifiers.push({ label: { en: 'Black Powder', zh: '黑火药震天雷' }, value: '+42%', positive: true });
+  }
+  if (tactic === 'ambush' && factionHasTech(state, attackerFaction, 'spyglass')) {
+    atkMult += 0.2;
+    modifiers.push({ label: { en: 'Optical Spyglass', zh: '光学望远镜' }, value: '+20%', positive: true });
+  }
+  if (toCity.terrain === 'river' && factionHasTech(state, attackerFaction, 'steamship')) {
+    atkMult += 0.35;
+    modifiers.push({ label: { en: 'Steam Warships', zh: '蒸汽明轮战船' }, value: '+35%', positive: true });
+  }
+  if (toCity.terrain === 'river' && factionHasTech(state, defenderFaction, 'steamship')) defMult += 0.25;
+  if (factionHasTech(state, attackerFaction, 'balloon')) atkMult += 0.1;
+  if (factionHasTech(state, defenderFaction, 'gunpowder')) {
+    defMult += 0.14;
+    modifiers.push({ label: { en: 'Rival Gunpowder', zh: '敌仿制火药' }, value: '-14%', positive: false });
+  }
+
+  if (state.chrono.coalitionActive && defenderFaction !== state.playerFaction && defenderFaction !== 'neutral') {
+    defMult += 0.12;
+    modifiers.push({ label: { en: 'Coalition Resolve', zh: '合纵联军死守' }, value: '-12%', positive: false });
+  }
+
+  const statKey = TACTICS[tactic].statKey;
+  if (attackerGeneral) {
+    const heroBonus = (attackerGeneral[statKey] - 65) / 140 + (attackerGeneral.level - 1) * 0.03 + (attackerGeneral.specialty === tactic ? 0.14 : 0);
+    atkMult += heroBonus;
+    modifiers.push({
+      label: { en: attackerGeneral.name.en, zh: attackerGeneral.name.zh },
+      value: `${heroBonus >= 0 ? '+' : ''}${Math.round(heroBonus * 100)}%`,
+      positive: heroBonus >= 0,
+    });
+    if (defenderFaction !== 'neutral' && attackerGeneral.vendettaAgainst.includes(defenderFaction)) {
+      atkMult += 0.2;
+      modifiers.push({ label: { en: 'Sworn Vendetta', zh: '血海深仇' }, value: '+20%', positive: true });
+    }
+  }
+  if (deputyGeneral) {
+    atkMult += Math.max(0.05, (deputyGeneral[statKey] - 60) / 280);
+  }
+  if (defenderGeneral) {
+    const defStat = (defenderGeneral.command + defenderGeneral.intellect) / 2;
+    defMult += (defStat - 65) / 150 + (defenderGeneral.level - 1) * 0.03;
+    if (defenderGeneral.vendettaAgainst.includes(attackerFaction)) {
+      defMult += 0.2;
+      modifiers.push({ label: { en: 'Enemy Vendetta', zh: '敌将复仇怒火' }, value: '-20%', positive: false });
+    }
+    if (attackerFaction === state.playerFaction && defenderGeneral.dossier.weakToTactic === tactic) {
+      const ci = getChronoInsightBonus(state) * 0.75;
+      if (ci > 0) {
+        atkMult += ci;
+        modifiers.push({
+          label: { en: 'Chrono-Insight Counter', zh: '先知克制软肋' },
+          value: `+${Math.round(ci * 100)}%`,
+          positive: true,
+        });
+      }
+    }
+  }
+
+  const bonds = getActiveBondsForHeroes(
+    [attackerGeneral?.id, deputyGeneral?.id].filter(Boolean) as string[]
+  );
+  for (const b of bonds) {
+    atkMult += b.combatBonus;
+    modifiers.push({
+      label: b.name,
+      value: `+${Math.round(b.combatBonus * 100)}%`,
+      positive: true,
+    });
+  }
+
+  if (attackerGeneral && options.useSignatureSkill && attackerGeneral.skillCooldown === 0) {
+    const sk = attackerGeneral.signatureSkill;
+    atkMult += sk.powerBonus;
+    if (sk.effect === 'fire_ignore_def' || sk.effect === 'siege_breaker') {
+      defMult = Math.max(0.95, defMult - 0.28);
+    } else if (sk.effect === 'morale_shatter' || sk.effect === 'charisma_charm') {
+      defMult = Math.max(0.9, defMult - 0.22);
+    } else if (sk.effect === 'river_pierce' && toCity.terrain === 'river') {
+      defMult = Math.max(0.95, defMult - 0.24);
+    }
+    modifiers.push({
+      label: sk.name,
+      value: `+${Math.round(sk.powerBonus * 100)}%`,
+      positive: true,
+    });
+  }
+
+  const atkPower = Math.round(totalAttackingTroops * Math.max(0.7, atkMult));
+  const defPower = Math.round(Math.max(1000, toCity.troops) * Math.max(0.8, defMult));
+  const ratio = atkPower / Math.max(1, defPower);
+  // Smooth logistic probability curve centered at ratio = 1.0
+  const rawProb = 1 / (1 + Math.exp(-5.2 * (ratio - 1.0)));
+  const estimatedWinChance = clamp(Math.round(rawProb * 100), 5, 95);
+
+  return { estimatedWinChance, atkPower, defPower, modifiers };
 }
 
 export function performAttackCity(
@@ -1020,12 +1288,37 @@ export function performAttackCity(
   const toCity = state.cities[toCityId];
   if (!fromCity || !toCity) return state;
   if (fromCity.owner !== attackerFaction || toCity.owner === attackerFaction) return state;
-  if (!fromCity.neighbors.includes(toCityId)) return state;
+
+  const isValidRiver =
+    Boolean(options.isRiverStrike) &&
+    isYangtzePort(fromCityId) &&
+    isYangtzePort(toCityId) &&
+    canLaunchRiverStrike(state, attackerFaction) &&
+    state.factions[attackerFaction].food >= ACTION_COSTS.riverStrikeFood;
+
+  if (!fromCity.neighbors.includes(toCityId) && !isValidRiver) return state;
   if (consumeAP && state.actionPoints < 1) return state;
 
   const maxSend = Math.max(0, fromCity.troops - 1000);
-  const attackingTroops = Math.min(Math.max(1000, Math.round(troopsToSend)), maxSend);
-  if (attackingTroops <= 0) return state;
+  const primaryTroops = Math.min(Math.max(1000, Math.round(troopsToSend)), maxSend);
+  if (primaryTroops <= 0) return state;
+
+  // Optional 2nd-city Joint Pincer army!
+  const pincerCity =
+    !isValidRiver &&
+    options.pincerFromCityId &&
+    options.pincerFromCityId !== fromCityId &&
+    state.cities[options.pincerFromCityId]?.owner === attackerFaction &&
+    state.cities[options.pincerFromCityId]?.neighbors.includes(toCityId)
+      ? state.cities[options.pincerFromCityId]
+      : undefined;
+  const maxPincer = pincerCity ? Math.max(0, pincerCity.troops - 1000) : 0;
+  const pincerTroops =
+    pincerCity && options.pincerTroops && options.pincerTroops >= 1000 && maxPincer >= 1000
+      ? Math.min(Math.round(options.pincerTroops), maxPincer)
+      : 0;
+
+  const attackingTroops = primaryTroops + pincerTroops;
 
   const defenderFaction = toCity.owner;
   const attackerGeneral =
@@ -1050,6 +1343,9 @@ export function performAttackCity(
   let defMult = 1.0 + toCity.defense * 0.11;
   let casualtyShield = 1.0;
   let plunderGold = 0;
+
+  if (pincerTroops >= 1000) atkMult += 0.2; // Joint Multi-City Pincer Bonus!
+  if (isValidRiver) atkMult += 0.12; // Amphibious Yangtze Strike surprise!
 
   // Terrain & Tactic synergies
   if (tactic === 'assault' && toCity.terrain === 'plains') atkMult += 0.16;
@@ -1185,10 +1481,21 @@ export function performAttackCity(
 
   const survivingAttackers = Math.max(0, attackingTroops - attackerLosses);
   const updatedCities = { ...state.cities };
+  const primaryShare = primaryTroops / Math.max(1, attackingTroops);
+  const survivingPrimary = Math.round(survivingAttackers * primaryShare);
+  const survivingPincer = survivingAttackers - survivingPrimary;
+
   updatedCities[fromCityId] = {
     ...fromCity,
-    troops: fromCity.troops - attackingTroops + (captured ? 0 : survivingAttackers),
+    troops: fromCity.troops - primaryTroops + (captured ? 0 : survivingPrimary),
   };
+
+  if (pincerCity && pincerTroops > 0) {
+    updatedCities[pincerCity.id] = {
+      ...pincerCity,
+      troops: pincerCity.troops - pincerTroops + (captured ? 0 : survivingPincer),
+    };
+  }
 
   if (captured) {
     updatedCities[toCityId] = {
@@ -1291,12 +1598,16 @@ export function performAttackCity(
     }
   }
 
-  // Plunder gold + Lord's Trust shifts
+  // Plunder gold + River strike food cost + Lord's Trust shifts
   const updatedFactions = { ...state.factions };
-  if (plunderGold > 0) {
+  if (plunderGold > 0 || isValidRiver) {
     updatedFactions[attackerFaction] = {
       ...updatedFactions[attackerFaction],
       gold: updatedFactions[attackerFaction].gold + plunderGold,
+      food: Math.max(
+        0,
+        updatedFactions[attackerFaction].food - (isValidRiver ? ACTION_COSTS.riverStrikeFood : 0)
+      ),
     };
   }
 
@@ -1323,14 +1634,19 @@ export function performAttackCity(
   const tacticName = TACTICS[tactic].name;
   const capHero = capturedHeroId ? state.generals[capturedHeroId] : undefined;
 
+  const pincerTagEn = pincerCity && pincerTroops > 0 ? ` in a joint pincer with ${pincerCity.name.en}` : '';
+  const pincerTagZh = pincerCity && pincerTroops > 0 ? `（联手${pincerCity.name.zh}合围夹击）` : '';
+  const riverTagEn = isValidRiver ? ' via Yangtze Amphibious Fleet' : '';
+  const riverTagZh = isValidRiver ? '（水师横渡奔袭）' : '';
+
   const narrative: LocalizedText = captured
     ? {
-        en: `${genStrEn}${atkNameEn} forces seized ${toCity.name.en} (${tacticName.en})${skillTriggered ? ` with [${skillTriggered.en}]` : ''}!${capHero ? ` Captured ${capHero.name.en}!` : ''} (${attackerLosses.toLocaleString()} lost vs ${defenderLosses.toLocaleString()} enemy casualties).`,
-        zh: `${genStrZh}${atkNameZh}军施以「${tacticName.zh}」${skillTriggered ? `并发动绝技【${skillTriggered.zh}】` : ''}，攻克${toCity.name.zh}！${capHero ? `生擒敌将${capHero.name.zh}！` : ''}（我损 ${attackerLosses.toLocaleString()}，敌折 ${defenderLosses.toLocaleString()}）。`,
+        en: `${genStrEn}${atkNameEn} forces seized ${toCity.name.en} (${tacticName.en})${pincerTagEn}${riverTagEn}${skillTriggered ? ` with [${skillTriggered.en}]` : ''}!${capHero ? ` Captured ${capHero.name.en}!` : ''} (${attackerLosses.toLocaleString()} lost vs ${defenderLosses.toLocaleString()} enemy casualties).`,
+        zh: `${genStrZh}${atkNameZh}军施以「${tacticName.zh}」${pincerTagZh}${riverTagZh}${skillTriggered ? `并发动绝技【${skillTriggered.zh}】` : ''}，攻克${toCity.name.zh}！${capHero ? `生擒敌将${capHero.name.zh}！` : ''}（我损 ${attackerLosses.toLocaleString()}，敌折 ${defenderLosses.toLocaleString()}）。`,
       }
     : {
-        en: `${genStrEn}${atkNameEn} assault on ${toCity.name.en} (${tacticName.en}) was repelled! (${attackerLosses.toLocaleString()} lost vs ${defenderLosses.toLocaleString()} defender losses).`,
-        zh: `${genStrZh}${atkNameZh}军以「${tacticName.zh}」猛攻${toCity.name.zh}未克，收兵退回！（攻损 ${attackerLosses.toLocaleString()}，守折 ${defenderLosses.toLocaleString()}）。`,
+        en: `${genStrEn}${atkNameEn} assault on ${toCity.name.en} (${tacticName.en})${pincerTagEn}${riverTagEn} was repelled! (${attackerLosses.toLocaleString()} lost vs ${defenderLosses.toLocaleString()} defender losses).`,
+        zh: `${genStrZh}${atkNameZh}军以「${tacticName.zh}」${pincerTagZh}${riverTagZh}猛攻${toCity.name.zh}未克，收兵退回！（攻损 ${attackerLosses.toLocaleString()}，守折 ${defenderLosses.toLocaleString()}）。`,
       };
 
   const report: BattleReport = {
@@ -1357,14 +1673,26 @@ export function performAttackCity(
     narrative,
   };
 
-  const march = {
-    id: nextId('march'),
-    fromCityId,
-    toCityId,
-    faction: attackerFaction,
-    type: 'attack' as const,
-    captured,
-  };
+  const newMarches: MarchEvent[] = [
+    {
+      id: nextId('march'),
+      fromCityId,
+      toCityId,
+      faction: attackerFaction,
+      type: isValidRiver ? 'river_strike' : 'attack',
+      captured,
+    },
+  ];
+  if (pincerCity && pincerTroops > 0) {
+    newMarches.push({
+      id: nextId('march'),
+      fromCityId: pincerCity.id,
+      toCityId,
+      faction: attackerFaction,
+      type: 'attack',
+      captured,
+    });
+  }
 
   const nextState: GameState = {
     ...state,
@@ -1375,11 +1703,393 @@ export function performAttackCity(
     diplomacy: updatedDiplomacy,
     chrono: nextChrono,
     lastBattle: report,
-    recentMarches: [march, ...state.recentMarches].slice(0, 6),
+    recentMarches: [...newMarches, ...state.recentMarches].slice(0, 6),
     chronicle: appendChronicle(state, 'battle', narrative, attackerFaction),
   };
 
   return checkVictoryState(nextState);
+}
+
+// ==================== SPECIAL MILITARY OPERATIONS (NIGHT RAID, BOMBARD, SOW DISCORD) ====================
+
+export function performNightRaid(
+  state: GameState,
+  attackerFaction: PlayableFactionId,
+  fromCityId: string,
+  toCityId: string,
+  heroId?: string,
+  consumeAP = true,
+  rng: () => number = Math.random
+): GameState {
+  const fromCity = state.cities[fromCityId];
+  const toCity = state.cities[toCityId];
+  if (!fromCity || !toCity) return state;
+  if (fromCity.owner !== attackerFaction || toCity.owner === attackerFaction) return state;
+  if (!fromCity.neighbors.includes(toCityId) || fromCity.troops < 2500) return state;
+  if (consumeAP && state.actionPoints < 1) return state;
+
+  const hero =
+    (heroId &&
+    state.generals[heroId]?.faction === attackerFaction &&
+    state.generals[heroId]?.status === 'active'
+      ? state.generals[heroId]
+      : undefined) || getBestGeneralInCity(state, fromCityId, attackerFaction);
+
+  const warStat = hero ? hero.war : 75;
+  const stirrupBonus = factionHasTech(state, attackerFaction, 'stirrups') ? 0.06 : 0;
+  const killRatio = clamp(0.15 + ((warStat - 60) / 400) + stirrupBonus + (rng() * 0.04), 0.14, 0.29);
+  const enemyLost = Math.min(Math.max(0, toCity.troops - 500), Math.round(toCity.troops * killRatio));
+  const friendlyLost = Math.min(
+    Math.max(0, fromCity.troops - 1500),
+    Math.round(320 + rng() * 340 * (factionHasTech(state, attackerFaction, 'medicine') ? 0.75 : 1))
+  );
+  const goldPlundered = Math.round(180 + (warStat - 50) * 2.1 + rng() * 50);
+  const foodPlundered = Math.round(140 + (warStat - 50) * 1.8 + rng() * 40);
+
+  const updatedCities = {
+    ...state.cities,
+    [fromCityId]: { ...fromCity, troops: Math.max(1000, fromCity.troops - friendlyLost) },
+    [toCityId]: { ...toCity, troops: Math.max(500, toCity.troops - enemyLost) },
+  };
+
+  const updatedFactions = { ...state.factions };
+  updatedFactions[attackerFaction] = {
+    ...updatedFactions[attackerFaction],
+    gold: updatedFactions[attackerFaction].gold + goldPlundered,
+    food: updatedFactions[attackerFaction].food + foodPlundered,
+  };
+  if (toCity.owner !== 'neutral') {
+    const defF = updatedFactions[toCity.owner];
+    updatedFactions[toCity.owner] = {
+      ...defF,
+      gold: Math.max(0, defF.gold - Math.round(goldPlundered * 0.65)),
+      food: Math.max(0, defF.food - Math.round(foodPlundered * 0.65)),
+    };
+  }
+
+  const updatedGenerals = { ...state.generals };
+  if (hero) {
+    updatedGenerals[hero.id] = grantHeroXp(hero, 34);
+  }
+
+  const updatedDiplomacy = { ...state.diplomacy };
+  if (toCity.owner !== 'neutral') {
+    const key = getDiplomacyKey(attackerFaction, toCity.owner);
+    const rel = updatedDiplomacy[key];
+    if (rel) {
+      const nextScore = clamp(rel.score - 14, -100, 100);
+      updatedDiplomacy[key] = {
+        ...rel,
+        score: nextScore,
+        truceTurnsLeft: 0,
+        status: scoreToStatus(nextScore, 0),
+      };
+    }
+  }
+
+  const atkName = state.factions[attackerFaction].shortName;
+  const narrative: LocalizedText = {
+    en: `Night Raid! ${hero ? `${hero.name.en} led ` : ''}${atkName.en} raiders into ${toCity.name.en}, cutting down ${enemyLost.toLocaleString()} defenders and plundering +${goldPlundered} Gold & +${foodPlundered} Food (${friendlyLost} lost).`,
+    zh: `夜袭劫营！${hero ? `${hero.name.zh}率` : ''}${atkName.zh}轻骑突袭${toCity.name.zh}，斩杀守军 ${enemyLost.toLocaleString()} 人，劫获粮饷 +${goldPlundered} 金 / +${foodPlundered} 粮（我损 ${friendlyLost}）。`,
+  };
+
+  const opReport: OperationReport = {
+    id: nextId('op'),
+    turn: state.turn,
+    type: 'raid',
+    attackerFaction,
+    targetCityId: toCityId,
+    fromCityId,
+    heroId: hero?.id,
+    enemyTroopsLost: enemyLost,
+    friendlyTroopsLost: friendlyLost,
+    goldPlundered,
+    foodPlundered,
+    defenseReduced: 0,
+    loyaltyReduced: 0,
+    narrative,
+  };
+
+  const march: MarchEvent = {
+    id: nextId('march'),
+    fromCityId,
+    toCityId,
+    faction: attackerFaction,
+    type: 'raid',
+  };
+
+  return {
+    ...state,
+    actionPoints: consumeAP ? state.actionPoints - 1 : state.actionPoints,
+    factions: updatedFactions,
+    cities: updatedCities,
+    generals: updatedGenerals,
+    diplomacy: updatedDiplomacy,
+    chrono:
+      attackerFaction === state.playerFaction
+        ? { ...state.chrono, trust: clamp(state.chrono.trust + 3, 0, 100) }
+        : state.chrono,
+    lastOperation: opReport,
+    recentMarches: [march, ...state.recentMarches].slice(0, 6),
+    chronicle: appendChronicle(state, 'battle', narrative, attackerFaction),
+  };
+}
+
+export function performSabotageBombard(
+  state: GameState,
+  attackerFaction: PlayableFactionId,
+  fromCityId: string,
+  toCityId: string,
+  heroId?: string,
+  consumeAP = true,
+  rng: () => number = Math.random
+): GameState {
+  const fromCity = state.cities[fromCityId];
+  const toCity = state.cities[toCityId];
+  const faction = state.factions[attackerFaction];
+  if (!fromCity || !toCity) return state;
+  if (fromCity.owner !== attackerFaction || toCity.owner === attackerFaction) return state;
+  if (!fromCity.neighbors.includes(toCityId)) return state;
+  if (faction.gold < ACTION_COSTS.bombardGold) return state;
+  if (consumeAP && state.actionPoints < 1) return state;
+
+  const hero =
+    (heroId &&
+    state.generals[heroId]?.faction === attackerFaction &&
+    state.generals[heroId]?.status === 'active'
+      ? state.generals[heroId]
+      : undefined) || getBestGeneralInCity(state, fromCityId, attackerFaction);
+
+  const intStat = hero ? hero.intellect : 75;
+  const hasGunpowder = factionHasTech(state, attackerFaction, 'gunpowder');
+  const defDrop = Math.min(toCity.defense - 1, hasGunpowder ? 2 : 1);
+  const burnedTroops = Math.min(
+    Math.max(0, toCity.troops - 500),
+    Math.round((1150 + intStat * 12 + rng() * 350) * (hasGunpowder ? 1.38 : 1.0))
+  );
+
+  const updatedCities = {
+    ...state.cities,
+    [toCityId]: {
+      ...toCity,
+      defense: Math.max(1, toCity.defense - defDrop),
+      troops: Math.max(500, toCity.troops - burnedTroops),
+    },
+  };
+
+  const updatedGenerals = { ...state.generals };
+  if (hero) {
+    updatedGenerals[hero.id] = grantHeroXp(hero, 36);
+  }
+  for (const g of Object.values(updatedGenerals)) {
+    if (g.cityId === toCityId && g.faction === toCity.owner && g.status === 'active') {
+      updatedGenerals[g.id] = { ...g, loyalty: clamp(g.loyalty - 6, 0, 100) };
+    }
+  }
+
+  const updatedFactions = {
+    ...state.factions,
+    [attackerFaction]: { ...faction, gold: faction.gold - ACTION_COSTS.bombardGold },
+  };
+
+  const updatedDiplomacy = { ...state.diplomacy };
+  if (toCity.owner !== 'neutral') {
+    const key = getDiplomacyKey(attackerFaction, toCity.owner);
+    const rel = updatedDiplomacy[key];
+    if (rel) {
+      const nextScore = clamp(rel.score - 16, -100, 100);
+      updatedDiplomacy[key] = {
+        ...rel,
+        score: nextScore,
+        truceTurnsLeft: 0,
+        status: scoreToStatus(nextScore, 0),
+      };
+    }
+  }
+
+  const atkName = faction.shortName;
+  const narrative: LocalizedText = {
+    en: `${hasGunpowder ? 'Thunder-Bomb Bombardment' : 'Fire Stratagem'}! ${hero ? `${hero.name.en} struck ` : `${atkName.en} bombarded `}${toCity.name.en}: Walls -${defDrop} (now Lv.${updatedCities[toCityId].defense}) & scorched ${burnedTroops.toLocaleString()} troops!`,
+    zh: `${hasGunpowder ? '震天雷火炮轰城' : '奇谋纵火焚城'}！${hero ? `${hero.name.zh}施计轰击` : `${atkName.zh}军奇袭`}${toCity.name.zh}：城防 -${defDrop}（现 Lv.${updatedCities[toCityId].defense}），焚毁守军 ${burnedTroops.toLocaleString()} 人！`,
+  };
+
+  const opReport: OperationReport = {
+    id: nextId('op'),
+    turn: state.turn,
+    type: 'bombard',
+    attackerFaction,
+    targetCityId: toCityId,
+    fromCityId,
+    heroId: hero?.id,
+    enemyTroopsLost: burnedTroops,
+    friendlyTroopsLost: 0,
+    goldPlundered: 0,
+    foodPlundered: 0,
+    defenseReduced: defDrop,
+    loyaltyReduced: 6,
+    narrative,
+  };
+
+  const march: MarchEvent = {
+    id: nextId('march'),
+    fromCityId,
+    toCityId,
+    faction: attackerFaction,
+    type: 'bombard',
+  };
+
+  return {
+    ...state,
+    actionPoints: consumeAP ? state.actionPoints - 1 : state.actionPoints,
+    factions: updatedFactions,
+    cities: updatedCities,
+    generals: updatedGenerals,
+    diplomacy: updatedDiplomacy,
+    chrono:
+      attackerFaction === state.playerFaction
+        ? {
+            ...state.chrono,
+            trust: clamp(state.chrono.trust + 3, 0, 100),
+            divergence: clamp(state.chrono.divergence + (hasGunpowder ? 4 : 1), 0, 100),
+          }
+        : state.chrono,
+    lastOperation: opReport,
+    recentMarches: [march, ...state.recentMarches].slice(0, 6),
+    chronicle: appendChronicle(state, 'battle', narrative, attackerFaction),
+  };
+}
+
+export function performSowDiscord(
+  state: GameState,
+  attackerFaction: PlayableFactionId,
+  toCityId: string,
+  heroId?: string,
+  consumeAP = true,
+  rng: () => number = Math.random
+): GameState {
+  const toCity = state.cities[toCityId];
+  const faction = state.factions[attackerFaction];
+  if (!toCity || toCity.owner === attackerFaction) return state;
+  if (faction.gold < ACTION_COSTS.discordGold) return state;
+  if (consumeAP && state.actionPoints < 1) return state;
+
+  const hasSpyglass = factionHasTech(state, attackerFaction, 'spyglass');
+  const adjacentOwned = getEligibleStagingCities(state, attackerFaction, toCityId, 'adjacent');
+  if (!hasSpyglass && adjacentOwned.length === 0) return state;
+
+  const hero =
+    (heroId &&
+    state.generals[heroId]?.faction === attackerFaction &&
+    state.generals[heroId]?.status === 'active'
+      ? state.generals[heroId]
+      : undefined) ||
+    getFactionGenerals(state, attackerFaction)
+      .filter((g) => g.status === 'active')
+      .sort((a, b) => b.charisma + b.intellect - (a.charisma + a.intellect))[0];
+
+  const skillPower = hero ? (hero.charisma + hero.intellect) / 2 : 75;
+  const hasPrinting = factionHasTech(state, attackerFaction, 'printing');
+  const loyaltyDrop = Math.round((13 + (skillPower - 60) * 0.25) * (hasPrinting ? 1.35 : 1.0));
+  const deserters = Math.min(
+    Math.max(0, toCity.troops - 500),
+    Math.round((620 + skillPower * 7.5 + rng() * 250) * (hasPrinting ? 1.3 : 1.0))
+  );
+
+  const updatedCities = {
+    ...state.cities,
+    [toCityId]: { ...toCity, troops: Math.max(500, toCity.troops - deserters) },
+  };
+
+  const updatedGenerals = { ...state.generals };
+  if (hero) {
+    updatedGenerals[hero.id] = grantHeroXp(hero, 35);
+  }
+
+  const rulers = new Set(['caocao', 'liubei', 'sunquan']);
+  const capital =
+    getFactionCities(state, attackerFaction).find((c) => c.isCapital) ||
+    getFactionCities(state, attackerFaction)[0];
+  let defectedHeroId: string | undefined;
+
+  for (const g of Object.values(updatedGenerals)) {
+    if (g.cityId === toCityId && g.faction === toCity.owner && g.status === 'active') {
+      const nextLoyalty = clamp(g.loyalty - loyaltyDrop, 0, 100);
+      if (
+        !defectedHeroId &&
+        !rulers.has(g.id) &&
+        !g.vendettaAgainst.includes(attackerFaction) &&
+        nextLoyalty < 45
+      ) {
+        defectedHeroId = g.id;
+        updatedGenerals[g.id] = {
+          ...g,
+          faction: attackerFaction,
+          cityId: capital?.id || g.cityId,
+          loyalty: 76,
+        };
+      } else {
+        updatedGenerals[g.id] = { ...g, loyalty: nextLoyalty };
+      }
+    }
+  }
+
+  const updatedFactions = {
+    ...state.factions,
+    [attackerFaction]: { ...faction, gold: faction.gold - ACTION_COSTS.discordGold },
+  };
+
+  const defHero = defectedHeroId ? state.generals[defectedHeroId] : undefined;
+  const fromCityId = adjacentOwned[0]?.id || capital?.id || toCityId;
+
+  const narrative: LocalizedText = {
+    en: `${hasPrinting ? 'Printing-Press Propaganda' : 'Espionage & Sow Discord'} in ${toCity.name.en}! ${hero ? `${hero.name.en} ` : ''}incited ${deserters.toLocaleString()} desertions & -${loyaltyDrop} enemy hero loyalty.${defHero ? ` ${defHero.name.en} DEFECTED to your banner!` : ''}`,
+    zh: `${hasPrinting ? '活字传单攻心' : '离间策反'}！${hero ? `${hero.name.zh}暗施反间，` : ''}${toCity.name.zh} ${deserters.toLocaleString()} 士卒哗变溃散，守将忠诚 -${loyaltyDrop}！${defHero ? `守将${defHero.name.zh}竟临阵倒戈归顺我军！` : ''}`,
+  };
+
+  const opReport: OperationReport = {
+    id: nextId('op'),
+    turn: state.turn,
+    type: 'discord',
+    attackerFaction,
+    targetCityId: toCityId,
+    fromCityId,
+    heroId: hero?.id,
+    enemyTroopsLost: deserters,
+    friendlyTroopsLost: 0,
+    goldPlundered: 0,
+    foodPlundered: 0,
+    defenseReduced: 0,
+    loyaltyReduced: loyaltyDrop,
+    defectedHeroId,
+    narrative,
+  };
+
+  const march: MarchEvent = {
+    id: nextId('march'),
+    fromCityId,
+    toCityId,
+    faction: attackerFaction,
+    type: 'discord',
+  };
+
+  return {
+    ...state,
+    actionPoints: consumeAP ? state.actionPoints - 1 : state.actionPoints,
+    factions: updatedFactions,
+    cities: updatedCities,
+    generals: updatedGenerals,
+    chrono:
+      attackerFaction === state.playerFaction
+        ? {
+            ...state.chrono,
+            trust: clamp(state.chrono.trust + (defHero ? 8 : 2), 0, 100),
+            divergence: clamp(state.chrono.divergence + (defHero ? 6 : 2), 0, 100),
+          }
+        : state.chrono,
+    lastOperation: opReport,
+    recentMarches: [march, ...state.recentMarches].slice(0, 6),
+    chronicle: appendChronicle(state, 'hero', narrative, attackerFaction),
+  };
 }
 
 // ==================== STORY EVENTS & DIPLOMACY ====================
@@ -1619,6 +2329,12 @@ export function executeAITurnAction(
         { useSignatureSkill: Boolean(bestGen && bestGen.skillCooldown === 0) }
       );
     }
+  } else if (action.type === 'raid' && city && city.owner === factionId && action.targetCityId) {
+    const bestGen = getBestGeneralInCity(state, city.id, factionId);
+    next = performNightRaid(state, factionId, city.id, action.targetCityId, bestGen?.id, false);
+  } else if (action.type === 'bombard' && city && city.owner === factionId && action.targetCityId) {
+    const bestGen = getBestGeneralInCity(state, city.id, factionId);
+    next = performSabotageBombard(state, factionId, city.id, action.targetCityId, bestGen?.id, false);
   } else if (action.type === 'reinforce' && city && city.owner === factionId && action.targetCityId) {
     const ratio = Math.min(0.6, Math.max(0.3, action.troopsRatio ?? 0.45));
     next = performReinforceCity(

@@ -10,11 +10,7 @@ import {
   Users,
 } from 'lucide-react';
 import { AdvisorPanel } from './components/AdvisorPanel.js';
-import {
-  AttackSetupModal,
-  BattleReportModal,
-  type LaunchCampaignPayload,
-} from './components/BattleModal.js';
+import { BattleReportModal } from './components/BattleModal.js';
 import { ChronicleLog } from './components/ChronicleLog.js';
 import { CityPanel } from './components/CityPanel.js';
 import { DiplomacyPanel } from './components/DiplomacyPanel.js';
@@ -23,6 +19,11 @@ import { FactionSelect } from './components/FactionSelect.js';
 import { HeroEventModal } from './components/HeroEventModal.js';
 import { HeroRecruitModal } from './components/HeroRecruitModal.js';
 import { HeroesPanel } from './components/HeroesPanel.js';
+import {
+  MilitaryModal,
+  OperationReportModal,
+  type ExecuteMilitaryPayload,
+} from './components/MilitaryModal.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { StrategyMap } from './components/StrategyMap.js';
 import { TechLabPanel } from './components/TechLabPanel.js';
@@ -37,12 +38,15 @@ import {
   performAttackCity,
   performDevelopCity,
   performFortifyCity,
+  performNightRaid,
   performPrisonerAction,
   performRecruitTroops,
   performReinforceCity,
   performRelocateHero,
   performResearchTech,
   performRewardHero,
+  performSabotageBombard,
+  performSowDiscord,
   resolveStoryEventChoice,
 } from './game/engine.js';
 import type {
@@ -56,6 +60,8 @@ import type {
   HeroEncounterMode,
   HeroEncounterResponse,
   Language,
+  MilitaryActionType,
+  OperationReport,
   PlayableFactionId,
   PlayerProfile,
   TechId,
@@ -111,18 +117,24 @@ export default function App() {
     return 'heroes';
   });
   const [focusedHeroId, setFocusedHeroId] = useState<string | null>(null);
+  const [attackMode, setAttackMode] = useState<boolean>(
+    () => new URLSearchParams(window.location.search).get('attackMode') === '1'
+  );
   const [isEndingTurn, setIsEndingTurn] = useState(false);
 
-  const [pendingAttack, setPendingAttack] = useState<{
-    fromCityId: string;
-    toCityId: string;
-  } | null>(null);
+  const [pendingMilitary, setPendingMilitary] = useState<{
+    targetCityId: string;
+    fromCityId?: string;
+    action?: MilitaryActionType;
+  } | null>(() => {
+    const target = new URLSearchParams(window.location.search).get('target');
+    return target ? { targetCityId: target } : null;
+  });
   const [activeDuel, setActiveDuel] = useState<{
-    fromCityId: string;
-    toCityId: string;
-    payload: LaunchCampaignPayload;
+    payload: ExecuteMilitaryPayload;
   } | null>(null);
   const [battleReportModal, setBattleReportModal] = useState<BattleReport | null>(null);
+  const [operationReportModal, setOperationReportModal] = useState<OperationReport | null>(null);
   const [heroEncounter, setHeroEncounter] = useState<{
     heroId: string;
     mode: HeroEncounterMode;
@@ -151,8 +163,10 @@ export default function App() {
     setSelectedCityId(capital?.id || null);
     setActiveTab('heroes');
     setFocusedHeroId(null);
+    setAttackMode(false);
     setBattleReportModal(null);
-    setPendingAttack(null);
+    setOperationReportModal(null);
+    setPendingMilitary(null);
     setActiveDuel(null);
     setHeroEncounter(null);
   }
@@ -176,18 +190,16 @@ export default function App() {
     setActiveTab('heroes');
   }
 
-  function executeBattle(
-    fromCityId: string,
-    toCityId: string,
-    payload: LaunchCampaignPayload,
+  function executeAssaultWithOptionalDuel(
+    payload: ExecuteMilitaryPayload,
     duelResult?: DuelResult
   ) {
     if (!gameState) return;
     const updated = performAttackCity(
       gameState,
       gameState.playerFaction,
-      fromCityId,
-      toCityId,
+      payload.fromCityId,
+      payload.toCityId,
       payload.troops,
       payload.tactic,
       payload.generalId,
@@ -197,28 +209,78 @@ export default function App() {
         deputyGeneralId: payload.deputyId,
         useSignatureSkill: payload.useSignatureSkill && !duelResult?.skillUsed,
         duelResult,
+        pincerFromCityId: payload.pincerFromCityId,
+        pincerTroops: payload.pincerTroops,
+        isRiverStrike: payload.actionType === 'river_strike',
       }
     );
     setGameState(updated);
-    setPendingAttack(null);
+    setPendingMilitary(null);
     setActiveDuel(null);
+    setAttackMode(false);
     if (updated.lastBattle) {
       setBattleReportModal(updated.lastBattle);
     }
   }
 
-  function handleLaunchCampaign(payload: LaunchCampaignPayload) {
-    if (!gameState || !pendingAttack) return;
-    if (payload.startDuel && payload.generalId && payload.defenderHeroId) {
-      setActiveDuel({
-        fromCityId: pendingAttack.fromCityId,
-        toCityId: pendingAttack.toCityId,
-        payload,
-      });
-      setPendingAttack(null);
+  function handleExecuteMilitary(payload: ExecuteMilitaryPayload) {
+    if (!gameState) return;
+
+    if (payload.actionType === 'raid') {
+      const updated = performNightRaid(
+        gameState,
+        gameState.playerFaction,
+        payload.fromCityId,
+        payload.toCityId,
+        payload.generalId,
+        true
+      );
+      setGameState(updated);
+      setPendingMilitary(null);
+      setAttackMode(false);
+      if (updated.lastOperation) setOperationReportModal(updated.lastOperation);
       return;
     }
-    executeBattle(pendingAttack.fromCityId, pendingAttack.toCityId, payload);
+
+    if (payload.actionType === 'bombard') {
+      const updated = performSabotageBombard(
+        gameState,
+        gameState.playerFaction,
+        payload.fromCityId,
+        payload.toCityId,
+        payload.generalId,
+        true
+      );
+      setGameState(updated);
+      setPendingMilitary(null);
+      setAttackMode(false);
+      if (updated.lastOperation) setOperationReportModal(updated.lastOperation);
+      return;
+    }
+
+    if (payload.actionType === 'discord') {
+      const updated = performSowDiscord(
+        gameState,
+        gameState.playerFaction,
+        payload.toCityId,
+        payload.generalId,
+        true
+      );
+      setGameState(updated);
+      setPendingMilitary(null);
+      setAttackMode(false);
+      if (updated.lastOperation) setOperationReportModal(updated.lastOperation);
+      return;
+    }
+
+    if (payload.startDuel && payload.generalId && payload.defenderHeroId) {
+      setActiveDuel({ payload });
+      setPendingMilitary(null);
+      setAttackMode(false);
+      return;
+    }
+
+    executeAssaultWithOptionalDuel(payload);
   }
 
   function handleReinforce(fromCityId: string, toCityId: string) {
@@ -405,7 +467,14 @@ export default function App() {
             state={gameState}
             lang={lang}
             selectedCityId={selectedCityId}
+            attackMode={attackMode}
+            onToggleAttackMode={() => setAttackMode((v) => !v)}
             onSelectCity={handleSelectCity}
+            onQuickTargetEnemy={(targetCityId) => {
+              setSelectedCityId(targetCityId);
+              setPendingMilitary({ targetCityId });
+              setAttackMode(false);
+            }}
             onInspectHero={handleInspectHero}
           />
 
@@ -465,7 +534,9 @@ export default function App() {
                 onRecruit={(cid) =>
                   setGameState(performRecruitTroops(gameState, gameState.playerFaction, cid, true))
                 }
-                onOpenAttack={(fromCityId, toCityId) => setPendingAttack({ fromCityId, toCityId })}
+                onOpenMilitary={(targetCityId, fromCityId, action) =>
+                  setPendingMilitary({ targetCityId, fromCityId, action })
+                }
                 onReinforce={handleReinforce}
                 onSelectCity={handleSelectCity}
                 onInspectHero={handleInspectHero}
@@ -532,15 +603,16 @@ export default function App() {
         </aside>
       </main>
 
-      {/* Campaign Launch Modal */}
-      {pendingAttack && (
-        <AttackSetupModal
+      {/* Unified War Room Military Operations Modal (5 Operations + Live Odds + Pincer) */}
+      {pendingMilitary && (
+        <MilitaryModal
           state={gameState}
           lang={lang}
-          fromCityId={pendingAttack.fromCityId}
-          toCityId={pendingAttack.toCityId}
-          onCancel={() => setPendingAttack(null)}
-          onLaunch={handleLaunchCampaign}
+          targetCityId={pendingMilitary.targetCityId}
+          initialFromCityId={pendingMilitary.fromCityId}
+          initialAction={pendingMilitary.action}
+          onCancel={() => setPendingMilitary(null)}
+          onExecute={handleExecuteMilitary}
         />
       )}
 
@@ -552,13 +624,18 @@ export default function App() {
           attacker={duelAttacker}
           defender={duelDefender}
           onComplete={(duelResult) =>
-            executeBattle(
-              activeDuel.fromCityId,
-              activeDuel.toCityId,
-              activeDuel.payload,
-              duelResult
-            )
+            executeAssaultWithOptionalDuel(activeDuel.payload, duelResult)
           }
+        />
+      )}
+
+      {/* Special Military Operation Report Modal (Night Raid / Bombard / Discord) */}
+      {operationReportModal && (
+        <OperationReportModal
+          report={operationReportModal}
+          state={gameState}
+          lang={lang}
+          onClose={() => setOperationReportModal(null)}
         />
       )}
 

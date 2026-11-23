@@ -431,6 +431,54 @@ export function generateHeuristicAITurn(
     };
   }
 
+  // 1b. If a hostile border fortress is too tough for full assault, soften it via Bombard or Night Raid!
+  let softTarget: { from: City; to: City; kind: 'bombard' | 'raid' } | null = null;
+  for (const from of owned) {
+    if (from.troops < 3500) continue;
+    for (const nid of from.neighbors) {
+      const to = state.cities[nid];
+      if (!to || to.owner === factionId || to.owner === 'neutral') continue;
+      const rel = getRelationBetween(state, factionId, to.owner);
+      if (rel && rel.truceTurnsLeft > 0) continue;
+      const hostile =
+        rel?.status === 'war' ||
+        (state.chrono.coalitionActive && to.owner === state.playerFaction);
+      if (!hostile) continue;
+
+      if (to.defense >= 4 && faction.gold >= 240 && (state.turn + from.id.charCodeAt(0)) % 3 === 0) {
+        softTarget = { from, to, kind: 'bombard' };
+        break;
+      }
+      if (to.troops >= 9500 && (state.turn + to.id.charCodeAt(0)) % 3 === 1) {
+        softTarget = { from, to, kind: 'raid' };
+      }
+    }
+    if (softTarget?.kind === 'bombard') break;
+  }
+
+  if (softTarget) {
+    const fromN = cityName(softTarget.from, lang);
+    const toN = cityName(softTarget.to, lang);
+    if (softTarget.kind === 'bombard') {
+      return {
+        action: { type: 'bombard', cityId: softTarget.from.id, targetCityId: softTarget.to.id },
+        proclamation:
+          lang === 'zh'
+            ? `以火攻雷石轰击${toN}城墙，先挫敌锐！`
+            : `Rain fire and siege stone upon ${toN}'s ramparts from ${fromN}!`,
+        reasoning: `Soften fortified walls of ${toN}.`,
+      };
+    }
+    return {
+      action: { type: 'raid', cityId: softTarget.from.id, targetCityId: softTarget.to.id },
+      proclamation:
+        lang === 'zh'
+          ? `遣精锐轻骑夜袭${toN}大营，劫粮断其军心！`
+          : `Unleash fast raiders from ${fromN} to strike ${toN}'s camp by night!`,
+      reasoning: `Harass garrison and plunder supplies at ${toN}.`,
+    };
+  }
+
   const recruitGold = factionId === 'wei' ? 153 : 180;
   const frontline = owned
     .filter((c) => c.neighbors.some((n) => state.cities[n]?.owner !== factionId))

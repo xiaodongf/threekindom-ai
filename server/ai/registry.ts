@@ -247,6 +247,27 @@ function validateAITurnAction(req: AITurnDecisionRequest, raw: Partial<AITurnAct
     return null;
   }
 
+  if (raw.type === 'raid' && raw.targetCityId) {
+    const target = gameState.cities[raw.targetCityId];
+    if (target && target.owner !== factionId && city.neighbors.includes(target.id) && city.troops >= 2500) {
+      return { type: 'raid', cityId: city.id, targetCityId: target.id };
+    }
+    return null;
+  }
+
+  if (raw.type === 'bombard' && raw.targetCityId) {
+    const target = gameState.cities[raw.targetCityId];
+    if (
+      target &&
+      target.owner !== factionId &&
+      city.neighbors.includes(target.id) &&
+      gameState.factions[factionId].gold >= 150
+    ) {
+      return { type: 'bombard', cityId: city.id, targetCityId: target.id };
+    }
+    return null;
+  }
+
   if (raw.type === 'reinforce' && raw.targetCityId) {
     const target = gameState.cities[raw.targetCityId];
     if (target && target.owner === factionId && city.neighbors.includes(target.id) && city.troops >= 3500) {

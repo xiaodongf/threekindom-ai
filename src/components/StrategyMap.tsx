@@ -2,13 +2,19 @@ import { useRef, useState } from 'react';
 import {
   Box,
   Compass,
+  Crosshair,
   Layers,
   Map as MapIcon,
   Maximize2,
+  Swords,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { getCityGenerals, getCityWanderingHeroes } from '../game/engine.js';
+import {
+  getCityGenerals,
+  getCityWanderingHeroes,
+  getStrikeableEnemyCityIds,
+} from '../game/engine.js';
 import {
   CONTOUR_PATHS,
   ELEVATION_ZONES,
@@ -29,7 +35,10 @@ interface StrategyMapProps {
   state: GameState;
   lang: Language;
   selectedCityId: string | null;
+  attackMode: boolean;
+  onToggleAttackMode: () => void;
   onSelectCity: (cityId: string) => void;
+  onQuickTargetEnemy: (targetCityId: string) => void;
   onInspectHero?: (heroId: string) => void;
 }
 
@@ -102,11 +111,15 @@ export function StrategyMap({
   state,
   lang,
   selectedCityId,
+  attackMode,
+  onToggleAttackMode,
   onSelectCity,
+  onQuickTargetEnemy,
   onInspectHero,
 }: StrategyMapProps) {
   const cities = Object.values(state.cities);
   const selectedCity = selectedCityId ? state.cities[selectedCityId] : null;
+  const strikeableIds = new Set(getStrikeableEnemyCityIds(state, state.playerFaction));
 
   const [is3D, setIs3D] = useState(true);
   const [zoom, setZoom] = useState(1);
@@ -214,6 +227,28 @@ export function StrategyMap({
         </div>
 
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            disabled={state.actionPoints < 1 || strikeableIds.size === 0}
+            onClick={onToggleAttackMode}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-bold transition cursor-pointer disabled:opacity-40 ${
+              attackMode
+                ? 'bg-gradient-to-r from-rose-600 to-orange-600 border-rose-300 text-white shadow-[0_0_16px_rgba(244,63,94,0.45)] animate-pulse'
+                : 'bg-rose-500/18 hover:bg-rose-500/30 border-rose-400/50 text-rose-200'
+            }`}
+          >
+            {attackMode ? <Crosshair className="w-3.5 h-3.5" /> : <Swords className="w-3.5 h-3.5" />}
+            <span>
+              {attackMode
+                ? lang === 'zh'
+                  ? '点击敌城发动进攻'
+                  : 'Click Target City'
+                : lang === 'zh'
+                  ? '出兵攻城'
+                  : 'Attack City'}
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIs3D((v) => !v)}
@@ -755,9 +790,9 @@ export function StrategyMap({
                 })}
               </g>
 
-              {/* 9. Animated Campaign March Arcs */}
+              {/* 9. Animated Campaign March Arcs & Operation Impact FX */}
               <g fill="none">
-                {state.recentMarches.slice(0, 3).map((march) => {
+                {state.recentMarches.slice(0, 4).map((march) => {
                   const from = state.cities[march.fromCityId];
                   const to = state.cities[march.toCityId];
                   if (!from || !to) return null;
@@ -771,20 +806,49 @@ export function StrategyMap({
                   const ey = to.y - (dy / dist) * pad;
                   const mx = (sx + ex) / 2 - (dy / dist) * 16;
                   const my = (sy + ey) / 2 + (dx / dist) * 16;
+
+                  const strokeColor =
+                    march.type === 'reinforce'
+                      ? '#38bdf8'
+                      : march.type === 'river_strike'
+                        ? '#22d3ee'
+                        : march.type === 'raid'
+                          ? '#facc15'
+                          : march.type === 'bombard'
+                            ? '#f43f5e'
+                            : march.type === 'discord'
+                              ? '#e879f9'
+                              : '#fb923c';
+
+                  const showLine = from.id !== to.id;
                   return (
-                    <path
-                      key={march.id}
-                      d={`M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}`}
-                      stroke={march.type === 'attack' ? '#fb923c' : '#38bdf8'}
-                      strokeWidth="3.2"
-                      strokeDasharray="7 5"
-                      className="animate-march-line"
-                      markerEnd={
-                        march.type === 'attack'
-                          ? 'url(#arrowAttack3D)'
-                          : 'url(#arrowReinforce3D)'
-                      }
-                    />
+                    <g key={march.id}>
+                      {showLine && (
+                        <path
+                          d={`M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}`}
+                          stroke={strokeColor}
+                          strokeWidth={march.type === 'raid' ? '2.4' : '3.2'}
+                          strokeDasharray={march.type === 'raid' ? '4 4' : '7 5'}
+                          className="animate-march-line"
+                          markerEnd={
+                            march.type === 'reinforce' || march.type === 'river_strike'
+                              ? 'url(#arrowReinforce3D)'
+                              : 'url(#arrowAttack3D)'
+                          }
+                        />
+                      )}
+                      {(march.type === 'bombard' || march.type === 'discord' || march.type === 'raid') && (
+                        <circle
+                          cx={to.x}
+                          cy={to.y}
+                          r="26"
+                          stroke={strokeColor}
+                          strokeWidth="2.2"
+                          strokeOpacity="0.8"
+                          className="animate-city-ring"
+                        />
+                      )}
+                    </g>
                   );
                 })}
               </g>
@@ -798,17 +862,44 @@ export function StrategyMap({
                 const generals = getCityGenerals(state, city.id);
                 const wanderingHere = getCityWanderingHeroes(state, city.id);
 
+                const isStrikeTarget = attackMode && strikeableIds.has(city.id);
+
                 return (
                   <g
                     key={city.id}
                     transform={`translate(${city.x}, ${city.y})`}
                     onClick={() => {
-                      if (!dragStart.current.moved) onSelectCity(city.id);
+                      if (dragStart.current.moved) return;
+                      if (isStrikeTarget) {
+                        onQuickTargetEnemy(city.id);
+                      } else {
+                        onSelectCity(city.id);
+                      }
                     }}
                     onMouseEnter={() => setHoveredCityId(city.id)}
                     onMouseLeave={() => setHoveredCityId((prev) => (prev === city.id ? null : prev))}
                     className="cursor-pointer"
                   >
+                    {/* Attack Mode Pulsing Crimson Crosshair Target Reticle! */}
+                    {isStrikeTarget && (
+                      <g>
+                        <ellipse
+                          cx="0"
+                          cy="5"
+                          rx="34"
+                          ry="21"
+                          fill="#f43f5e"
+                          fillOpacity="0.16"
+                          stroke="#fb7185"
+                          strokeWidth="2.5"
+                          className="animate-city-ring"
+                        />
+                        <line x1="-38" y1="5" x2="-24" y2="5" stroke="#fb7185" strokeWidth="2" />
+                        <line x1="24" y1="5" x2="38" y2="5" stroke="#fb7185" strokeWidth="2" />
+                        <line x1="0" y1="-22" x2="0" y2="-13" stroke="#fb7185" strokeWidth="2" />
+                      </g>
+                    )}
+
                     {/* Glowing Ground Tactical Ring */}
                     {isSelected && (
                       <ellipse

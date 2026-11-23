@@ -5,6 +5,8 @@ import {
   applyHeroEncounterOutcome,
   canSeeHeroWeakness,
   createNewGame,
+  estimateBattlePreview,
+  executeAITurnAction,
   getActiveBondsForHeroes,
   getChronoInsightBonus,
   getFactionCities,
@@ -12,10 +14,13 @@ import {
   performAttackCity,
   performDevelopCity,
   performFortifyCity,
+  performNightRaid,
   performPrisonerAction,
   performRecruitTroops,
   performRelocateHero,
   performResearchTech,
+  performSabotageBombard,
+  performSowDiscord,
   resolveDuelRound,
 } from './engine.js';
 
@@ -190,5 +195,117 @@ describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
     expect(getRelation(state, 'shu', 'wei').truceTurnsLeft).toBe(3);
     state = advanceSeason(state);
     expect(getRelation(state, 'shu', 'wei').truceTurnsLeft).toBe(2);
+  });
+
+  it('executes Joint Pincer Assault, Night Raid, Gunpowder Bombard, Sow Discord defection, and Yangtze River Strike', () => {
+    // 1. Joint Pincer Attack by Wei (Luoyang + Xuchang -> Xiangyang) + Live Battle Preview
+    let weiState = createNewGame('wei');
+    const soloPreview = estimateBattlePreview(
+      weiState,
+      'wei',
+      'luoyang',
+      'xiangyang',
+      8000,
+      'assault',
+      'simayi'
+    );
+    const pincerPreview = estimateBattlePreview(
+      weiState,
+      'wei',
+      'luoyang',
+      'xiangyang',
+      8000,
+      'assault',
+      'simayi',
+      { pincerFromCityId: 'xuchang', pincerTroops: 6000 }
+    );
+    expect(pincerPreview.atkPower).toBeGreaterThan(soloPreview.atkPower);
+    expect(pincerPreview.estimatedWinChance).toBeGreaterThanOrEqual(soloPreview.estimatedWinChance);
+
+    const afterPincer = performAttackCity(
+      weiState,
+      'wei',
+      'luoyang',
+      'xiangyang',
+      8000,
+      'assault',
+      'simayi',
+      true,
+      () => 0.5,
+      { pincerFromCityId: 'xuchang', pincerTroops: 6000 }
+    );
+    expect(afterPincer.cities.xiangyang.owner).toBe('wei');
+    expect(afterPincer.cities.xuchang.troops).toBeLessThan(weiState.cities.xuchang.troops);
+
+    // 2. Night Raid (plunders gold/food and cuts enemy garrison)
+    let shuState = createNewGame('shu');
+    const preGold = shuState.factions.shu.gold;
+    const preTargetTroops = shuState.cities.xiangyang.troops;
+    const afterRaid = performNightRaid(shuState, 'shu', 'jiangling', 'xiangyang', 'guanyu', true, () => 0.5);
+    expect(afterRaid.factions.shu.gold).toBeGreaterThan(preGold);
+    expect(afterRaid.cities.xiangyang.troops).toBeLessThan(preTargetTroops);
+    expect(afterRaid.lastOperation?.type).toBe('raid');
+
+    // 3. Fire / Gunpowder Bombardment (destroys -2 walls with gunpowder!)
+    let bombState: typeof shuState = {
+      ...shuState,
+      chrono: { ...shuState.chrono, unlockedTechs: ['gunpowder'] },
+    };
+    const afterBomb = performSabotageBombard(
+      bombState,
+      'shu',
+      'hanzhong',
+      'changan',
+      'zhugeliang',
+      true,
+      () => 0.5
+    );
+    expect(afterBomb.cities.changan.defense).toBe(shuState.cities.changan.defense - 2);
+    expect(afterBomb.lastOperation?.defenseReduced).toBe(2);
+
+    // 4. Sow Discord (lowers loyalty and triggers defection below 45!)
+    let discState = createNewGame('wei');
+    discState = {
+      ...discState,
+      generals: {
+        ...discState.generals,
+        weiyan: { ...discState.generals.weiyan, loyalty: 50 },
+      },
+    };
+    const afterDisc = performSowDiscord(discState, 'wei', 'hanzhong', 'simayi', true, () => 0.5);
+    expect(afterDisc.lastOperation?.defectedHeroId).toBe('weiyan');
+    expect(afterDisc.generals.weiyan.faction).toBe('wei');
+
+    // 5. Yangtze Amphibious River Strike (Wu attacks non-adjacent Chengdu directly from Jianye!)
+    let wuState = createNewGame('wu');
+    wuState = {
+      ...wuState,
+      cities: {
+        ...wuState.cities,
+        jianye: { ...wuState.cities.jianye, troops: 26000 },
+      },
+    };
+    const afterRiver = performAttackCity(
+      wuState,
+      'wu',
+      'jianye',
+      'chengdu',
+      22000,
+      'fire',
+      'zhouyu',
+      true,
+      () => 0.5,
+      { isRiverStrike: true }
+    );
+    expect(afterRiver.lastBattle?.toCityId).toBe('chengdu');
+    expect(afterRiver.recentMarches[0].type).toBe('river_strike');
+
+    // 6. AI Rival Bombardment via executeAITurnAction
+    const aiBomb = executeAITurnAction(shuState, 'wei', {
+      type: 'bombard',
+      cityId: 'changan',
+      targetCityId: 'hanzhong',
+    });
+    expect(aiBomb.cities.hanzhong.defense).toBe(shuState.cities.hanzhong.defense - 1);
   });
 });

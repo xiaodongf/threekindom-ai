@@ -22,7 +22,19 @@ export const ACTION_COSTS = {
   rewardHeroGold: 100,
   recruitHeroGiftGold: 200,
   ransomGold: 350,
+  bombardGold: 150,
+  discordGold: 180,
+  riverStrikeFood: 150,
 } as const;
+
+export const YANGTZE_PORT_IDS = [
+  'chengdu',
+  'jiangling',
+  'xiangyang',
+  'chaisang',
+  'jianye',
+  'kuaiji',
+] as const;
 
 export const TACTICS: Record<
   TacticId,

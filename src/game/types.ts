@@ -262,8 +262,41 @@ export interface MarchEvent {
   fromCityId: string;
   toCityId: string;
   faction: PlayableFactionId;
-  type: 'attack' | 'reinforce';
+  type: 'attack' | 'reinforce' | 'raid' | 'bombard' | 'discord' | 'river_strike';
   captured?: boolean;
+}
+
+export type MilitaryActionType = 'assault' | 'raid' | 'bombard' | 'discord' | 'river_strike';
+
+export interface BattleModifierTag {
+  label: LocalizedText;
+  value: string;
+  positive: boolean;
+}
+
+export interface BattlePreview {
+  estimatedWinChance: number; // 5..95
+  atkPower: number;
+  defPower: number;
+  modifiers: BattleModifierTag[];
+}
+
+export interface OperationReport {
+  id: string;
+  turn: number;
+  type: 'raid' | 'bombard' | 'discord';
+  attackerFaction: PlayableFactionId;
+  targetCityId: string;
+  fromCityId?: string;
+  heroId?: string;
+  enemyTroopsLost: number;
+  friendlyTroopsLost: number;
+  goldPlundered: number;
+  foodPlundered: number;
+  defenseReduced: number;
+  loyaltyReduced: number;
+  defectedHeroId?: string;
+  narrative: LocalizedText;
 }
 
 export type TravelerAvatarId = 'male' | 'female';
@@ -290,6 +323,7 @@ export interface GameState {
   activeEvent: StoryEvent | null;
   chronicle: ChronicleEntry[];
   lastBattle: BattleReport | null;
+  lastOperation: OperationReport | null;
   recentMarches: MarchEvent[];
   winner: PlayableFactionId | null;
   isPlayerDefeated: boolean;
@@ -372,7 +406,15 @@ export interface HeroEncounterResponse {
   fallbackUsed: boolean;
 }
 
-export type AITurnActionType = 'attack' | 'recruit' | 'develop' | 'fortify' | 'reinforce' | 'hold';
+export type AITurnActionType =
+  | 'attack'
+  | 'raid'
+  | 'bombard'
+  | 'recruit'
+  | 'develop'
+  | 'fortify'
+  | 'reinforce'
+  | 'hold';
 
 export interface AITurnAction {
   type: AITurnActionType;
