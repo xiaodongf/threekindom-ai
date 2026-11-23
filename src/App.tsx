@@ -25,9 +25,10 @@ import {
   type ExecuteMilitaryPayload,
 } from './components/MilitaryModal.js';
 import { SettingsModal } from './components/SettingsModal.js';
-import { StrategyMap } from './components/StrategyMap.js';
+import { StrategyMap, type ActiveMapMarch } from './components/StrategyMap.js';
 import { TechLabPanel } from './components/TechLabPanel.js';
 import { TopBar } from './components/TopBar.js';
+import { WarSceneModal, type WarSceneConfig } from './components/WarSceneModal.js';
 import {
   advanceSeason,
   applyDiplomacyOutcome,
@@ -35,6 +36,8 @@ import {
   createDefaultPlayerProfile,
   createNewGame,
   executeAITurnAction,
+  factionHasTech,
+  getCityGenerals,
   performAttackCity,
   performDevelopCity,
   performFortifyCity,
@@ -56,10 +59,12 @@ import type {
   DiplomacyProposalType,
   DiplomacyResponse,
   DuelResult,
+  FactionId,
   GameState,
   HeroEncounterMode,
   HeroEncounterResponse,
   Language,
+  LocalizedText,
   MilitaryActionType,
   OperationReport,
   PlayableFactionId,
@@ -68,8 +73,191 @@ import type {
 } from './game/types.js';
 import { UI_TEXT, tLoc } from './i18n/translations.js';
 import { fetchProviders, requestAITurnDecision } from './services/aiClient.js';
+import { battleAudio } from './utils/battleAudio.js';
 
 type RightTab = 'city' | 'heroes' | 'tech' | 'advisor' | 'diplomacy' | 'chronicle';
+
+interface WarTheaterQueueItem {
+  scene: WarSceneConfig;
+  march: ActiveMapMarch;
+  battleReport?: BattleReport;
+  operationReport?: OperationReport;
+}
+
+type WarStage = 'idle' | 'march' | 'theater' | 'report';
+
+function buildBattleWarItem(
+  state: GameState,
+  battle: BattleReport,
+  opts?: { pincerFromCityId?: string; isRiverStrike?: boolean; isPlayerDefending?: boolean }
+): WarTheaterQueueItem {
+  const atkHero = battle.attackerGeneralId ? state.generals[battle.attackerGeneralId] : undefined;
+  const deputyHero = battle.deputyGeneralId ? state.generals[battle.deputyGeneralId] : undefined;
+  const defHero = battle.defenderGeneralId ? state.generals[battle.defenderGeneralId] : undefined;
+  const targetCity = state.cities[battle.toCityId];
+  const fromCity = state.cities[battle.fromCityId];
+  const isPlayerDefending = Boolean(opts?.isPlayerDefending);
+
+  const mode: WarSceneConfig['mode'] = opts?.isRiverStrike
+    ? 'river_strike'
+    : opts?.pincerFromCityId
+      ? 'pincer'
+      : 'assault';
+
+  const scene: WarSceneConfig = {
+    id: `war-${battle.id}`,
+    mode,
+    attackerFaction: battle.attackerFaction,
+    defenderFaction: battle.defenderFaction,
+    fromCityId: battle.fromCityId,
+    toCityId: battle.toCityId,
+    pincerFromCityId: opts?.pincerFromCityId,
+    terrain: targetCity?.terrain || 'plains',
+    tactic: battle.tactic,
+    attackerHero: atkHero,
+    deputyHero,
+    defenderHero: defHero,
+    skillTriggered: battle.skillTriggered,
+    attackerStartTroops: battle.attackerStartTroops,
+    defenderStartTroops: battle.defenderStartTroops,
+    attackerLosses: battle.attackerLosses,
+    defenderLosses: battle.defenderLosses,
+    attackerWon: battle.captured,
+    isPlayerDefending,
+    hasGunpowder: factionHasTech(state, battle.attackerFaction, 'gunpowder'),
+    hasStirrups: factionHasTech(state, battle.attackerFaction, 'stirrups'),
+    hasSteamship: factionHasTech(state, battle.attackerFaction, 'steamship'),
+    hasBalloon: factionHasTech(state, battle.attackerFaction, 'balloon'),
+    summaryText: battle.narrative,
+  };
+
+  const atkShort = state.factions[battle.attackerFaction].shortName;
+  const targetName = targetCity?.name || { en: battle.toCityId, zh: battle.toCityId };
+  const fromName = fromCity?.name || atkShort;
+
+  const march: ActiveMapMarch = {
+    id: `march-${battle.id}`,
+    fromCityId: battle.fromCityId,
+    toCityId: battle.toCityId,
+    pincerFromCityId: opts?.pincerFromCityId,
+    faction: battle.attackerFaction,
+    mode,
+    heroPortrait: atkHero?.portrait,
+    isPlayerDefending,
+    label: isPlayerDefending
+      ? {
+          en: `ENEMY ASSAULT! ${atkShort.en} marches on ${targetName.en}!`,
+          zh: `敌军来袭！${atkShort.zh}军发兵猛攻${targetName.zh}！`,
+        }
+      : mode === 'pincer'
+        ? {
+            en: `Joint Pincer columns converging on ${targetName.en}!`,
+            zh: `多路大军合围进逼${targetName.zh}！`,
+          }
+        : mode === 'river_strike'
+          ? {
+              en: `Yangtze fleet sailing from ${fromName.en} to ${targetName.en}!`,
+              zh: `长江水师自${fromName.zh}顺流奇袭${targetName.zh}！`,
+            }
+          : {
+              en: `${atkShort.en} army marching from ${fromName.en} to ${targetName.en}!`,
+              zh: `${atkShort.zh}军自${fromName.zh}挥师进击${targetName.zh}！`,
+            },
+  };
+
+  return { scene, march, battleReport: battle };
+}
+
+function buildOperationWarItem(
+  state: GameState,
+  op: OperationReport,
+  preFromTroops: number,
+  preTargetTroops: number,
+  preTargetOwner: FactionId,
+  isPlayerDefending = false
+): WarTheaterQueueItem {
+  const atkHero = op.heroId ? state.generals[op.heroId] : undefined;
+  const targetCity = state.cities[op.targetCityId];
+  const defHero = getCityGenerals(state, op.targetCityId)[0];
+  const fromCityId = op.fromCityId || op.targetCityId;
+
+  const startAtk =
+    op.type === 'raid'
+      ? Math.max(1200, Math.round(preFromTroops * 0.25))
+      : op.type === 'bombard'
+        ? Math.max(1500, Math.round(preFromTroops * 0.2))
+        : 600;
+  const startDef = Math.max(op.enemyTroopsLost, preTargetTroops);
+
+  const succeeded =
+    op.type === 'discord'
+      ? Boolean(op.defectedHeroId) || op.loyaltyReduced >= 15
+      : op.enemyTroopsLost > op.friendlyTroopsLost || op.defenseReduced > 0;
+
+  const scene: WarSceneConfig = {
+    id: `war-${op.id}`,
+    mode: op.type,
+    attackerFaction: op.attackerFaction,
+    defenderFaction: preTargetOwner,
+    fromCityId,
+    toCityId: op.targetCityId,
+    terrain: targetCity?.terrain || 'plains',
+    attackerHero: atkHero,
+    defenderHero: defHero,
+    attackerStartTroops: startAtk,
+    defenderStartTroops: startDef,
+    attackerLosses: op.friendlyTroopsLost,
+    defenderLosses: op.enemyTroopsLost,
+    attackerWon: succeeded,
+    isPlayerDefending,
+    hasGunpowder: factionHasTech(state, op.attackerFaction, 'gunpowder'),
+    hasStirrups: factionHasTech(state, op.attackerFaction, 'stirrups'),
+    hasSteamship: factionHasTech(state, op.attackerFaction, 'steamship'),
+    hasBalloon: factionHasTech(state, op.attackerFaction, 'balloon'),
+    summaryText: op.narrative,
+  };
+
+  const atkShort = state.factions[op.attackerFaction].shortName;
+  const targetName = targetCity?.name || { en: op.targetCityId, zh: op.targetCityId };
+
+  const labelByType: Record<OperationReport['type'], LocalizedText> = {
+    raid: isPlayerDefending
+      ? {
+          en: `NIGHT RAID! ${atkShort.en} ambushes ${targetName.en}!`,
+          zh: `夜袭警报！${atkShort.zh}奇兵劫营${targetName.zh}！`,
+        }
+      : {
+          en: `Night Raid force striking ${targetName.en}!`,
+          zh: `轻骑夜袭奔袭${targetName.zh}敌营！`,
+        },
+    bombard: isPlayerDefending
+      ? {
+          en: `BOMBARDMENT! ${atkShort.en} shells ${targetName.en}!`,
+          zh: `城墙告急！${atkShort.zh}军烈火轰击${targetName.zh}！`,
+        }
+      : {
+          en: `Fire & Black Powder barrage targeting ${targetName.en}!`,
+          zh: `雷火投石车阵猛轰${targetName.zh}城防！`,
+        },
+    discord: {
+      en: `Covert agents infiltrating ${targetName.en}!`,
+      zh: `密探潜入${targetName.zh}施行离间策反！`,
+    },
+  };
+
+  const march: ActiveMapMarch = {
+    id: `march-${op.id}`,
+    fromCityId,
+    toCityId: op.targetCityId,
+    faction: op.attackerFaction,
+    mode: op.type,
+    heroPortrait: atkHero?.portrait,
+    isPlayerDefending,
+    label: labelByType[op.type],
+  };
+
+  return { scene, march, operationReport: op };
+}
 
 const DEFAULT_PROVIDERS: AIProviderStatus[] = [
   { id: 'gemini', name: 'Google Gemini', configured: false, model: 'gemini-4-hydrogen' },
@@ -133,8 +321,9 @@ export default function App() {
   const [activeDuel, setActiveDuel] = useState<{
     payload: ExecuteMilitaryPayload;
   } | null>(null);
-  const [battleReportModal, setBattleReportModal] = useState<BattleReport | null>(null);
-  const [operationReportModal, setOperationReportModal] = useState<OperationReport | null>(null);
+  const [warQueue, setWarQueue] = useState<WarTheaterQueueItem[]>([]);
+  const [warStage, setWarStage] = useState<WarStage>('idle');
+  const [warBatchTotal, setWarBatchTotal] = useState<number>(0);
   const [heroEncounter, setHeroEncounter] = useState<{
     heroId: string;
     mode: HeroEncounterMode;
@@ -154,6 +343,102 @@ export default function App() {
       });
   }, []);
 
+  const [demoElapsed, setDemoElapsed] = useState<number>(0);
+
+  // Optional ?demoWar=1 or ?demoMarch=1 URL preview for instant War Scene inspection
+  useEffect(() => {
+    if (!gameState) return;
+    const params = new URLSearchParams(window.location.search);
+    const demoWar = params.get('demoWar');
+    const demoMarch = params.get('demoMarch');
+    const demoTime = Number(params.get('demoTime') || '0');
+    const demoTerrain = params.get('demoTerrain');
+    if ((demoWar === '1' || demoMarch === '1') && warQueue.length === 0) {
+      const atkHero = gameState.generals.guanyu || Object.values(gameState.generals)[0];
+      const defHero = gameState.generals.xiahou || Object.values(gameState.generals)[1];
+      const sampleBattle: BattleReport = {
+        id: 'demo-battle',
+        turn: gameState.turn,
+        attackerFaction: 'shu',
+        defenderFaction: 'wei',
+        fromCityId: 'jiangling',
+        toCityId: demoTerrain === 'plains' ? 'xuchang' : 'xiangyang',
+        attackerGeneralId: atkHero?.id,
+        defenderGeneralId: defHero?.id,
+        tactic: 'fire',
+        skillTriggered: atkHero?.signatureSkill.name,
+        attackerStartTroops: 14500,
+        defenderStartTroops: 11200,
+        attackerLosses: 2350,
+        defenderLosses: 6840,
+        captured: true,
+        narrative: {
+          en: 'Guan Yu led a Joint Pincer & Black Powder assault, shattering Wei ramparts and seizing the stronghold!',
+          zh: '关羽统领多路合围大军携黑火药震天雷猛攻敌城，一举击溃魏军防线、夺下战略重镇！',
+        },
+      };
+      const demoState: GameState = {
+        ...gameState,
+        chrono: {
+          ...gameState.chrono,
+          unlockedTechs: ['gunpowder', 'stirrups', 'balloon', 'steamship'],
+        },
+      };
+      const item = buildBattleWarItem(demoState, sampleBattle, {
+        pincerFromCityId: 'hanzhong',
+      });
+      setDemoElapsed(Number.isFinite(demoTime) && demoTime > 0 ? demoTime : 0);
+      setWarQueue([item]);
+      setWarBatchTotal(1);
+      setWarStage(demoMarch === '1' ? 'march' : 'theater');
+    }
+    // Run only once on mount for URL preview params
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Advance Stage 1 (On-Map Animated March) -> Stage 2 (60fps Canvas War Scene Theater)
+  useEffect(() => {
+    if (warStage !== 'march' || warQueue.length === 0) return;
+    battleAudio.playWarDrum(0.26);
+    const timer = window.setTimeout(() => {
+      setWarStage('theater');
+    }, 920);
+    return () => window.clearTimeout(timer);
+  }, [warStage, warQueue]);
+
+  function enqueueWarItems(items: WarTheaterQueueItem[]) {
+    if (items.length === 0) return;
+    setDemoElapsed(0);
+    setWarQueue(items);
+    setWarBatchTotal(items.length);
+    setWarStage('march');
+  }
+
+  function handleWarTheaterFinish() {
+    const active = warQueue[0];
+    if (!active) {
+      setWarStage('idle');
+      return;
+    }
+    if (active.battleReport || active.operationReport) {
+      setWarStage('report');
+    } else {
+      handleCloseWarReport();
+    }
+  }
+
+  function handleCloseWarReport() {
+    const remaining = warQueue.slice(1);
+    if (remaining.length > 0) {
+      setWarQueue(remaining);
+      setWarStage('march');
+    } else {
+      setWarQueue([]);
+      setWarStage('idle');
+      setWarBatchTotal(0);
+    }
+  }
+
   function startCampaign(faction: PlayableFactionId, profile?: PlayerProfile) {
     const fresh = createNewGame(faction, profile || createDefaultPlayerProfile());
     const capital = Object.values(fresh.cities).find(
@@ -164,8 +449,9 @@ export default function App() {
     setActiveTab('heroes');
     setFocusedHeroId(null);
     setAttackMode(false);
-    setBattleReportModal(null);
-    setOperationReportModal(null);
+    setWarQueue([]);
+    setWarStage('idle');
+    setWarBatchTotal(0);
     setPendingMilitary(null);
     setActiveDuel(null);
     setHeroEncounter(null);
@@ -219,12 +505,22 @@ export default function App() {
     setActiveDuel(null);
     setAttackMode(false);
     if (updated.lastBattle) {
-      setBattleReportModal(updated.lastBattle);
+      const warItem = buildBattleWarItem(updated, updated.lastBattle, {
+        pincerFromCityId: payload.pincerFromCityId,
+        isRiverStrike: payload.actionType === 'river_strike',
+        isPlayerDefending: false,
+      });
+      enqueueWarItems([warItem]);
     }
   }
 
   function handleExecuteMilitary(payload: ExecuteMilitaryPayload) {
     if (!gameState) return;
+
+    const preFromTroops = gameState.cities[payload.fromCityId]?.troops ?? 0;
+    const preTargetCity = gameState.cities[payload.toCityId];
+    const preTargetTroops = preTargetCity?.troops ?? 0;
+    const preTargetOwner: FactionId = preTargetCity?.owner ?? 'neutral';
 
     if (payload.actionType === 'raid') {
       const updated = performNightRaid(
@@ -238,7 +534,18 @@ export default function App() {
       setGameState(updated);
       setPendingMilitary(null);
       setAttackMode(false);
-      if (updated.lastOperation) setOperationReportModal(updated.lastOperation);
+      if (updated.lastOperation) {
+        enqueueWarItems([
+          buildOperationWarItem(
+            updated,
+            updated.lastOperation,
+            preFromTroops,
+            preTargetTroops,
+            preTargetOwner,
+            false
+          ),
+        ]);
+      }
       return;
     }
 
@@ -254,7 +561,18 @@ export default function App() {
       setGameState(updated);
       setPendingMilitary(null);
       setAttackMode(false);
-      if (updated.lastOperation) setOperationReportModal(updated.lastOperation);
+      if (updated.lastOperation) {
+        enqueueWarItems([
+          buildOperationWarItem(
+            updated,
+            updated.lastOperation,
+            preFromTroops,
+            preTargetTroops,
+            preTargetOwner,
+            false
+          ),
+        ]);
+      }
       return;
     }
 
@@ -269,7 +587,18 @@ export default function App() {
       setGameState(updated);
       setPendingMilitary(null);
       setAttackMode(false);
-      if (updated.lastOperation) setOperationReportModal(updated.lastOperation);
+      if (updated.lastOperation) {
+        enqueueWarItems([
+          buildOperationWarItem(
+            updated,
+            updated.lastOperation,
+            preFromTroops,
+            preTargetTroops,
+            preTargetOwner,
+            false
+          ),
+        ]);
+      }
       return;
     }
 
@@ -371,6 +700,7 @@ export default function App() {
 
     try {
       let current = gameState;
+      const incomingPlayerAttacks: WarTheaterQueueItem[] = [];
       const aiFactions = (['wei', 'shu', 'wu'] as PlayableFactionId[]).filter(
         (fid) => fid !== current.playerFaction && !current.factions[fid].isEliminated
       );
@@ -384,7 +714,38 @@ export default function App() {
             language: lang,
             aiConfig,
           });
+
+          const prevBattleId = current.lastBattle?.id;
+          const prevOpId = current.lastOperation?.id;
+          const targetId = decision.action.targetCityId;
+          const targetWasPlayer = Boolean(
+            targetId && current.cities[targetId]?.owner === current.playerFaction
+          );
+          const preFromTroops = current.cities[decision.action.cityId]?.troops ?? 0;
+          const preTargetTroops = targetId ? current.cities[targetId]?.troops ?? 0 : 0;
+
           current = executeAITurnAction(current, fid, decision.action, decision.proclamation);
+
+          if (targetWasPlayer && current.lastBattle && current.lastBattle.id !== prevBattleId) {
+            incomingPlayerAttacks.push(
+              buildBattleWarItem(current, current.lastBattle, { isPlayerDefending: true })
+            );
+          } else if (
+            targetWasPlayer &&
+            current.lastOperation &&
+            current.lastOperation.id !== prevOpId
+          ) {
+            incomingPlayerAttacks.push(
+              buildOperationWarItem(
+                current,
+                current.lastOperation,
+                preFromTroops,
+                preTargetTroops,
+                current.playerFaction,
+                true
+              )
+            );
+          }
         } catch (err) {
           console.warn(`AI turn failed for ${fid}:`, err);
         }
@@ -395,6 +756,9 @@ export default function App() {
       }
 
       setGameState(current);
+      if (incomingPlayerAttacks.length > 0) {
+        enqueueWarItems(incomingPlayerAttacks);
+      }
     } finally {
       setIsEndingTurn(false);
     }
@@ -445,6 +809,9 @@ export default function App() {
   const duelDefender = activeDuel?.payload.defenderHeroId
     ? gameState.generals[activeDuel.payload.defenderHeroId]
     : undefined;
+  const activeWarItem = warQueue[0] ?? null;
+  const queueBadge =
+    warBatchTotal > 1 ? `${warBatchTotal - warQueue.length + 1} / ${warBatchTotal}` : undefined;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -468,6 +835,7 @@ export default function App() {
             lang={lang}
             selectedCityId={selectedCityId}
             attackMode={attackMode}
+            activeMapMarch={warStage === 'march' ? activeWarItem?.march ?? null : null}
             onToggleAttackMode={() => setAttackMode((v) => !v)}
             onSelectCity={handleSelectCity}
             onQuickTargetEnemy={(targetCityId) => {
@@ -629,23 +997,35 @@ export default function App() {
         />
       )}
 
-      {/* Special Military Operation Report Modal (Night Raid / Bombard / Discord) */}
-      {operationReportModal && (
-        <OperationReportModal
-          report={operationReportModal}
+      {/* Stage 2: 60fps HTML5 Canvas 2.5D War Scene Theater Modal */}
+      {warStage === 'theater' && activeWarItem && (
+        <WarSceneModal
+          scene={activeWarItem.scene}
           state={gameState}
           lang={lang}
-          onClose={() => setOperationReportModal(null)}
+          queueBadge={queueBadge}
+          initialElapsed={demoElapsed}
+          onFinish={handleWarTheaterFinish}
         />
       )}
 
-      {/* Battle Report + Prisoner Fate Modal */}
-      {battleReportModal && (
-        <BattleReportModal
-          report={battleReportModal}
+      {/* Stage 3a: Special Military Operation Report Modal (Night Raid / Bombard / Discord) */}
+      {warStage === 'report' && activeWarItem?.operationReport && (
+        <OperationReportModal
+          report={activeWarItem.operationReport}
           state={gameState}
           lang={lang}
-          onClose={() => setBattleReportModal(null)}
+          onClose={handleCloseWarReport}
+        />
+      )}
+
+      {/* Stage 3b: Battle Report + Prisoner Fate Modal */}
+      {warStage === 'report' && activeWarItem?.battleReport && (
+        <BattleReportModal
+          report={activeWarItem.battleReport}
+          state={gameState}
+          lang={lang}
+          onClose={handleCloseWarReport}
           onPersuadePrisoner={(heroId) => setHeroEncounter({ heroId, mode: 'persuade' })}
           onPrisonerAction={(heroId, action) =>
             setGameState(performPrisonerAction(gameState, heroId, action))
@@ -667,7 +1047,7 @@ export default function App() {
       )}
 
       {/* Fated History Crisis / Court Suspicion Trial / What-If Event Modal */}
-      {gameState.activeEvent && (
+      {warStage === 'idle' && gameState.activeEvent && (
         <HeroEventModal
           event={gameState.activeEvent}
           state={gameState}
@@ -687,7 +1067,7 @@ export default function App() {
       )}
 
       {/* Victory / Defeat Overlay */}
-      {(gameState.winner || gameState.isPlayerDefeated) && (
+      {warStage === 'idle' && (gameState.winner || gameState.isPlayerDefeated) && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="ink-panel gold-border-glow rounded-2xl max-w-md w-full p-8 text-center space-y-5">
             {gameState.winner === gameState.playerFaction ? (

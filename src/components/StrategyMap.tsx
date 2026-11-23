@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Compass,
@@ -28,14 +28,34 @@ import {
   MOUNTAIN_RIDGES,
   RIVER_FEATURES,
 } from '../game/mapGeo.js';
-import type { City, FactionId, GameState, Language } from '../game/types.js';
+import type {
+  City,
+  FactionId,
+  GameState,
+  Language,
+  LocalizedText,
+  PlayableFactionId,
+} from '../game/types.js';
 import { TERRAIN_TEXT, tLoc } from '../i18n/translations.js';
+
+export interface ActiveMapMarch {
+  id: string;
+  fromCityId: string;
+  toCityId: string;
+  pincerFromCityId?: string;
+  faction: PlayableFactionId;
+  mode: 'assault' | 'pincer' | 'river_strike' | 'raid' | 'bombard' | 'discord';
+  heroPortrait?: string;
+  isPlayerDefending?: boolean;
+  label?: LocalizedText;
+}
 
 interface StrategyMapProps {
   state: GameState;
   lang: Language;
   selectedCityId: string | null;
   attackMode: boolean;
+  activeMapMarch?: ActiveMapMarch | null;
   onToggleAttackMode: () => void;
   onSelectCity: (cityId: string) => void;
   onQuickTargetEnemy: (targetCityId: string) => void;
@@ -94,17 +114,39 @@ const ELEVATION_STYLE: Record<
   hills: { fill: '#16423c', opacity: 0.46 },
 };
 
-function curvedRoadPath(a: City, b: City): string {
+function getQuadraticBezierControl(a: City, b: City, extraCurve = false): { cx: number; cy: number } {
   const mx = (a.x + b.x) / 2;
   const my = (a.y + b.y) / 2;
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const dist = Math.hypot(dx, dy) || 1;
   const hash = (a.id.charCodeAt(0) + b.id.charCodeAt(0)) % 2 === 0 ? 1 : -1;
-  const curve = Math.min(22, dist * 0.14) * hash;
-  const cx = mx - (dy / dist) * curve;
-  const cy = my + (dx / dist) * curve;
+  const curve = (extraCurve ? Math.min(36, dist * 0.18) : Math.min(22, dist * 0.14)) * hash;
+  return {
+    cx: mx - (dy / dist) * curve,
+    cy: my + (dx / dist) * curve,
+  };
+}
+
+function curvedRoadPath(a: City, b: City, extraCurve = false): string {
+  const { cx, cy } = getQuadraticBezierControl(a, b, extraCurve);
   return `M ${a.x} ${a.y} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${b.x} ${b.y}`;
+}
+
+function evalQuadBezier(
+  a: City,
+  b: City,
+  t: number,
+  extraCurve = false
+): { x: number; y: number; angleDeg: number } {
+  const { cx, cy } = getQuadraticBezierControl(a, b, extraCurve);
+  const clamped = Math.max(0, Math.min(1, t));
+  const mt = 1 - clamped;
+  const x = mt * mt * a.x + 2 * mt * clamped * cx + clamped * clamped * b.x;
+  const y = mt * mt * a.y + 2 * mt * clamped * cy + clamped * clamped * b.y;
+  const vx = 2 * mt * (cx - a.x) + 2 * clamped * (b.x - cx);
+  const vy = 2 * mt * (cy - a.y) + 2 * clamped * (b.y - cy);
+  return { x, y, angleDeg: (Math.atan2(vy, vx) * 180) / Math.PI };
 }
 
 export function StrategyMap({
@@ -112,6 +154,7 @@ export function StrategyMap({
   lang,
   selectedCityId,
   attackMode,
+  activeMapMarch,
   onToggleAttackMode,
   onSelectCity,
   onQuickTargetEnemy,
@@ -130,6 +173,26 @@ export function StrategyMap({
   const [showTerritory, setShowTerritory] = useState(true);
   const [showGeoLabels, setShowGeoLabels] = useState(true);
   const [hoveredCityId, setHoveredCityId] = useState<string | null>(null);
+  const [marchProgress, setMarchProgress] = useState(0);
+
+  useEffect(() => {
+    if (!activeMapMarch) {
+      setMarchProgress(0);
+      return;
+    }
+    let rafId = 0;
+    const start = performance.now();
+    const durationMs = 880;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      setMarchProgress(t);
+      if (t < 1) {
+        rafId = requestAnimationFrame(tick);
+      }
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [activeMapMarch?.id]);
 
   const clampPan = (nx: number, ny: number, z: number) => {
     const maxX = ((z - 1) * MAP_WIDTH) / 2 + 40;
@@ -1133,6 +1196,178 @@ export function StrategyMap({
                   </g>
                 );
               })}
+
+              {/* 11. LIVE CINEMATIC ON-MAP MARCH ANIMATION (Precedes War Scene Theater!) */}
+              {activeMapMarch && (() => {
+                const toCity = state.cities[activeMapMarch.toCityId];
+                const fromCity = state.cities[activeMapMarch.fromCityId];
+                const pincerCity = activeMapMarch.pincerFromCityId
+                  ? state.cities[activeMapMarch.pincerFromCityId]
+                  : undefined;
+                if (!toCity) return null;
+
+                const pal = FACTION_PALETTE[activeMapMarch.faction];
+                const accentColor =
+                  activeMapMarch.mode === 'river_strike'
+                    ? '#22d3ee'
+                    : activeMapMarch.mode === 'raid'
+                      ? '#facc15'
+                      : activeMapMarch.mode === 'bombard'
+                        ? '#f97316'
+                        : activeMapMarch.mode === 'discord'
+                          ? '#e879f9'
+                          : pal.fill;
+
+                // Ease-in-out curve for crisp marching momentum
+                const eased =
+                  marchProgress < 0.5
+                    ? 2 * marchProgress * marchProgress
+                    : 1 - Math.pow(-2 * marchProgress + 2, 2) / 2;
+                const moveT = Math.min(1, eased / 0.86);
+                const impactT = Math.max(0, (marchProgress - 0.72) / 0.28);
+                const isRiverStrike = activeMapMarch.mode === 'river_strike';
+                const hasRoute = Boolean(fromCity && fromCity.id !== toCity.id);
+
+                const renderColumn = (origin: City, isFlank: boolean) => {
+                  const pos = evalQuadBezier(origin, toCity, moveT, isRiverStrike);
+                  const trail1 = evalQuadBezier(origin, toCity, Math.max(0, moveT - 0.08), isRiverStrike);
+                  const trail2 = evalQuadBezier(origin, toCity, Math.max(0, moveT - 0.16), isRiverStrike);
+                  const routePath = curvedRoadPath(origin, toCity, isRiverStrike);
+
+                  return (
+                    <g key={isFlank ? 'march-flank' : 'march-main'} pointerEvents="none">
+                      {/* Highlighted Glowing Campaign Path */}
+                      <path
+                        d={routePath}
+                        fill="none"
+                        stroke={accentColor}
+                        strokeOpacity="0.28"
+                        strokeWidth={isFlank ? '7' : '9'}
+                      />
+                      <path
+                        d={routePath}
+                        fill="none"
+                        stroke={accentColor}
+                        strokeWidth={isFlank ? '2.6' : '3.4'}
+                        strokeDasharray="8 5"
+                        className="animate-march-line"
+                      />
+
+                      {/* Glowing Energy Wake Dots */}
+                      <circle cx={trail2.x} cy={trail2.y} r="3.5" fill={accentColor} fillOpacity="0.35" />
+                      <circle cx={trail1.x} cy={trail1.y} r="5.5" fill={accentColor} fillOpacity="0.6" />
+
+                      {/* Animated Army / Warship Token */}
+                      <g transform={`translate(${pos.x.toFixed(1)}, ${pos.y.toFixed(1)})`}>
+                        {/* Ground Glow Pulse */}
+                        <circle
+                          r={isFlank ? 14 : 18}
+                          fill={accentColor}
+                          fillOpacity="0.24"
+                          stroke={accentColor}
+                          strokeWidth="1.6"
+                        />
+                        {/* Directional Spearhead / Warship Protrusion */}
+                        <g transform={`rotate(${pos.angleDeg.toFixed(1)})`}>
+                          {isRiverStrike ? (
+                            <polygon
+                              points="17,0 -9,-8 -5,0 -9,8"
+                              fill="#22d3ee"
+                              stroke="#ffffff"
+                              strokeWidth="1.2"
+                            />
+                          ) : (
+                            <polygon
+                              points="18,0 4,-7 7,0 4,7"
+                              fill="#fde047"
+                              stroke="#0f172a"
+                              strokeWidth="0.9"
+                            />
+                          )}
+                        </g>
+                        {/* Commander Medallion or Faction Crest */}
+                        <circle
+                          r={isFlank ? 10 : 12.5}
+                          fill={pal.fill}
+                          stroke="#fef08a"
+                          strokeWidth="2"
+                        />
+                        {!isFlank && activeMapMarch.heroPortrait ? (
+                          <image
+                            href={activeMapMarch.heroPortrait}
+                            x="-11.5"
+                            y="-11.5"
+                            width="23"
+                            height="23"
+                            preserveAspectRatio="xMidYMin slice"
+                            clipPath="url(#mapHeroPortraitClip)"
+                          />
+                        ) : (
+                          <text
+                            y="3.5"
+                            textAnchor="middle"
+                            fill="#ffffff"
+                            fontSize={isFlank ? '9' : '11'}
+                            fontWeight="800"
+                            className="font-seal"
+                          >
+                            {pal.badge}
+                          </text>
+                        )}
+                      </g>
+                    </g>
+                  );
+                };
+
+                return (
+                  <g pointerEvents="none">
+                    {hasRoute && fromCity && renderColumn(fromCity, false)}
+                    {pincerCity && pincerCity.id !== toCity.id && renderColumn(pincerCity, true)}
+
+                    {/* Covert Infiltration Converging Rings (for Sow Discord without adjacent staging) */}
+                    {!hasRoute && (
+                      <g transform={`translate(${toCity.x}, ${toCity.y})`}>
+                        <circle
+                          r={Math.max(8, 52 * (1 - moveT))}
+                          fill="none"
+                          stroke="#e879f9"
+                          strokeWidth="3"
+                          strokeDasharray="6 4"
+                          strokeOpacity={0.9 - moveT * 0.3}
+                        />
+                        <circle
+                          r={Math.max(4, 32 * (1 - moveT))}
+                          fill="#a855f7"
+                          fillOpacity="0.22"
+                          stroke="#f0abfc"
+                          strokeWidth="2"
+                        />
+                      </g>
+                    )}
+
+                    {/* Expanding Clash Shockwave Ring on Target City! */}
+                    {impactT > 0 && (
+                      <g transform={`translate(${toCity.x}, ${toCity.y})`}>
+                        <circle
+                          r={12 + impactT * 42}
+                          fill={accentColor}
+                          fillOpacity={(1 - impactT) * 0.32}
+                          stroke="#fef08a"
+                          strokeWidth={3.5 * (1 - impactT) + 0.8}
+                          strokeOpacity={1 - impactT}
+                        />
+                        <circle
+                          r={6 + impactT * 26}
+                          fill="none"
+                          stroke={accentColor}
+                          strokeWidth="2.4"
+                          strokeOpacity={Math.max(0, 1 - impactT * 0.9)}
+                        />
+                      </g>
+                    )}
+                  </g>
+                );
+              })()}
             </g>
 
             {/* Fixed Map HUD Chrome */}
@@ -1192,6 +1427,26 @@ export function StrategyMap({
             </g>
           </svg>
         </div>
+
+        {/* Floating Live Campaign March Banner */}
+        {activeMapMarch && (
+          <div
+            className={`pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 rounded-full px-4 py-1.5 border shadow-2xl backdrop-blur-md flex items-center gap-2 text-xs font-bold tracking-wide ${
+              activeMapMarch.isPlayerDefending
+                ? 'bg-rose-950/92 border-rose-400/75 text-rose-100 shadow-[0_0_24px_rgba(244,63,94,0.45)]'
+                : 'bg-slate-950/92 border-cyan-400/70 text-cyan-100 shadow-[0_0_24px_rgba(56,189,248,0.4)]'
+            }`}
+          >
+            <Swords className={`w-3.5 h-3.5 ${activeMapMarch.isPlayerDefending ? 'text-rose-400' : 'text-amber-300'} animate-pulse`} />
+            <span>
+              {activeMapMarch.label
+                ? tLoc(activeMapMarch.label, lang)
+                : lang === 'zh'
+                  ? `大军急行军奔袭 ${tLoc(state.cities[activeMapMarch.toCityId]?.name || { en: '', zh: '' }, lang)}…`
+                  : `Forces advancing on ${tLoc(state.cities[activeMapMarch.toCityId]?.name || { en: '', zh: '' }, lang)}…`}
+            </span>
+          </div>
+        )}
 
         {/* Floating City Inspector Tooltip */}
         {hoveredCity && (
