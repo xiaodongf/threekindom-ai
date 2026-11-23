@@ -22,6 +22,17 @@ interface TechLabPanelProps {
   onResearchTech: (techId: TechId, researcherHeroId?: string) => void;
 }
 
+const TECH_ART: Record<TechId, string> = {
+  stirrups: '/art/tech_stirrups.jpg',
+  medicine: '/art/tech_medicine.jpg',
+  agriculture: '/art/tech_agriculture.jpg',
+  gunpowder: '/art/tech_gunpowder.jpg',
+  spyglass: '/art/tech_spyglass.jpg',
+  printing: '/art/tech_printing.jpg',
+  balloon: '/art/tech_balloon.jpg',
+  steamship: '/art/tech_steamship.jpg',
+};
+
 export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps) {
   const player = state.playerFaction;
   const faction = state.factions[player];
@@ -116,68 +127,84 @@ export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps)
           return (
             <div
               key={tid}
-              className={`rounded-xl border p-3 space-y-2 transition ${
+              className={`rounded-xl border overflow-hidden transition ${
                 unlocked
-                  ? 'bg-emerald-950/20 border-emerald-500/40'
-                  : 'bg-[#0d1015]/85 border-white/10'
+                  ? 'bg-emerald-950/25 border-emerald-500/50 shadow-[0_0_16px_rgba(16,185,129,0.14)]'
+                  : 'bg-[#0d1015]/90 border-white/10 hover:border-cyan-400/35'
               }`}
             >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#d4a853]/15 text-[#d4a853]">
-                      T{tech.tier}
+              {/* Studio-Painted 16:9 Tech Illustration Banner */}
+              <div className="relative h-24 w-full overflow-hidden border-b border-white/10">
+                <img
+                  src={TECH_ART[tid]}
+                  alt={tLoc(tech.name, lang)}
+                  loading="lazy"
+                  className={`w-full h-full object-cover object-center theme-art-grade transition-transform duration-500 hover:scale-105 ${
+                    unlocked ? 'brightness-105' : 'brightness-85'
+                  }`}
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/35 to-transparent" />
+                <div className="absolute top-2 left-2 flex items-center gap-1.5">
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-slate-950/85 border border-amber-400/55 text-amber-300 shadow">
+                    T{tech.tier}
+                  </span>
+                  {unlocked && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/90 text-slate-950 flex items-center gap-0.5 shadow">
+                      <CheckCircle2 className="w-3 h-3" />
+                      {lang === 'zh' ? '已研造' : 'ACTIVE'}
                     </span>
-                    <span className="text-xs font-bold text-[#f7efe0]">
-                      {tLoc(tech.name, lang)}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#cfc7b4] mt-1 leading-snug">
-                    {tLoc(tech.desc, lang)}
-                  </p>
+                  )}
                 </div>
-
-                {unlocked ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                ) : (
-                  <button
-                    disabled={!canAfford}
-                    onClick={() => onResearchTech(tid, selectedResearcher?.id)}
-                    className="shrink-0 px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 disabled:opacity-35 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow"
-                  >
-                    <Sparkles className="w-3 h-3" />
-                    <span>{lang === 'zh' ? '研造' : 'Build'}</span>
-                  </button>
-                )}
+                <div className="absolute bottom-1.5 inset-x-3 flex items-end justify-between gap-2">
+                  <span className="font-display text-sm font-extrabold text-white drop-shadow-md">
+                    {tLoc(tech.name, lang)}
+                  </span>
+                  {!unlocked && (
+                    <button
+                      disabled={!canAfford}
+                      onClick={() => onResearchTech(tid, selectedResearcher?.id)}
+                      className="shrink-0 px-3 py-1 rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 disabled:opacity-40 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow-lg"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>{lang === 'zh' ? '研造' : 'Build'}</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {!unlocked && (
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-white/5 text-[10px]">
-                  <div className="flex items-center gap-2.5 text-[#cfc7b4]">
-                    <span className="flex items-center gap-0.5 text-yellow-300">
-                      <Coins className="w-3 h-3" />
-                      {goldCost}
-                    </span>
-                    <span className="flex items-center gap-0.5 text-amber-300">
-                      <Lightbulb className="w-3 h-3" />
-                      {tech.innovationCost}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 text-rose-300/90">
-                    <span>
-                      {lang === 'zh' ? `偏移 +${tech.divergenceGain}%` : `+${tech.divergenceGain}% Div`}
-                    </span>
-                    <span>
-                      {lang === 'zh' ? `猜忌 +${tech.suspicionGain}` : `+${tech.suspicionGain} Susp`}
-                    </span>
-                    {tech.copyableByRivals && (
-                      <span className="text-amber-300">
-                        {lang === 'zh' ? '· 可被敌仿' : '· Copyable'}
+              <div className="p-2.5 space-y-2">
+                <p className="text-[11px] text-[#cfc7b4] leading-snug">
+                  {tLoc(tech.desc, lang)}
+                </p>
+
+                {!unlocked && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-white/5 text-[10px]">
+                    <div className="flex items-center gap-2.5 text-[#cfc7b4]">
+                      <span className="flex items-center gap-0.5 text-yellow-300 font-semibold">
+                        <Coins className="w-3 h-3" />
+                        {goldCost}
                       </span>
-                    )}
+                      <span className="flex items-center gap-0.5 text-amber-300 font-semibold">
+                        <Lightbulb className="w-3 h-3" />
+                        {tech.innovationCost}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-rose-300/90">
+                      <span>
+                        {lang === 'zh' ? `偏移 +${tech.divergenceGain}%` : `+${tech.divergenceGain}% Div`}
+                      </span>
+                      <span>
+                        {lang === 'zh' ? `猜忌 +${tech.suspicionGain}` : `+${tech.suspicionGain} Susp`}
+                      </span>
+                      {tech.copyableByRivals && (
+                        <span className="text-amber-300">
+                          {lang === 'zh' ? '· 可被敌仿' : '· Copyable'}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           );
         })}

@@ -31,12 +31,18 @@ export function HeroAvatar({
 }: HeroAvatarProps) {
   const [imgError, setImgError] = useState(false);
 
+  const isLegendaryTier =
+    hero.status !== 'executed' &&
+    (hero.war >= 95 || hero.intellect >= 95 || hero.command >= 95 || hero.charisma >= 96);
+
   const ringClass =
     hero.status === 'executed'
       ? 'border-zinc-600 grayscale opacity-60'
       : hero.status === 'captured'
         ? 'border-rose-500/80 ring-rose-500/30'
-        : FACTION_RING[hero.faction];
+        : isLegendaryTier
+          ? 'border-amber-300 ring-amber-400/50 legendary-foil-ring'
+          : FACTION_RING[hero.faction];
 
   return (
     <div
@@ -47,11 +53,20 @@ export function HeroAvatar({
           src={hero.portrait}
           alt={hero.name.en}
           onError={() => setImgError(true)}
-          className="w-full h-full object-cover object-top"
+          className="w-full h-full object-cover object-top theme-art-grade"
           loading="lazy"
         />
       ) : (
         <span className="font-seal font-black text-[#f7e7be]">{hero.seal}</span>
+      )}
+
+      {isLegendaryTier && size !== 'xs' && (
+        <span
+          title="S-Tier Legendary Hero"
+          className="absolute top-0.5 left-0.5 text-[8px] font-black px-1 rounded bg-gradient-to-r from-amber-400 to-yellow-200 text-slate-950 shadow leading-tight"
+        >
+          SSR
+        </span>
       )}
 
       {hero.status === 'wounded' && (

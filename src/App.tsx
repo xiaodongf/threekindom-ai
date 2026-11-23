@@ -84,6 +84,11 @@ import type {
 import { UI_TEXT, tLoc } from './i18n/translations.js';
 import { fetchProviders, requestAITurnDecision } from './services/aiClient.js';
 import { battleAudio } from './utils/battleAudio.js';
+import {
+  loadSavedVisualTheme,
+  saveVisualTheme,
+  type VisualThemeId,
+} from './utils/visualTheme.js';
 
 type RightTab = 'city' | 'heroes' | 'tech' | 'advisor' | 'diplomacy' | 'chronicle';
 
@@ -286,6 +291,11 @@ export default function App() {
     const p = new URLSearchParams(window.location.search).get('lang');
     return p === 'zh' ? 'zh' : 'en';
   });
+  const [visualTheme, setVisualTheme] = useState<VisualThemeId>(() => loadSavedVisualTheme());
+
+  useEffect(() => {
+    saveVisualTheme(visualTheme);
+  }, [visualTheme]);
   const [gameState, setGameState] = useState<GameState | null>(() => {
     const f = new URLSearchParams(window.location.search).get('faction');
     if (f === 'wei' || f === 'shu' || f === 'wu') {
@@ -1048,6 +1058,8 @@ export default function App() {
       <>
         <FactionSelect
           lang={lang}
+          visualTheme={visualTheme}
+          onChangeVisualTheme={setVisualTheme}
           onToggleLang={() => setLang((l) => (l === 'en' ? 'zh' : 'en'))}
           onSelectFaction={startCampaign}
           onOpenSettings={() => setShowSettings(true)}
@@ -1097,9 +1109,11 @@ export default function App() {
       <TopBar
         state={gameState}
         lang={lang}
+        visualTheme={visualTheme}
         isEndingTurn={isEndingTurn}
         providerLabel={providerLabel}
         onToggleLang={() => setLang((l) => (l === 'en' ? 'zh' : 'en'))}
+        onChangeVisualTheme={setVisualTheme}
         onTogglePlayerAvatar={handleTogglePlayerAvatar}
         onOpenSettings={() => setShowSettings(true)}
         onEndTurn={handleEndTurn}
@@ -1112,6 +1126,7 @@ export default function App() {
           <StrategyMap
             state={gameState}
             lang={lang}
+            visualTheme={visualTheme}
             selectedCityId={selectedCityId}
             attackMode={attackMode}
             activeMapMarch={

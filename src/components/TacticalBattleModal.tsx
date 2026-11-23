@@ -3,16 +3,15 @@ import {
   Anchor,
   Bomb,
   Bot,
+  Box,
   Compass,
   Crosshair,
   Crown,
   Flame,
   Footprints,
-  Mountain,
   Shield,
   Sparkles,
   Swords,
-  Trees,
   Volume2,
   VolumeX,
   Waves,
@@ -58,6 +57,19 @@ import type { FactionId, GameState, Language, LocalizedText } from '../game/type
 import { tLoc } from '../i18n/translations.js';
 import { battleAudio } from '../utils/battleAudio.js';
 import { DuelModal } from './DuelModal.js';
+import { TacticalVfxCanvas, type TacticalVfxEvent } from './TacticalVfxCanvas.js';
+
+const TILE_TEXTURE_ART: Record<TacticalTileType, string> = {
+  plains: '/art/tile_plains.jpg',
+  forest: '/art/tile_forest.jpg',
+  water: '/art/tile_water.jpg',
+  bridge: '/art/tile_bridge.jpg',
+  ford: '/art/tile_ford.jpg',
+  hill: '/art/tile_hill.jpg',
+  wall: '/art/tile_wall.jpg',
+  gate: '/art/tile_wall.jpg',
+  citadel: '/art/tile_citadel.jpg',
+};
 
 interface TacticalBattleModalProps {
   gameState: GameState;
@@ -205,11 +217,55 @@ export function TacticalBattleModal({
   const [showWffmPicker, setShowWffmPicker] = useState(false);
   const [hoveredCoord, setHoveredCoord] = useState<GridCoord | null>(null);
   const [aiAutoPlay, setAiAutoPlay] = useState(false);
+  const [tilt25D, setTilt25D] = useState(false);
   const [muted, setMuted] = useState(battleAudio.muted);
+  const [vfxEvent, setVfxEvent] = useState<TacticalVfxEvent | null>(null);
+  const [boardShaking, setBoardShaking] = useState(false);
+  const [floatingPopups, setFloatingPopups] = useState<
+    Array<{ id: string; row: number; col: number; text: string; tone: 'dmg' | 'fire' | 'good' | 'fail' }>
+  >([]);
+  const [skillCutIn, setSkillCutIn] = useState<{
+    id: string;
+    heroName: LocalizedText;
+    skillName: LocalizedText;
+    quote?: LocalizedText;
+    portrait?: string;
+  } | null>(null);
   const [activeGridDuel, setActiveGridDuel] = useState<{
     atkUnit: TacticalUnit;
     defUnit: TacticalUnit;
   } | null>(null);
+
+  const triggerBoardShake = () => {
+    setBoardShaking(true);
+    window.setTimeout(() => setBoardShaking(false), 380);
+  };
+
+  const spawnPopup = (
+    row: number,
+    col: number,
+    text: string,
+    tone: 'dmg' | 'fire' | 'good' | 'fail' = 'dmg'
+  ) => {
+    const id = `pop-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setFloatingPopups((prev) => [...prev.slice(-4), { id, row, col, text, tone }]);
+    window.setTimeout(() => {
+      setFloatingPopups((prev) => prev.filter((p) => p.id !== id));
+    }, 1350);
+  };
+
+  const triggerCutIn = (
+    heroName: LocalizedText,
+    skillName: LocalizedText,
+    quote?: LocalizedText,
+    portrait?: string
+  ) => {
+    const id = `cut-${Date.now()}`;
+    setSkillCutIn({ id, heroName, skillName, quote, portrait });
+    window.setTimeout(() => {
+      setSkillCutIn((prev) => (prev?.id === id ? null : prev));
+    }, 1680);
+  };
 
   const playerSide = battle.config.playerSide;
   const isPlayerTurn = battle.activeSide === playerSide && !aiAutoPlay && !battle.winner;
@@ -432,9 +488,38 @@ export function TacticalBattleModal({
     if (commandMode === 'stratagem' && activeStratagem) {
       if (stratagemCoords.some((p) => p.row === row && p.col === col)) {
         const next = executeArtOfWarStratagem(battle, selectedUnit.id, activeStratagem, row, col);
-        if (next.lastCallout?.kind === 'fire') battleAudio.playExplosion(0.24);
-        else if (next.lastCallout?.kind === 'seen_through') battleAudio.playWarDrum(0.18);
-        else battleAudio.playSkillSurge(0.2);
+        const failed = next.lastCallout?.kind === 'seen_through';
+        setVfxEvent({
+          id: `vfx-${Date.now()}`,
+          kind: failed ? 'seen_through' : activeStratagem === 'fire_attack' ? 'fire_blast' : 'stratagem_ring',
+          fromRow: selectedUnit.row,
+          fromCol: selectedUnit.col,
+          toRow: row,
+          toCol: col,
+        });
+        if (failed) {
+          battleAudio.playWarDrum(0.18);
+          spawnPopup(row, col, lang === 'zh' ? '计谋被识破！' : 'SEEN THROUGH!', 'fail');
+        } else if (activeStratagem === 'fire_attack') {
+          battleAudio.playExplosion(0.24);
+          triggerBoardShake();
+          spawnPopup(row, col, lang === 'zh' ? '🔥 借风纵火！' : '🔥 FIRE ATTACK!', 'fire');
+          triggerCutIn(
+            selectedUnit.name,
+            ART_OF_WAR_STRATAGEMS.fire_attack.name,
+            ART_OF_WAR_STRATAGEMS.fire_attack.quote,
+            selectedUnit.portrait
+          );
+        } else {
+          battleAudio.playSkillSurge(0.2);
+          spawnPopup(row, col, tLoc(ART_OF_WAR_STRATAGEMS[activeStratagem].name, lang), 'good');
+          triggerCutIn(
+            selectedUnit.name,
+            ART_OF_WAR_STRATAGEMS[activeStratagem].name,
+            ART_OF_WAR_STRATAGEMS[activeStratagem].quote,
+            selectedUnit.portrait
+          );
+        }
         if (next.winner) battleAudio.playOutcomeHorn(next.winner === playerSide, 0.22);
         setBattle(next);
         setActiveStratagem(null);
@@ -447,6 +532,25 @@ export function TacticalBattleModal({
     if (commandMode === 'hero_skill') {
       if (skillTargetCoords.some((p) => p.row === row && p.col === col)) {
         const next = executeHeroSignatureSkill(battle, selectedUnit.id, row, col);
+        const heroObj = selectedUnit.heroId ? battle.preBattleHeroes[selectedUnit.heroId] : undefined;
+        setVfxEvent({
+          id: `vfx-${Date.now()}`,
+          kind: heroObj?.signatureSkill.effect === 'fire_ignore_def' ? 'fire_blast' : 'slash',
+          fromRow: selectedUnit.row,
+          fromCol: selectedUnit.col,
+          toRow: row,
+          toCol: col,
+        });
+        triggerBoardShake();
+        if (heroObj) {
+          triggerCutIn(
+            heroObj.name,
+            heroObj.signatureSkill.name,
+            heroObj.signatureSkill.battleCry,
+            heroObj.portrait
+          );
+          spawnPopup(row, col, `✨ ${tLoc(heroObj.signatureSkill.name, lang)}`, 'fire');
+        }
         battleAudio.playSkillSurge(0.26);
         if (next.winner) battleAudio.playOutcomeHorn(next.winner === playerSide, 0.22);
         setBattle(next);
@@ -459,6 +563,16 @@ export function TacticalBattleModal({
     if (commandMode === 'gunpowder_bomb') {
       if (bombCoords.some((p) => p.row === row && p.col === col)) {
         const next = executeGunpowderBomb(battle, selectedUnit.id, row, col);
+        setVfxEvent({
+          id: `vfx-${Date.now()}`,
+          kind: 'bomb_blast',
+          fromRow: selectedUnit.row,
+          fromCol: selectedUnit.col,
+          toRow: row,
+          toCol: col,
+        });
+        triggerBoardShake();
+        spawnPopup(row, col, lang === 'zh' ? '💣 震天雷轰炸！' : '💣 BLACK POWDER BLAST!', 'fire');
         battleAudio.playExplosion(0.32);
         if (next.winner) battleAudio.playOutcomeHorn(next.winner === playerSide, 0.22);
         setBattle(next);
@@ -469,8 +583,29 @@ export function TacticalBattleModal({
 
     // 5. Direct Attack on an enemy in range (works directly in both 'move' and 'attack' modes!)
     if (occupant && occupant.side !== playerSide && attackTargets.some((t) => t.id === occupant.id)) {
+      const prev = previewAttack(battle, selectedUnit, occupant);
       const next = executeTacticalAttack(battle, selectedUnit.id, occupant.id);
-      battleAudio.playSteelClash(0.18);
+      const dist = manhattan(selectedUnit.row, selectedUnit.col, occupant.row, occupant.col);
+      setVfxEvent({
+        id: `vfx-${Date.now()}`,
+        kind: dist > 1 ? 'arrow' : 'slash',
+        fromRow: selectedUnit.row,
+        fromCol: selectedUnit.col,
+        toRow: occupant.row,
+        toCol: occupant.col,
+      });
+      if (prev.estimatedDamage >= 1100) triggerBoardShake();
+      const topPrinciple = prev.principles.find((p) => p.positive);
+      spawnPopup(
+        occupant.row,
+        occupant.col,
+        `-${prev.estimatedDamage.toLocaleString()}${
+          topPrinciple ? ` · ${tLoc(topPrinciple.label, lang).split(' ')[0]}` : ''
+        }`,
+        'dmg'
+      );
+      if (dist > 1) battleAudio.playArrowVolley(0.18);
+      else battleAudio.playSteelClash(0.18);
       if (next.winner) battleAudio.playOutcomeHorn(next.winner === playerSide, 0.22);
       setBattle(next);
       setCommandMode('move');
@@ -654,6 +789,20 @@ export function TacticalBattleModal({
 
             <button
               type="button"
+              onClick={() => setTilt25D((v) => !v)}
+              className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1 transition cursor-pointer ${
+                tilt25D
+                  ? 'bg-cyan-500/25 border-cyan-400 text-cyan-100'
+                  : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
+              }`}
+              title="Toggle 2.5D Tabletop Perspective Tilt"
+            >
+              <Box className="w-3.5 h-3.5" />
+              <span>{tilt25D ? '2.5D' : '2D'}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={toggleMute}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 cursor-pointer"
               title={muted ? 'Unmute' : 'Mute'}
@@ -730,252 +879,292 @@ export function TacticalBattleModal({
               </div>
             )}
 
-            {/* 8x8 Interactive Grid Container */}
-            <div className="relative rounded-2xl p-2 bg-slate-900/90 border border-cyan-500/30 shadow-inner">
-              <div className="grid grid-cols-8 grid-rows-8 gap-1 aspect-square w-full max-w-[580px] mx-auto">
-                {battle.grid.map((rowArr, r) =>
-                  rowArr.map((tile, c) => {
-                    const occupant = battle.units.find(
-                      (u) => !u.defeated && u.row === r && u.col === c
-                    );
-                    const hideOccupant = Boolean(
-                      occupant &&
-                        occupant.side !== playerSide &&
-                        occupant.isHiddenAmbush &&
-                        !revealsEnemyAmbush
-                    );
-                    const visibleUnit = hideOccupant ? undefined : occupant;
+            {/* 8x8 Interactive Painted Battlefield + 60fps Canvas VFX Container */}
+            <div className="relative rounded-2xl p-2 bg-slate-950/90 border border-cyan-500/35 shadow-inner tactical-25d-stage overflow-hidden">
+              <div
+                className={`relative aspect-square w-full max-w-[580px] mx-auto tactical-25d-board ${
+                  boardShaking ? 'animate-board-shake' : ''
+                }`}
+                style={{
+                  transform: tilt25D ? 'rotateX(18deg) scale(0.95)' : 'rotateX(0deg) scale(1)',
+                }}
+              >
+                <div className="grid grid-cols-8 grid-rows-8 gap-1 w-full h-full">
+                  {battle.grid.map((rowArr, r) =>
+                    rowArr.map((tile, c) => {
+                      const occupant = battle.units.find(
+                        (u) => !u.defeated && u.row === r && u.col === c
+                      );
+                      const hideOccupant = Boolean(
+                        occupant &&
+                          occupant.side !== playerSide &&
+                          occupant.isHiddenAmbush &&
+                          !revealsEnemyAmbush
+                      );
+                      const visibleUnit = hideOccupant ? undefined : occupant;
 
-                    const isSelectedTile = Boolean(
-                      selectedUnit && selectedUnit.row === r && selectedUnit.col === c
-                    );
-                    const isReachable = reachableTiles.some((p) => p.row === r && p.col === c);
-                    const isAttackable = Boolean(
-                      visibleUnit && attackTargets.some((t) => t.id === visibleUnit.id)
-                    );
-                    const isStratTarget = stratagemCoords.some((p) => p.row === r && p.col === c);
-                    const isSkillTarget = skillTargetCoords.some((p) => p.row === r && p.col === c);
-                    const isBombTarget = bombCoords.some((p) => p.row === r && p.col === c);
+                      const isSelectedTile = Boolean(
+                        selectedUnit && selectedUnit.row === r && selectedUnit.col === c
+                      );
+                      const isReachable = reachableTiles.some((p) => p.row === r && p.col === c);
+                      const isAttackable = Boolean(
+                        visibleUnit && attackTargets.some((t) => t.id === visibleUnit.id)
+                      );
+                      const isStratTarget = stratagemCoords.some((p) => p.row === r && p.col === c);
+                      const isSkillTarget = skillTargetCoords.some((p) => p.row === r && p.col === c);
+                      const isBombTarget = bombCoords.some((p) => p.row === r && p.col === c);
 
-                    // Compute live INT success chance badge when Stratagem targeting is active!
-                    const stratOdds =
-                      isStratTarget && selectedUnit && activeStratagem
-                        ? calculateStratagemSuccess(battle, selectedUnit, activeStratagem, r, c)
-                            .chance
-                        : null;
+                      const stratOdds =
+                        isStratTarget && selectedUnit && activeStratagem
+                          ? calculateStratagemSuccess(battle, selectedUnit, activeStratagem, r, c)
+                              .chance
+                          : null;
 
-                    const tileBg: Record<TacticalTileType, string> = {
-                      plains: 'bg-gradient-to-br from-[#1d3a2f] to-[#152b24]',
-                      forest: 'bg-gradient-to-br from-[#144029] to-[#0c291b]',
-                      water: 'bg-gradient-to-br from-[#0c4a6e] to-[#082f49]',
-                      bridge: 'bg-gradient-to-br from-[#78350f] to-[#451a03]',
-                      ford: 'bg-gradient-to-br from-[#155e75] to-[#164e63]',
-                      hill: 'bg-gradient-to-br from-[#57534e] to-[#3f3c37]',
-                      wall: 'bg-gradient-to-br from-[#475569] to-[#1e293b]',
-                      gate: 'bg-gradient-to-br from-[#64748b] to-[#334155]',
-                      citadel: 'bg-gradient-to-br from-[#713f12] to-[#422006]',
-                    };
+                      return (
+                        <button
+                          key={`${r}-${c}`}
+                          type="button"
+                          onClick={() => handleTileClick(r, c)}
+                          onMouseEnter={() => setHoveredCoord({ row: r, col: c })}
+                          onMouseLeave={() => setHoveredCoord(null)}
+                          className={`relative min-w-0 min-h-0 rounded-lg overflow-hidden border transition-all flex items-center justify-center cursor-pointer shadow-inner ${
+                            isSelectedTile
+                              ? 'ring-2 ring-cyan-300 border-cyan-200 z-10 shadow-[0_0_20px_rgba(56,189,248,0.65)]'
+                              : isStratTarget
+                                ? 'ring-2 ring-orange-400 border-amber-300 shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+                                : isBombTarget
+                                  ? 'ring-2 ring-amber-400 border-yellow-300'
+                                  : isSkillTarget
+                                    ? 'ring-2 ring-fuchsia-400 border-fuchsia-300'
+                                    : isAttackable
+                                      ? 'ring-2 ring-rose-500 border-rose-300 shadow-[0_0_16px_rgba(244,63,94,0.55)]'
+                                      : isReachable
+                                        ? 'border-cyan-300/90 ring-1 ring-cyan-400/65'
+                                        : 'border-slate-900/75 hover:border-amber-300/70'
+                          }`}
+                        >
+                          {/* Studio-Painted Top-Down Terrain Texture */}
+                          <img
+                            src={TILE_TEXTURE_ART[tile.type]}
+                            alt={tile.type}
+                            className={`pointer-events-none absolute inset-0 w-full h-full object-cover theme-art-grade ${
+                              tile.type === 'gate' ? 'brightness-90' : ''
+                            }`}
+                          />
+                          {/* Subtle Vignette & Interactive Highlight Tint */}
+                          <div
+                            className={`pointer-events-none absolute inset-0 ${
+                              isReachable
+                                ? 'bg-cyan-400/22'
+                                : isAttackable
+                                  ? 'bg-rose-500/25'
+                                  : isStratTarget
+                                    ? 'bg-orange-500/22'
+                                    : 'bg-slate-950/18'
+                            }`}
+                          />
 
-                    return (
-                      <button
-                        key={`${r}-${c}`}
-                        type="button"
-                        onClick={() => handleTileClick(r, c)}
-                        onMouseEnter={() => setHoveredCoord({ row: r, col: c })}
-                        onMouseLeave={() => setHoveredCoord(null)}
-                        className={`relative min-w-0 min-h-0 rounded-lg overflow-hidden border transition-all flex items-center justify-center cursor-pointer ${
-                          tileBg[tile.type]
-                        } ${
-                          isSelectedTile
-                            ? 'ring-2 ring-cyan-300 border-cyan-200 z-10 shadow-[0_0_18px_rgba(56,189,248,0.55)]'
-                            : isStratTarget
-                              ? 'ring-2 ring-orange-400 border-amber-300 shadow-[0_0_14px_rgba(251,146,60,0.45)]'
-                              : isBombTarget
-                                ? 'ring-2 ring-amber-400 border-yellow-300'
-                                : isSkillTarget
-                                  ? 'ring-2 ring-fuchsia-400 border-fuchsia-300'
-                                  : isAttackable
-                                    ? 'ring-2 ring-rose-500 border-rose-300 shadow-[0_0_14px_rgba(244,63,94,0.45)]'
-                                    : isReachable
-                                      ? 'border-cyan-400/80 ring-1 ring-cyan-400/50 bg-cyan-500/10'
-                                      : 'border-slate-700/60 hover:border-slate-400/70'
-                        }`}
-                      >
-                        {/* Terrain Backdrop Visuals */}
-                        {tile.type === 'forest' && (
-                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-50">
-                            <Trees className="w-7 h-7 text-emerald-400" />
-                          </div>
-                        )}
-                        {tile.type === 'water' && (
-                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-45">
-                            <Waves className="w-6 h-6 text-sky-300" />
-                          </div>
-                        )}
-                        {tile.type === 'ford' && (
-                          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center opacity-60">
-                            <Waves className="w-4 h-4 text-cyan-200" />
-                            <span className="text-[8px] font-bold text-cyan-100">
+                          {/* Crisp Minimal Semantic Markers for Special Tactical Tiles */}
+                          {tile.type === 'ford' && !visibleUnit && (
+                            <span className="pointer-events-none relative z-10 text-[8px] font-black px-1 py-0.2 rounded bg-cyan-950/80 border border-cyan-400/50 text-cyan-100">
                               {lang === 'zh' ? '浅滩' : 'FORD'}
                             </span>
-                          </div>
-                        )}
-                        {tile.type === 'bridge' && (
-                          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center opacity-70">
-                            <div className="w-full h-1.5 bg-amber-700/80 mb-1" />
-                            <div className="w-full h-1.5 bg-amber-700/80 mb-1" />
-                            <div className="w-full h-1.5 bg-amber-700/80" />
-                          </div>
-                        )}
-                        {tile.type === 'hill' && (
-                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-50">
-                            <Mountain className="w-6 h-6 text-amber-200" />
-                          </div>
-                        )}
-                        {tile.type === 'wall' && (
-                          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-between py-1 opacity-75">
-                            <div className="flex gap-1">
-                              <span className="w-2.5 h-1.5 bg-slate-300 rounded-xs" />
-                              <span className="w-2.5 h-1.5 bg-slate-300 rounded-xs" />
-                              <span className="w-2.5 h-1.5 bg-slate-300 rounded-xs" />
-                            </div>
-                            <span className="text-[8px] font-bold text-slate-300">
+                          )}
+                          {tile.type === 'wall' && !visibleUnit && (
+                            <span className="pointer-events-none relative z-10 text-[8px] font-black px-1 py-0.2 rounded bg-slate-950/80 border border-slate-400/45 text-slate-200">
                               {lang === 'zh' ? '城墙' : 'WALL'}
                             </span>
-                          </div>
-                        )}
-                        {tile.type === 'gate' && (
-                          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center opacity-75">
-                            <div className="w-5 h-6 rounded-t-full bg-slate-950/85 border border-amber-400/60" />
-                            <span className="text-[7px] font-bold text-amber-200 mt-0.5">
-                              {lang === 'zh' ? '城门' : 'GATE'}
-                            </span>
-                          </div>
-                        )}
-                        {tile.type === 'citadel' && (
-                          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                            <Crown className="w-6 h-6 text-amber-300 drop-shadow" />
-                            <span className="text-[7px] font-extrabold text-amber-200">
-                              {lang === 'zh' ? '本阵' : 'FLAG'}
-                            </span>
-                          </div>
-                        )}
-
-                        {/* Blazing Fire Overlay! */}
-                        {tile.fireTurns > 0 && (
-                          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-orange-600/65 via-amber-500/35 to-transparent flex items-start justify-end p-0.5 animate-pulse">
-                            <span className="flex items-center text-[9px] font-black text-amber-200 bg-orange-950/80 px-1 rounded">
-                              <Flame className="w-2.5 h-2.5 text-orange-400" />
-                              {tile.fireTurns}
-                            </span>
-                          </div>
-                        )}
-
-                        {/* Reachable Move Indicator Dot */}
-                        {isReachable && !visibleUnit && (
-                          <div className="pointer-events-none w-2.5 h-2.5 rounded-full bg-cyan-300/80 shadow-[0_0_8px_#38bdf8]" />
-                        )}
-
-                        {/* Live INT Success % Pill on Stratagem-Targetable Tiles! */}
-                        {stratOdds !== null && (
-                          <div
-                            className={`pointer-events-none absolute top-0.5 left-0.5 z-20 px-1 py-0.2 rounded text-[9px] font-mono font-black shadow ${
-                              stratOdds >= 75
-                                ? 'bg-emerald-600/95 text-white'
-                                : stratOdds >= 45
-                                  ? 'bg-amber-600/95 text-white'
-                                  : 'bg-rose-600/95 text-white'
-                            }`}
-                          >
-                            {stratOdds}%
-                          </div>
-                        )}
-
-                        {/* Tactical Unit Token */}
-                        {visibleUnit && (
-                          <div
-                            className={`relative z-10 w-full h-full flex flex-col items-center justify-center p-0.5 ${
-                              visibleUnit.hasActed && visibleUnit.side === playerSide
-                                ? 'opacity-65'
-                                : ''
-                            }`}
-                          >
-                            <div
-                              className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden border-2 shadow-lg flex items-center justify-center shrink-0"
-                              style={{
-                                borderColor: FACTION_RING[visibleUnit.faction].ring,
-                                backgroundColor: FACTION_RING[visibleUnit.faction].bg,
-                              }}
-                            >
-                              {visibleUnit.portrait ? (
-                                <img
-                                  src={visibleUnit.portrait}
-                                  alt={tLoc(visibleUnit.name, lang)}
-                                  className="w-full h-full object-cover object-top"
-                                />
-                              ) : (
-                                <span className="font-seal font-bold text-white text-sm">
-                                  {FACTION_RING[visibleUnit.faction].badge}
-                                </span>
-                              )}
-
-                              {/* Unit Class Mini-Badge */}
-                              <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-slate-950/95 border border-slate-500 flex items-center justify-center text-[8px] text-cyan-200">
-                                {visibleUnit.unitClass === 'naval' ? (
-                                  <Anchor className="w-2.5 h-2.5" />
-                                ) : visibleUnit.unitClass === 'archer' ? (
-                                  <Crosshair className="w-2.5 h-2.5" />
-                                ) : visibleUnit.unitClass === 'cavalry' ? (
-                                  <Wind className="w-2.5 h-2.5" />
-                                ) : (
-                                  <Shield className="w-2.5 h-2.5" />
-                                )}
+                          )}
+                          {tile.type === 'gate' && !visibleUnit && (
+                            <div className="pointer-events-none relative z-10 flex flex-col items-center">
+                              <div className="w-5 h-5 rounded-t-full bg-slate-950/85 border border-amber-300/75 shadow" />
+                              <span className="text-[7.5px] font-black px-1 rounded bg-slate-950/85 text-amber-200 -mt-0.5">
+                                {lang === 'zh' ? '城门' : 'GATE'}
                               </span>
                             </div>
-
-                            {/* Name & Compact HP + Morale Bars */}
-                            <div className="w-full px-0.5 mt-0.5 space-y-0.5">
-                              <div className="h-1.5 w-full bg-slate-950/90 rounded-full overflow-hidden border border-slate-700/80">
-                                <div
-                                  className={`h-full ${
-                                    visibleUnit.side === playerSide
-                                      ? 'bg-emerald-400'
-                                      : 'bg-rose-400'
-                                  }`}
-                                  style={{
-                                    width: `${Math.max(
-                                      6,
-                                      Math.round((visibleUnit.troops / visibleUnit.maxTroops) * 100)
-                                    )}%`,
-                                  }}
-                                />
-                              </div>
-                              <div className="text-[8.5px] leading-none font-bold text-white text-center truncate drop-shadow">
-                                {tLoc(visibleUnit.name, lang)}
-                              </div>
+                          )}
+                          {tile.type === 'citadel' && !visibleUnit && (
+                            <div className="pointer-events-none relative z-10 flex flex-col items-center">
+                              <Crown className="w-5 h-5 text-amber-300 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]" />
+                              <span className="text-[7.5px] font-black px-1 rounded bg-amber-950/90 border border-amber-400/60 text-amber-200">
+                                {lang === 'zh' ? '本阵' : 'FLAG'}
+                              </span>
                             </div>
+                          )}
 
-                            {/* Status Effect Badges */}
-                            {(visibleUnit.isHiddenAmbush ||
-                              visibleUnit.disorderedTurns > 0 ||
-                              visibleUnit.deathGroundTurns > 0 ||
-                              visibleUnit.wffmStance) && (
-                              <div className="absolute top-0.5 right-0.5 flex gap-0.5 text-[9px] bg-slate-950/85 px-1 rounded">
-                                {visibleUnit.isHiddenAmbush && <span title="Ambush">🌲</span>}
-                                {visibleUnit.disorderedTurns > 0 && <span title="Disordered">💫</span>}
-                                {visibleUnit.deathGroundTurns > 0 && <span title="Death Ground">🩸</span>}
-                                {visibleUnit.wffmStance === 'wind' && <span title="Wind">🌪️</span>}
-                                {visibleUnit.wffmStance === 'fire' && <span title="Fire">🔥</span>}
-                                {visibleUnit.wffmStance === 'mountain' && <span title="Mountain">⛰️</span>}
+                          {/* Blazing Fire Remaining Turns Badge (Volumetric Flames rendered by TacticalVfxCanvas!) */}
+                          {tile.fireTurns > 0 && (
+                            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-orange-600/45 via-amber-500/20 to-transparent flex items-start justify-end p-0.5">
+                              <span className="relative z-20 flex items-center text-[9px] font-black text-amber-200 bg-orange-950/90 border border-amber-400/50 px-1 rounded shadow">
+                                <Flame className="w-2.5 h-2.5 text-orange-400" />
+                                {tile.fireTurns}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Reachable Move Indicator Orb */}
+                          {isReachable && !visibleUnit && (
+                            <div className="pointer-events-none relative z-10 w-3 h-3 rounded-full bg-cyan-300/90 border border-white shadow-[0_0_12px_#38bdf8]" />
+                          )}
+
+                          {/* Live INT Success % Pill on Stratagem-Targetable Tiles! */}
+                          {stratOdds !== null && (
+                            <div
+                              className={`pointer-events-none absolute top-0.5 left-0.5 z-20 px-1 py-0.2 rounded text-[9px] font-mono font-black shadow-md border border-white/30 ${
+                                stratOdds >= 75
+                                  ? 'bg-emerald-600/95 text-white'
+                                  : stratOdds >= 45
+                                    ? 'bg-amber-600/95 text-white'
+                                    : 'bg-rose-600/95 text-white'
+                              }`}
+                            >
+                              {stratOdds}%
+                            </div>
+                          )}
+
+                          {/* Tactical Unit Token */}
+                          {visibleUnit && (
+                            <div
+                              className={`relative z-10 w-full h-full flex flex-col items-center justify-center p-0.5 ${
+                                visibleUnit.hasActed && visibleUnit.side === playerSide
+                                  ? 'opacity-70'
+                                  : ''
+                              }`}
+                            >
+                              <div
+                                className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden border-2 shadow-[0_4px_12px_rgba(0,0,0,0.85)] flex items-center justify-center shrink-0"
+                                style={{
+                                  borderColor: FACTION_RING[visibleUnit.faction].ring,
+                                  backgroundColor: FACTION_RING[visibleUnit.faction].bg,
+                                }}
+                              >
+                                {visibleUnit.portrait ? (
+                                  <img
+                                    src={visibleUnit.portrait}
+                                    alt={tLoc(visibleUnit.name, lang)}
+                                    className="w-full h-full object-cover object-top"
+                                  />
+                                ) : (
+                                  <span className="font-seal font-bold text-white text-sm">
+                                    {FACTION_RING[visibleUnit.faction].badge}
+                                  </span>
+                                )}
+
+                                {/* Unit Class Mini-Badge */}
+                                <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-slate-950/95 border border-slate-500 flex items-center justify-center text-[8px] text-cyan-200">
+                                  {visibleUnit.unitClass === 'naval' ? (
+                                    <Anchor className="w-2.5 h-2.5" />
+                                  ) : visibleUnit.unitClass === 'archer' ? (
+                                    <Crosshair className="w-2.5 h-2.5" />
+                                  ) : visibleUnit.unitClass === 'cavalry' ? (
+                                    <Wind className="w-2.5 h-2.5" />
+                                  ) : (
+                                    <Shield className="w-2.5 h-2.5" />
+                                  )}
+                                </span>
                               </div>
-                            )}
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })
-                )}
+
+                              {/* Name & Compact HP Bar with High-Contrast Pill */}
+                              <div className="w-full px-0.5 mt-0.5 space-y-0.5">
+                                <div className="h-1.5 w-full bg-slate-950/95 rounded-full overflow-hidden border border-slate-700/80">
+                                  <div
+                                    className={`h-full ${
+                                      visibleUnit.side === playerSide
+                                        ? 'bg-emerald-400'
+                                        : 'bg-rose-400'
+                                    }`}
+                                    style={{
+                                      width: `${Math.max(
+                                        6,
+                                        Math.round((visibleUnit.troops / visibleUnit.maxTroops) * 100)
+                                      )}%`,
+                                    }}
+                                  />
+                                </div>
+                                <div className="text-[8.5px] leading-tight font-extrabold text-white text-center truncate bg-slate-950/75 rounded px-0.5">
+                                  {tLoc(visibleUnit.name, lang)}
+                                </div>
+                              </div>
+
+                              {/* Status Effect Badges */}
+                              {(visibleUnit.isHiddenAmbush ||
+                                visibleUnit.disorderedTurns > 0 ||
+                                visibleUnit.deathGroundTurns > 0 ||
+                                visibleUnit.wffmStance) && (
+                                <div className="absolute top-0.5 right-0.5 flex gap-0.5 text-[9px] bg-slate-950/85 px-1 rounded">
+                                  {visibleUnit.isHiddenAmbush && <span title="Ambush">🌲</span>}
+                                  {visibleUnit.disorderedTurns > 0 && <span title="Disordered">💫</span>}
+                                  {visibleUnit.deathGroundTurns > 0 && <span title="Death Ground">🩸</span>}
+                                  {visibleUnit.wffmStance === 'wind' && <span title="Wind">🌪️</span>}
+                                  {visibleUnit.wffmStance === 'fire' && <span title="Fire">🔥</span>}
+                                  {visibleUnit.wffmStance === 'mountain' && <span title="Mountain">⛰️</span>}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* 60fps Live Canvas VFX Layer: Wind Ribbons, Volumetric Downwind Fire, Projectiles & Explosions */}
+                <TacticalVfxCanvas
+                  grid={battle.grid}
+                  wind={battle.wind}
+                  vfxEvent={vfxEvent}
+                />
+
+                {/* Floating Combat Damage & Art of War Callout Popups */}
+                <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
+                  {floatingPopups.map((pop) => (
+                    <div
+                      key={pop.id}
+                      style={{
+                        left: `${((pop.col + 0.5) / 8) * 100}%`,
+                        top: `${((pop.row + 0.35) / 8) * 100}%`,
+                      }}
+                      className={`absolute whitespace-nowrap px-2 py-0.5 rounded-full text-[11px] font-black shadow-xl border animate-float-up ${
+                        pop.tone === 'fire'
+                          ? 'bg-orange-950/95 border-amber-300 text-amber-200'
+                          : pop.tone === 'good'
+                            ? 'bg-cyan-950/95 border-cyan-300 text-cyan-100'
+                            : pop.tone === 'fail'
+                              ? 'bg-rose-950/95 border-rose-300 text-rose-200'
+                              : 'bg-rose-950/95 border-rose-400 text-white'
+                      }`}
+                    >
+                      {pop.text}
+                    </div>
+                  ))}
+                </div>
               </div>
+
+              {/* KOEI-Style Diagonal Hero Portrait Cut-In Slash Overlay! */}
+              {skillCutIn && (
+                <div className="pointer-events-none absolute inset-x-0 top-1/2 z-40 animate-cutin-slash bg-gradient-to-r from-slate-950/95 via-amber-950/90 to-slate-950/95 border-y-2 border-amber-300/90 py-3 px-6 flex items-center justify-center gap-4 shadow-[0_0_50px_rgba(251,191,36,0.5)]">
+                  {skillCutIn.portrait && (
+                    <img
+                      src={skillCutIn.portrait}
+                      alt={tLoc(skillCutIn.heroName, lang)}
+                      className="w-16 h-16 rounded-2xl object-cover object-top border-2 border-amber-300 shadow-2xl"
+                    />
+                  )}
+                  <div className="max-w-md">
+                    <div className="text-[11px] font-black uppercase tracking-widest text-amber-300">
+                      {tLoc(skillCutIn.skillName, lang)}
+                    </div>
+                    <div className="font-display text-lg font-black text-white">
+                      {tLoc(skillCutIn.heroName, lang)}
+                    </div>
+                    {skillCutIn.quote && (
+                      <p className="text-xs italic text-cyan-100 mt-0.5">
+                        {tLoc(skillCutIn.quote, lang)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Victory / Defeat Overlay */}
               {battle.winner && (

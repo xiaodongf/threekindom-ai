@@ -14,6 +14,7 @@ import type {
   Language,
 } from '../game/types.js';
 import { tLoc } from '../i18n/translations.js';
+import { battleAudio } from '../utils/battleAudio.js';
 import { HeroAvatar } from './HeroAvatar.js';
 
 interface DuelModalProps {
@@ -38,6 +39,8 @@ export function DuelModal({
   const [chronoUsed, setChronoUsed] = useState(false);
   const [logs, setLogs] = useState<DuelRoundLog[]>([]);
   const [finished, setFinished] = useState<DuelResult | null>(null);
+  const [clashAnimKey, setClashAnimKey] = useState(0);
+  const [lastClashFlash, setLastClashFlash] = useState<'steel' | 'skill' | 'chrono' | null>(null);
 
   const insightBonus = getChronoInsightBonus(state);
   const canUseSkill = !skillUsed && attacker.skillCooldown === 0;
@@ -59,8 +62,20 @@ export function DuelModal({
     const nextDefHp = Math.max(0, defHp - log.playerDamage);
     const nextLogs = [...logs, log];
     const nextSkillUsed = skillUsed || stance === 'skill';
-    if (stance === 'skill') setSkillUsed(true);
-    if (stance === 'chrono_counter') setChronoUsed(true);
+    if (stance === 'skill') {
+      setSkillUsed(true);
+      setLastClashFlash('skill');
+      battleAudio.playSkillSurge(0.24);
+    } else if (stance === 'chrono_counter') {
+      setChronoUsed(true);
+      setLastClashFlash('chrono');
+      battleAudio.playSkillSurge(0.22);
+    } else {
+      setLastClashFlash('steel');
+      battleAudio.playSteelClash(0.2);
+    }
+    setClashAnimKey((k) => k + 1);
+    window.setTimeout(() => setLastClashFlash(null), 540);
 
     setAtkHp(nextAtkHp);
     setDefHp(nextDefHp);
@@ -74,6 +89,7 @@ export function DuelModal({
             ? 'defender'
             : 'draw';
       const moraleBonus = winner === 'attacker' ? 0.22 : winner === 'defender' ? -0.12 : 0.04;
+      battleAudio.playOutcomeHorn(winner === 'attacker', 0.2);
       setFinished({
         winner,
         attackerHeroId: attacker.id,
@@ -90,82 +106,116 @@ export function DuelModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/82 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="ink-panel gold-border-glow rounded-2xl max-w-2xl w-full p-6 space-y-5">
-        {/* Header */}
-        <div className="text-center space-y-1">
-          <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-[#d4a853]">
-            <Swords className="w-4 h-4" />
-            <span>
-              {finished
-                ? lang === 'zh'
-                  ? '阵前单挑结果'
-                  : 'Duel Concluded'
-                : lang === 'zh'
-                  ? `阵前单挑 · 第 ${round} / 3 回合`
-                  : `Hero Duel · Round ${round} of 3`}
-            </span>
-          </div>
-          <h2 className="font-display text-2xl font-extrabold text-[#f7efe0]">
-            {tLoc(attacker.name, lang)} <span className="text-[#c84b31]">VS</span>{' '}
-            {tLoc(defender.name, lang)}
-          </h2>
-        </div>
-
-        {/* Portraits & HP Bars */}
-        <div className="grid grid-cols-2 gap-4 items-center">
-          {/* Attacker */}
-          <div className="rounded-xl bg-[#0d1015]/85 border border-emerald-500/35 p-3.5 flex items-center gap-3">
-            <HeroAvatar hero={attacker} size="lg" showLevel />
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <div className="font-display font-bold text-base text-[#f7efe0] truncate">
-                {tLoc(attacker.name, lang)}
-              </div>
-              <div className="text-[11px] text-[#9ea3ae]">
-                {lang === 'zh' ? '武力' : 'War'} {attacker.war} · {lang === 'zh' ? '智力' : 'Int'}{' '}
-                {attacker.intellect}
-              </div>
-              <div className="space-y-0.5">
-                <div className="flex justify-between text-[10px] font-bold">
-                  <span className="text-emerald-300">HP</span>
-                  <span className="text-white">{atkHp}/100</span>
-                </div>
-                <div className="h-2.5 rounded-full bg-white/10 overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-emerald-500 to-emerald-300 transition-all duration-300"
-                    style={{ width: `${atkHp}%` }}
-                  />
-                </div>
-              </div>
-            </div>
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="ink-panel gold-border-glow rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl animate-modal-in relative">
+        {/* Studio-Painted Arena Backdrop */}
+        <div className="relative p-6 space-y-5">
+          <div className="pointer-events-none absolute inset-0 overflow-hidden">
+            <img
+              src="/art/bg_plains_siege.jpg"
+              alt="Duel Arena"
+              className="w-full h-full object-cover opacity-28 theme-art-grade"
+            />
+            <div className="absolute inset-0 bg-gradient-to-b from-slate-950/75 via-slate-950/70 to-slate-950/95" />
           </div>
 
-          {/* Defender */}
-          <div className="rounded-xl bg-[#0d1015]/85 border border-rose-500/35 p-3.5 flex items-center gap-3 flex-row-reverse text-right">
-            <HeroAvatar hero={defender} size="lg" showLevel />
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <div className="font-display font-bold text-base text-[#f7efe0] truncate">
+          <div className="relative z-10 space-y-5">
+            {/* Header */}
+            <div className="text-center space-y-1">
+              <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-[#d4a853]">
+                <Swords className="w-4 h-4" />
+                <span>
+                  {finished
+                    ? lang === 'zh'
+                      ? '阵前单挑结果'
+                      : 'Duel Concluded'
+                    : lang === 'zh'
+                      ? `阵前单挑 · 第 ${round} / 3 回合`
+                      : `Hero Duel · Round ${round} of 3`}
+                </span>
+              </div>
+              <h2 className="font-display text-2xl font-extrabold text-[#f7efe0] drop-shadow">
+                {tLoc(attacker.name, lang)} <span className="text-[#fb7185]">VS</span>{' '}
                 {tLoc(defender.name, lang)}
-              </div>
-              <div className="text-[11px] text-[#9ea3ae]">
-                {lang === 'zh' ? '武力' : 'War'} {defender.war} · {lang === 'zh' ? '智力' : 'Int'}{' '}
-                {defender.intellect}
-              </div>
-              <div className="space-y-0.5">
-                <div className="flex justify-between text-[10px] font-bold">
-                  <span className="text-white">{defHp}/100</span>
-                  <span className="text-rose-300">HP</span>
+              </h2>
+            </div>
+
+            {/* Portraits & HP Bars with Dynamic Lunge & Clash Spark Flash! */}
+            <div className="relative grid grid-cols-2 gap-4 items-center">
+              {lastClashFlash && (
+                <div
+                  className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-30 w-24 h-24 rounded-full blur-md animate-ping ${
+                    lastClashFlash === 'chrono'
+                      ? 'bg-cyan-400/80'
+                      : lastClashFlash === 'skill'
+                        ? 'bg-amber-400/85'
+                        : 'bg-yellow-200/75'
+                  }`}
+                />
+              )}
+
+              {/* Attacker */}
+              <div
+                key={`atk-${clashAnimKey}`}
+                className={`rounded-xl bg-[#0d1015]/88 border border-emerald-500/45 p-3.5 flex items-center gap-3 backdrop-blur-sm ${
+                  clashAnimKey > 0 ? 'animate-duel-lunge-left' : ''
+                }`}
+              >
+                <HeroAvatar hero={attacker} size="lg" showLevel />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="font-display font-bold text-base text-[#f7efe0] truncate">
+                    {tLoc(attacker.name, lang)}
+                  </div>
+                  <div className="text-[11px] text-[#9ea3ae]">
+                    {lang === 'zh' ? '武力' : 'War'} {attacker.war} · {lang === 'zh' ? '智力' : 'Int'}{' '}
+                    {attacker.intellect}
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="flex justify-between text-[10px] font-bold">
+                      <span className="text-emerald-300">HP</span>
+                      <span className="text-white">{atkHp}/100</span>
+                    </div>
+                    <div className="h-2.5 rounded-full bg-white/10 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-emerald-500 to-emerald-300 transition-all duration-300"
+                        style={{ width: `${atkHp}%` }}
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div className="h-2.5 rounded-full bg-white/10 overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-l from-rose-500 to-orange-400 transition-all duration-300 ml-auto"
-                    style={{ width: `${defHp}%` }}
-                  />
+              </div>
+
+              {/* Defender */}
+              <div
+                key={`def-${clashAnimKey}`}
+                className={`rounded-xl bg-[#0d1015]/88 border border-rose-500/45 p-3.5 flex items-center gap-3 flex-row-reverse text-right backdrop-blur-sm ${
+                  clashAnimKey > 0 ? 'animate-duel-lunge-right' : ''
+                }`}
+              >
+                <HeroAvatar hero={defender} size="lg" showLevel />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="font-display font-bold text-base text-[#f7efe0] truncate">
+                    {tLoc(defender.name, lang)}
+                  </div>
+                  <div className="text-[11px] text-[#9ea3ae]">
+                    {lang === 'zh' ? '武力' : 'War'} {defender.war} · {lang === 'zh' ? '智力' : 'Int'}{' '}
+                    {defender.intellect}
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="flex justify-between text-[10px] font-bold">
+                      <span className="text-white">{defHp}/100</span>
+                      <span className="text-rose-300">HP</span>
+                    </div>
+                    <div className="h-2.5 rounded-full bg-white/10 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-l from-rose-500 to-orange-400 transition-all duration-300 ml-auto"
+                        style={{ width: `${defHp}%` }}
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
 
         {/* Round Log */}
         <div className="rounded-xl bg-[#0a0e14]/90 border border-white/10 p-3 space-y-2 min-h-[108px] max-h-[160px] overflow-y-auto">
@@ -302,6 +352,8 @@ export function DuelModal({
             </button>
           </div>
         )}
+          </div>
+        </div>
       </div>
     </div>
   );

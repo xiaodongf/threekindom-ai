@@ -164,7 +164,6 @@ export function WarSceneModal({
     const isNight = scene.mode === 'raid' || scene.mode === 'discord';
     const isRiver = scene.terrain === 'river' || scene.mode === 'river_strike';
     const isFortress = scene.terrain === 'fortress' || scene.mode === 'bombard';
-    const isMountain = scene.terrain === 'mountain';
 
     // Initialize miniature army / Lou-Chuan warship formations strictly below horizon (y >= 188)
     const units: UnitDot[] = [];
@@ -350,124 +349,42 @@ export function WarSceneModal({
     }
 
     const drawBackground = (t: number) => {
-      // Sky gradient
-      const sky = ctx.createLinearGradient(0, 0, 0, 185);
-      if (isNight) {
-        sky.addColorStop(0, '#030712');
-        sky.addColorStop(0.55, '#0c1930');
-        sky.addColorStop(1, '#1e293b');
-      } else if (scene.tactic === 'fire' || scene.mode === 'bombard') {
-        sky.addColorStop(0, '#120816');
-        sky.addColorStop(0.48, '#4a1722');
-        sky.addColorStop(0.82, '#9a3412');
-        sky.addColorStop(1, '#c2410c');
-      } else if (isRiver) {
-        sky.addColorStop(0, '#061529');
-        sky.addColorStop(0.55, '#0f3052');
-        sky.addColorStop(1, '#22577a');
+      // Transparent clear so studio-painted HD panoramic backdrop shines underneath!
+      ctx.clearRect(0, 0, W, H);
+
+      // Subtle cinematic atmospheric shading & battle dust gradient
+      const atm = ctx.createLinearGradient(0, 0, 0, H);
+      if (scene.tactic === 'fire' || scene.mode === 'bombard') {
+        atm.addColorStop(0, 'rgba(24, 10, 12, 0.16)');
+        atm.addColorStop(0.55, 'rgba(154, 52, 18, 0.12)');
+        atm.addColorStop(1, 'rgba(2, 6, 23, 0.42)');
+      } else if (isNight) {
+        atm.addColorStop(0, 'rgba(3, 7, 18, 0.2)');
+        atm.addColorStop(1, 'rgba(2, 6, 23, 0.45)');
       } else {
-        sky.addColorStop(0, '#08101f');
-        sky.addColorStop(0.55, '#1e293b');
-        sky.addColorStop(1, '#475569');
+        atm.addColorStop(0, 'rgba(2, 6, 23, 0.12)');
+        atm.addColorStop(1, 'rgba(2, 6, 23, 0.38)');
       }
-      ctx.fillStyle = sky;
-      ctx.fillRect(0, 0, W, 180);
+      ctx.fillStyle = atm;
+      ctx.fillRect(0, 0, W, H);
 
-      // Stars at night OR drifting war clouds / embers
-      ctx.save();
-      if (isNight) {
-        ctx.fillStyle = 'rgba(226, 232, 240, 0.72)';
-        for (let s = 0; s < 34; s++) {
-          const sx = (s * 97 + 23) % W;
-          const sy = (s * 43 + 11) % 115;
-          const twinkle = 0.5 + 0.5 * Math.sin(t * 3 + s);
-          ctx.globalAlpha = twinkle * 0.75;
-          ctx.fillRect(sx, sy, s % 3 === 0 ? 2 : 1.3, s % 3 === 0 ? 2 : 1.3);
-        }
-      } else {
-        // Subtle volumetric atmospheric clouds
-        ctx.fillStyle =
-          scene.tactic === 'fire' || scene.mode === 'bombard'
-            ? 'rgba(251, 146, 60, 0.14)'
-            : 'rgba(148, 163, 184, 0.1)';
-        for (let c = 0; c < 5; c++) {
-          const cx = ((c * 210 + t * 12) % (W + 160)) - 80;
-          const cy = 36 + (c % 3) * 26;
-          ctx.beginPath();
-          ctx.ellipse(cx, cy, 85, 16, 0, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-      ctx.restore();
-
-      // Moon or Glowing Battlefield Sun
-      ctx.save();
-      const orbX = isNight ? 580 : 410;
-      const orbY = isNight ? 58 : 138;
-      const orbGrad = ctx.createRadialGradient(orbX, orbY, 6, orbX, orbY, isNight ? 62 : 155);
-      orbGrad.addColorStop(0, isNight ? 'rgba(241,245,249,0.92)' : 'rgba(253,186,116,0.58)');
-      orbGrad.addColorStop(0.35, isNight ? 'rgba(148,163,184,0.22)' : 'rgba(249,115,22,0.22)');
-      orbGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = orbGrad;
-      ctx.beginPath();
-      ctx.arc(orbX, orbY, isNight ? 62 : 155, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // Far Misty Mountain Silhouette Range
-      ctx.fillStyle = isNight ? '#0a1222' : 'rgba(15, 23, 42, 0.65)';
-      ctx.beginPath();
-      ctx.moveTo(0, 175);
-      const farPts = isMountain
-        ? [
-            [70, 82], [160, 128], [260, 58], [360, 118], [470, 68], [580, 124], [700, 74], [880, 118],
-          ]
-        : [
-            [95, 128], [210, 148], [340, 115], [490, 144], [630, 112], [770, 138], [880, 125],
-          ];
-      for (const [rx, ry] of farPts) ctx.lineTo(rx, ry);
-      ctx.lineTo(W, 180);
-      ctx.lineTo(0, 180);
-      ctx.closePath();
-      ctx.fill();
-
-      // Near Darker Foothill Ridgeline
-      ctx.fillStyle = isNight ? '#0e192d' : '#182436';
-      ctx.beginPath();
-      ctx.moveTo(0, 178);
-      const nearPts = isMountain
-        ? [
-            [110, 126], [220, 152], [350, 112], [480, 148], [620, 118], [760, 146], [880, 134],
-          ]
-        : [
-            [130, 154], [290, 164], [430, 145], [580, 162], [730, 142], [880, 158],
-          ];
-      for (const [rx, ry] of nearPts) ctx.lineTo(rx, ry);
-      ctx.lineTo(W, 182);
-      ctx.lineTo(0, 182);
-      ctx.closePath();
-      ctx.fill();
-
-      // Modern Tech: Striped Manned Recon Hot-Air Balloon floating in the sky!
+      // Modern Tech: Striped Manned Recon Hot-Air Balloon floating in the painted sky!
       if (scene.hasBalloon) {
         const bx = 220 + Math.sin(t * 0.85) * 26;
         const by = 66 + Math.cos(t * 1.35) * 6;
         ctx.save();
-        // Balloon shadow/glow
-        const bGlow = ctx.createRadialGradient(bx, by + 18, 2, bx, by + 18, 22);
-        bGlow.addColorStop(0, 'rgba(251, 191, 36, 0.55)');
+        const bGlow = ctx.createRadialGradient(bx, by + 18, 2, bx, by + 18, 26);
+        bGlow.addColorStop(0, 'rgba(251, 191, 36, 0.65)');
         bGlow.addColorStop(1, 'rgba(0,0,0,0)');
         ctx.fillStyle = bGlow;
         ctx.beginPath();
-        ctx.arc(bx, by + 18, 22, 0, Math.PI * 2);
+        ctx.arc(bx, by + 18, 26, 0, Math.PI * 2);
         ctx.fill();
 
-        // Main silk envelope
         ctx.fillStyle = '#d97706';
         ctx.beginPath();
         ctx.ellipse(bx, by, 19, 23, 0, 0, Math.PI * 2);
         ctx.fill();
-        // Crimson & Gold vertical gore stripes
         ctx.fillStyle = '#f59e0b';
         ctx.beginPath();
         ctx.ellipse(bx, by, 12, 22.5, 0, 0, Math.PI * 2);
@@ -482,14 +399,12 @@ export function WarSceneModal({
         ctx.ellipse(bx, by, 19, 23, 0, 0, Math.PI * 2);
         ctx.stroke();
 
-        // Burner flame
         ctx.fillStyle = '#fb923c';
         ctx.beginPath();
         ctx.arc(bx, by + 24, 3 + Math.sin(t * 22) * 0.8, 0, Math.PI * 2);
         ctx.fill();
 
-        // Rigging + Wicker Gondola
-        ctx.strokeStyle = 'rgba(254,243,199,0.75)';
+        ctx.strokeStyle = 'rgba(254,243,199,0.8)';
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(bx - 8, by + 20);
@@ -504,222 +419,57 @@ export function WarSceneModal({
         ctx.restore();
       }
 
-      // Ground / Yangtze River Surface (Starts at y = 175)
+      // Animated Water Shimmer Ripples over Painted Yangtze Backdrop
       if (isRiver) {
-        const water = ctx.createLinearGradient(0, 175, 0, H);
-        water.addColorStop(0, '#0a2d4a');
-        water.addColorStop(0.45, '#0b446c');
-        water.addColorStop(1, '#051f36');
-        ctx.fillStyle = water;
-        ctx.fillRect(0, 175, W, H - 175);
-
-        // Warm sunset reflection shimmer down the river center
-        if (!isNight) {
-          const refGrad = ctx.createLinearGradient(410, 175, 410, H);
-          refGrad.addColorStop(0, 'rgba(251, 146, 60, 0.25)');
-          refGrad.addColorStop(1, 'rgba(251, 146, 60, 0)');
-          ctx.fillStyle = refGrad;
-          ctx.fillRect(320, 175, 180, H - 175);
-        }
-
-        // Animated water shimmer ripples
-        ctx.strokeStyle = 'rgba(125, 211, 252, 0.22)';
+        ctx.strokeStyle = 'rgba(186, 230, 253, 0.28)';
         ctx.lineWidth = 1.4;
-        for (let r = 0; r < 16; r++) {
-          const wy = 188 + r * 13.5;
-          const offset = (t * 42 + r * 61) % W;
+        for (let r = 0; r < 14; r++) {
+          const wy = 200 + r * 14;
+          const offset = (t * 44 + r * 63) % W;
           ctx.beginPath();
-          ctx.moveTo((offset - 70 + W) % W, wy);
-          ctx.lineTo((offset + 38) % W, wy);
-          ctx.stroke();
-        }
-      } else {
-        const ground = ctx.createLinearGradient(0, 175, 0, H);
-        ground.addColorStop(0, isNight ? '#101a28' : '#25382f');
-        ground.addColorStop(0.55, isNight ? '#0c1420' : '#1b2b26');
-        ground.addColorStop(1, '#090f18');
-        ctx.fillStyle = ground;
-        ctx.fillRect(0, 175, W, H - 175);
-
-        // Subtle 2.5D perspective battlefield earth & dust ridges
-        ctx.strokeStyle = 'rgba(148, 163, 184, 0.09)';
-        ctx.lineWidth = 1;
-        for (let i = 0; i < 9; i++) {
-          const gy = 192 + i * 24;
-          ctx.beginPath();
-          ctx.moveTo(0, gy);
-          ctx.lineTo(W, gy);
+          ctx.moveTo((offset - 68 + W) % W, wy);
+          ctx.lineTo((offset + 34) % W, wy);
           ctx.stroke();
         }
       }
 
-      // Detailed Chinese Fortress Citadel & Curved-Eave Pagoda Gatehouse on Right Side
-      const wallX = 684;
+      // Dynamic Faction Flag & Blazing Breach Glow anchored onto the Right-Side Painted Fortress!
+      const wallX = 738;
       const wallCrumbled = (scene.attackerWon && t > 3.5) || (scene.mode === 'bombard' && t > 2.2);
       const roofPal = scene.attackerWon && t > 4.2 ? atkPal : defPal;
       ctx.save();
 
-      // Stone embankment / riverside pier foundation beneath fortress
-      ctx.fillStyle = '#1e293b';
+      // Tall Fluttering Faction Standard Flag (flips from defender to attacker upon capture!)
+      const flagX = wallX + 26;
+      const wave = Math.sin(t * 9) * 4;
+      ctx.strokeStyle = '#fef08a';
+      ctx.lineWidth = 2.4;
       ctx.beginPath();
-      ctx.moveTo(wallX - 28, 362);
-      ctx.lineTo(wallX + 4, 336);
-      ctx.lineTo(W, 336);
-      ctx.lineTo(W, 368);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(148,163,184,0.28)';
-      ctx.lineWidth = 1;
+      ctx.moveTo(flagX, 118);
+      ctx.lineTo(flagX, 68);
       ctx.stroke();
-
-      // Main Fortress Wall Body with 2.5D bevel shading
-      const wallGrad = ctx.createLinearGradient(wallX, 130, W, 345);
-      wallGrad.addColorStop(0, '#475569');
-      wallGrad.addColorStop(0.22, '#334155');
-      wallGrad.addColorStop(1, '#1e293b');
-      ctx.fillStyle = wallGrad;
-      ctx.fillRect(wallX, 136, W - wallX, 204);
-
-      // Stone Brick Masonry Courses
-      ctx.strokeStyle = 'rgba(15, 23, 42, 0.35)';
-      ctx.lineWidth = 1;
-      for (let by = 152; by < 336; by += 16) {
-        ctx.beginPath();
-        ctx.moveTo(wallX, by);
-        ctx.lineTo(W, by);
-        ctx.stroke();
-      }
-      // Front sunlit bastion pillar
-      ctx.fillStyle = '#64748b';
-      ctx.fillRect(wallX, 136, 22, 204);
-      ctx.fillStyle = '#334155';
-      ctx.fillRect(wallX + 22, 136, 10, 204);
-
-      // Battlement Crenellations
-      for (let cy = 136; cy < 328; cy += 22) {
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillRect(wallX - 7, cy, 11, 13);
-        ctx.fillStyle = '#334155';
-        ctx.fillRect(wallX - 7, cy + 10, 11, 3);
-      }
-
-      // Flanking Inner Watchtower (Far Right)
-      ctx.fillStyle = '#334155';
-      ctx.fillRect(wallX + 102, 106, 56, 44);
-      ctx.fillStyle = roofPal.dark;
+      ctx.fillStyle = roofPal.main;
       ctx.beginPath();
-      ctx.moveTo(wallX + 86, 110);
-      ctx.quadraticCurveTo(wallX + 130, 96, wallX + 130, 82);
-      ctx.quadraticCurveTo(wallX + 130, 96, wallX + 174, 110);
+      ctx.moveTo(flagX, 70);
+      ctx.lineTo(flagX + 38, 76 + wave);
+      ctx.lineTo(flagX + 30, 86 + wave * 0.5);
+      ctx.lineTo(flagX + 38, 94 + wave);
+      ctx.lineTo(flagX, 98);
       ctx.closePath();
       ctx.fill();
-      ctx.strokeStyle = 'rgba(253, 224, 71, 0.65)';
+      ctx.strokeStyle = '#fef08a';
       ctx.lineWidth = 1.2;
       ctx.stroke();
 
-      // Arched Timber City Gate with Iron/Brass Studs
-      ctx.fillStyle = '#0f172a';
-      ctx.beginPath();
-      ctx.roundRect(wallX + 2, 240, 26, 54, [13, 13, 0, 0]);
-      ctx.fill();
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      // Wooden door seam + warm interior torch glow
-      ctx.fillStyle = '#451a03';
-      ctx.beginPath();
-      ctx.roundRect(wallX + 5, 244, 20, 50, [10, 10, 0, 0]);
-      ctx.fill();
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 0.8;
-      ctx.beginPath();
-      ctx.moveTo(wallX + 15, 244);
-      ctx.lineTo(wallX + 15, 294);
-      ctx.stroke();
-
-      // Gatehouse Upper Timber Pavilion Body
-      ctx.fillStyle = '#7f1d1d';
-      ctx.fillRect(wallX + 4, 106, 70, 32);
-      // Crimson pillars & warm lantern windows
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(wallX + 14, 114, 10, 14);
-      ctx.fillRect(wallX + 34, 114, 10, 14);
-      ctx.fillRect(wallX + 54, 114, 10, 14);
-
-      // Swept Double-Tier Curved Chinese Pagoda Roof!
-      // Lower eave tier
-      ctx.fillStyle = roofPal.main;
-      ctx.beginPath();
-      ctx.moveTo(wallX - 24, 114);
-      ctx.quadraticCurveTo(wallX + 8, 104, wallX + 39, 86);
-      ctx.quadraticCurveTo(wallX + 70, 104, wallX + 102, 114);
-      ctx.lineTo(wallX + 92, 120);
-      ctx.lineTo(wallX - 14, 120);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = '#fde047';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // Upper Imperial Roof Tier
-      ctx.fillStyle = roofPal.light;
-      ctx.beginPath();
-      ctx.moveTo(wallX - 8, 92);
-      ctx.quadraticCurveTo(wallX + 16, 82, wallX + 39, 64);
-      ctx.quadraticCurveTo(wallX + 62, 82, wallX + 86, 92);
-      ctx.lineTo(wallX + 76, 97);
-      ctx.lineTo(wallX + 2, 97);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = '#fef08a';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // Blazing Watchtower Fire Braziers atop Battlements
-      const brazierYs = [150, 212, 306];
-      for (const by of brazierYs) {
-        const flicker = Math.sin(t * 18 + by) * 2.2;
-        const fGrad = ctx.createRadialGradient(wallX - 2, by, 1, wallX - 2, by, 16 + flicker);
-        fGrad.addColorStop(0, 'rgba(254, 240, 138, 0.9)');
-        fGrad.addColorStop(0.45, 'rgba(249, 115, 22, 0.45)');
-        fGrad.addColorStop(1, 'rgba(249, 115, 22, 0)');
-        ctx.fillStyle = fGrad;
-        ctx.beginPath();
-        ctx.arc(wallX - 2, by, 16 + flicker, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // Tall Fluttering Faction Standard Flag
-      const flagX = wallX + 39;
-      const wave = Math.sin(t * 9) * 4;
-      ctx.strokeStyle = '#fef08a';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(flagX, 66);
-      ctx.lineTo(flagX, 28);
-      ctx.stroke();
-      ctx.fillStyle = roofPal.main;
-      ctx.beginPath();
-      ctx.moveTo(flagX, 30);
-      ctx.lineTo(flagX + 34, 36 + wave);
-      ctx.lineTo(flagX + 27, 45 + wave * 0.5);
-      ctx.lineTo(flagX + 34, 52 + wave);
-      ctx.lineTo(flagX, 55);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = '#fef08a';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      // Crack / Blazing Breach overlay if bombarded or captured
+      // Blazing Breach Fire Bloom if bombarded or captured
       if (wallCrumbled) {
-        const fireGrad = ctx.createRadialGradient(wallX + 18, 206, 6, wallX + 18, 206, 54);
-        fireGrad.addColorStop(0, 'rgba(254, 240, 138, 0.65)');
-        fireGrad.addColorStop(0.45, 'rgba(249, 115, 22, 0.45)');
+        const fireGrad = ctx.createRadialGradient(wallX - 18, 224, 6, wallX - 18, 224, 68);
+        fireGrad.addColorStop(0, 'rgba(254, 240, 138, 0.78)');
+        fireGrad.addColorStop(0.42, 'rgba(249, 115, 22, 0.52)');
         fireGrad.addColorStop(1, 'rgba(239, 68, 68, 0)');
         ctx.fillStyle = fireGrad;
         ctx.beginPath();
-        ctx.arc(wallX + 18, 206, 54 + Math.sin(t * 14) * 6, 0, Math.PI * 2);
+        ctx.arc(wallX - 18, 224, 68 + Math.sin(t * 14) * 7, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
@@ -727,12 +477,12 @@ export function WarSceneModal({
       // Atmospheric Drifting Fire Embers across battlefield
       if (scene.tactic === 'fire' || scene.mode === 'bombard' || scene.hasGunpowder) {
         ctx.save();
-        for (let e = 0; e < 22; e++) {
-          const ex = (e * 67 + t * (28 + (e % 5) * 8)) % W;
-          const ey = H - ((e * 41 + t * (34 + (e % 4) * 9)) % (H - 40));
-          ctx.fillStyle = e % 2 === 0 ? 'rgba(251, 146, 60, 0.72)' : 'rgba(254, 240, 138, 0.65)';
+        for (let e = 0; e < 26; e++) {
+          const ex = (e * 67 + t * (30 + (e % 5) * 8)) % W;
+          const ey = H - ((e * 41 + t * (36 + (e % 4) * 9)) % (H - 35));
+          ctx.fillStyle = e % 2 === 0 ? 'rgba(251, 146, 60, 0.8)' : 'rgba(254, 240, 138, 0.72)';
           ctx.beginPath();
-          ctx.arc(ex, ey, 1.4 + (e % 3) * 0.6, 0, Math.PI * 2);
+          ctx.arc(ex, ey, 1.5 + (e % 3) * 0.65, 0, Math.PI * 2);
           ctx.fill();
         }
         ctx.restore();
@@ -1190,16 +940,34 @@ export function WarSceneModal({
           </div>
         </div>
 
-        {/* 60fps HTML5 2.5D Canvas War Theater */}
-        <div className="relative bg-slate-950">
+        {/* 60fps HTML5 2.5D Canvas War Theater with Studio-Painted Panoramic Backdrop */}
+        <div className="relative bg-slate-950 overflow-hidden">
+          <img
+            src={
+              scene.mode === 'raid' || scene.mode === 'discord'
+                ? '/art/bg_night_raid.jpg'
+                : scene.terrain === 'river' || scene.mode === 'river_strike'
+                  ? '/art/bg_yangtze_river.jpg'
+                  : scene.terrain === 'mountain'
+                    ? '/art/bg_mountain_pass.jpg'
+                    : '/art/bg_plains_siege.jpg'
+            }
+            alt="Battlefield Panorama"
+            style={{ transform: `scale(${(1 + progress * 0.065).toFixed(4)})` }}
+            className="pointer-events-none absolute inset-0 w-full h-full object-cover object-center theme-art-grade transition-transform duration-150"
+          />
+          {/* Subtle Widescreen Cinema Letterbox Bars */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-3 bg-gradient-to-b from-black/80 to-transparent z-10" />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-black/85 to-transparent z-10" />
+
           <canvas
             ref={canvasRef}
-            className="w-full aspect-[880/400] block"
+            className="relative z-10 w-full aspect-[880/400] block"
           />
 
           {/* Dramatic Diagonal Hero Signature Skill Cut-In Overlay! */}
           {showSkillCutIn && cutInHero && (
-            <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 bg-gradient-to-r from-slate-950/95 via-cyan-950/85 to-slate-950/90 border-y-2 border-cyan-400/80 py-3 px-6 flex items-center justify-center gap-4 shadow-[0_0_50px_rgba(56,189,248,0.45)] animate-pulse">
+            <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 z-20 bg-gradient-to-r from-slate-950/95 via-cyan-950/88 to-slate-950/95 border-y-2 border-amber-300/90 py-3 px-6 flex items-center justify-center gap-4 shadow-[0_0_50px_rgba(251,191,36,0.45)]">
               <HeroAvatar hero={cutInHero} size="lg" showLevel />
               <div className="max-w-lg">
                 <div className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-widest text-amber-300">
@@ -1221,7 +989,7 @@ export function WarSceneModal({
           )}
 
           {/* Modern Tech Active Badges (Bottom-Left of Canvas) */}
-          <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap gap-1.5">
+          <div className="pointer-events-none absolute bottom-3 left-3 z-20 flex flex-wrap gap-1.5">
             {scene.hasGunpowder && (
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-600/80 text-white border border-amber-300/60 shadow">
                 {lang === 'zh' ? '黑火药震天雷' : 'Black Powder'}
@@ -1246,7 +1014,7 @@ export function WarSceneModal({
 
           {/* Final Outcome Stamp Overlay */}
           {completed && (
-            <div className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center space-y-3">
+            <div className="absolute inset-0 z-30 bg-slate-950/55 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center space-y-3">
               <div
                 className={`px-6 py-2 rounded-2xl border-2 font-display text-2xl sm:text-3xl font-black tracking-wide shadow-2xl flex items-center gap-2.5 ${
                   scene.isPlayerDefending

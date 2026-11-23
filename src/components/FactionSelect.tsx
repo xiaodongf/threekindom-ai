@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Clock, Cpu, Languages, Shield, Sparkles, Swords, User } from 'lucide-react';
+import { Clock, Cpu, Languages, Palette, Shield, Sparkles, Swords, User } from 'lucide-react';
 import { createInitialCities, createInitialFactions } from '../game/data.js';
 import { createDefaultPlayerProfile } from '../game/engine.js';
 import { createInitialHeroes } from '../game/heroes.js';
@@ -11,10 +11,13 @@ import type {
   TravelerAvatarId,
 } from '../game/types.js';
 import { UI_TEXT, tLoc } from '../i18n/translations.js';
+import { VISUAL_THEMES, VISUAL_THEME_ORDER, type VisualThemeId } from '../utils/visualTheme.js';
 import { HeroAvatar } from './HeroAvatar.js';
 
 interface FactionSelectProps {
   lang: Language;
+  visualTheme: VisualThemeId;
+  onChangeVisualTheme: (theme: VisualThemeId) => void;
   onToggleLang: () => void;
   onSelectFaction: (faction: PlayableFactionId, profile: PlayerProfile) => void;
   onOpenSettings: () => void;
@@ -22,8 +25,16 @@ interface FactionSelectProps {
   selectedProviderMode: string;
 }
 
+const FACTION_ART: Record<PlayableFactionId, string> = {
+  wei: '/art/bg_wei.jpg',
+  shu: '/art/bg_shu.jpg',
+  wu: '/art/bg_wu.jpg',
+};
+
 export function FactionSelect({
   lang,
+  visualTheme,
+  onChangeVisualTheme,
   onToggleLang,
   onSelectFaction,
   onOpenSettings,
@@ -44,15 +55,20 @@ export function FactionSelect({
   const currentProfile = createDefaultPlayerProfile(avatar, playerName);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-4 py-8 relative overflow-hidden">
-      {/* Modern Ambient Neon Gradients */}
-      <div className="pointer-events-none absolute -top-24 left-1/4 w-[28rem] h-[28rem] rounded-full bg-cyan-500/12 blur-3xl" />
-      <div className="pointer-events-none absolute top-1/3 right-1/5 w-[26rem] h-[26rem] rounded-full bg-indigo-500/12 blur-3xl" />
-      <div className="pointer-events-none absolute bottom-0 left-1/3 w-[24rem] h-[24rem] rounded-full bg-emerald-500/10 blur-3xl" />
+    <div className="min-h-screen flex flex-col items-center justify-center px-4 py-7 relative overflow-hidden">
+      {/* Full-Bleed Studio-Painted Panoramic 214 AD Title Key Art Backdrop */}
+      <div className="pointer-events-none fixed inset-0 z-0">
+        <img
+          src="/art/bg_title_hero.jpg"
+          alt="Three Kingdoms Chrono Backdrop"
+          className="w-full h-full object-cover object-center opacity-45 scale-105 theme-art-grade"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/78 via-slate-950/60 to-slate-950/92" />
+      </div>
 
       {/* Top Bar */}
-      <div className="w-full max-w-6xl flex items-center justify-between mb-6 z-10">
-        <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-cyan-300 font-semibold">
+      <div className="w-full max-w-6xl flex flex-wrap items-center justify-between gap-2.5 mb-5 z-10">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-cyan-200 font-semibold drop-shadow">
           <Clock className="w-4 h-4 text-cyan-400" />
           <span>
             {lang === 'zh'
@@ -60,15 +76,43 @@ export function FactionSelect({
               : `CHRONO-JUMP: 2026 → 214 AD · ${totalHeroes} LEGENDARY HEROES (${wanderingCount} WANDERING)`}
           </span>
         </div>
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* 3-Way Player-Selectable Visual Art Theme Switcher */}
+          <div className="flex items-center gap-1 px-2 py-1 rounded-xl ink-panel">
+            <Palette className="w-3.5 h-3.5 text-amber-300 mr-0.5" />
+            {VISUAL_THEME_ORDER.map((tid) => {
+              const tMeta = VISUAL_THEMES[tid];
+              const active = visualTheme === tid;
+              return (
+                <button
+                  key={tid}
+                  type="button"
+                  onClick={() => onChangeVisualTheme(tid)}
+                  title={tLoc(tMeta.desc, lang)}
+                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                    active
+                      ? 'bg-cyan-500/25 border border-cyan-300/70 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-100 border border-transparent'
+                  }`}
+                >
+                  <span
+                    className="w-2.5 h-2.5 rounded-full border border-white/50"
+                    style={{ background: tMeta.previewGradient }}
+                  />
+                  <span>{tLoc(tMeta.shortName, lang)}</span>
+                </button>
+              );
+            })}
+          </div>
+
           <button
             onClick={onOpenSettings}
-            className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl ink-panel hover:border-cyan-400/50 text-xs font-medium text-slate-200 transition cursor-pointer"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl ink-panel hover:border-cyan-400/50 text-xs font-medium text-slate-200 transition cursor-pointer"
           >
             <Cpu className="w-3.5 h-3.5 text-cyan-400" />
             <span>{tLoc(UI_TEXT.aiSettings, lang)}:</span>
             <span className="text-cyan-300 uppercase font-semibold">{selectedProviderMode}</span>
-            <span className="text-slate-400">
+            <span className="text-slate-400 hidden sm:inline">
               ({configuredCount > 0 ? `${configuredCount} LLM` : 'Offline AI'})
             </span>
           </button>
@@ -172,39 +216,50 @@ export function FactionSelect({
           return (
             <div
               key={fid}
-              className="ink-panel rounded-2xl p-5 flex flex-col justify-between transition-all duration-300 hover:-translate-y-1 hover:border-cyan-400/55"
+              className="ink-panel rounded-2xl overflow-hidden flex flex-col justify-between transition-all duration-300 hover:-translate-y-1 hover:border-cyan-400/65 shadow-2xl"
             >
               <div>
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <span
-                      className="inline-block text-[11px] font-semibold uppercase tracking-wider px-2.5 py-0.5 rounded-full mb-1.5"
+                {/* Studio-Painted Panoramic Kingdom Vista Header */}
+                <div className="relative h-32 w-full overflow-hidden border-b border-slate-700/70">
+                  <img
+                    src={FACTION_ART[fid]}
+                    alt={tLoc(faction.name, lang)}
+                    className="w-full h-full object-cover object-center theme-art-grade transition-transform duration-500 hover:scale-105"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/35 to-transparent" />
+                  <div className="absolute inset-x-4 bottom-2.5 flex items-end justify-between">
+                    <div>
+                      <span
+                        className="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full mb-1 backdrop-blur-md"
+                        style={{
+                          backgroundColor: `${faction.color}38`,
+                          color: faction.accent,
+                          border: `1px solid ${faction.color}88`,
+                        }}
+                      >
+                        {tLoc(UI_TEXT.difficulty[faction.difficulty], lang)}
+                      </span>
+                      <h2 className="font-display text-2xl font-extrabold text-white drop-shadow-md leading-tight">
+                        {tLoc(faction.name, lang)}
+                      </h2>
+                      <p className="text-[11px] text-slate-200 drop-shadow">
+                        {tLoc(faction.rulerName, lang)} · {tLoc(faction.rulerTitle, lang)}
+                      </p>
+                    </div>
+                    <div
+                      className="w-11 h-11 rounded-xl flex items-center justify-center font-seal text-2xl font-black shadow-xl shrink-0"
                       style={{
-                        backgroundColor: `${faction.color}22`,
-                        color: faction.accent,
-                        border: `1px solid ${faction.color}55`,
+                        background: `linear-gradient(135deg, ${faction.color}, ${faction.color}88)`,
+                        border: `1.5px solid ${faction.accent}`,
+                        color: '#fff',
                       }}
                     >
-                      {tLoc(UI_TEXT.difficulty[faction.difficulty], lang)}
-                    </span>
-                    <h2 className="font-display text-2xl font-bold text-white">
-                      {tLoc(faction.name, lang)}
-                    </h2>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      {tLoc(faction.rulerName, lang)} · {tLoc(faction.rulerTitle, lang)}
-                    </p>
-                  </div>
-                  <div
-                    className="w-12 h-12 rounded-xl flex items-center justify-center font-seal text-2xl font-black shadow-lg shrink-0"
-                    style={{
-                      background: `linear-gradient(135deg, ${faction.color}, ${faction.color}77)`,
-                      border: `1.5px solid ${faction.accent}`,
-                      color: '#fff',
-                    }}
-                  >
-                    {faction.bannerChar}
+                      {faction.bannerChar}
+                    </div>
                   </div>
                 </div>
+
+                <div className="p-4 pb-0">
 
                 {/* 5 Iconic Portraits Strip */}
                 <div className="mb-4">
@@ -250,7 +305,7 @@ export function FactionSelect({
                 </div>
 
                 {/* Trait */}
-                <div className="rounded-xl bg-slate-900/65 border border-slate-800 p-3 mb-5">
+                <div className="rounded-xl bg-slate-900/65 border border-slate-800 p-3 mb-4">
                   <div className="flex items-center gap-1.5 text-xs font-semibold text-cyan-300 mb-1">
                     <Shield className="w-3.5 h-3.5" />
                     <span>{tLoc(faction.traitName, lang)}</span>
@@ -259,23 +314,26 @@ export function FactionSelect({
                     {tLoc(faction.traitDesc, lang)}
                   </p>
                 </div>
+                </div>
               </div>
 
-              <button
-                onClick={() => onSelectFaction(fid, currentProfile)}
-                className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition cursor-pointer shadow-lg hover:brightness-110"
-                style={{
-                  background: `linear-gradient(135deg, ${faction.color}, ${faction.color}bb)`,
-                  color: '#ffffff',
-                }}
-              >
-                <Swords className="w-4 h-4" />
-                <span>
-                  {lang === 'zh'
-                    ? `投效${faction.rulerName.zh} · 穿越启程`
-                    : `Pledge to ${faction.rulerName.en}`}
-                </span>
-              </button>
+              <div className="px-4 pb-4">
+                <button
+                  onClick={() => onSelectFaction(fid, currentProfile)}
+                  className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition cursor-pointer shadow-lg hover:brightness-110"
+                  style={{
+                    background: `linear-gradient(135deg, ${faction.color}, ${faction.color}bb)`,
+                    color: '#ffffff',
+                  }}
+                >
+                  <Swords className="w-4 h-4" />
+                  <span>
+                    {lang === 'zh'
+                      ? `投效${faction.rulerName.zh} · 穿越启程`
+                      : `Pledge to ${faction.rulerName.en}`}
+                  </span>
+                </button>
+              </div>
             </div>
           );
         })}

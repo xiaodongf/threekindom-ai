@@ -3,6 +3,7 @@ import {
   Box,
   Compass,
   Crosshair,
+  Globe,
   Layers,
   Map as MapIcon,
   Maximize2,
@@ -37,6 +38,9 @@ import type {
   PlayableFactionId,
 } from '../game/types.js';
 import { TERRAIN_TEXT, tLoc } from '../i18n/translations.js';
+import type { VisualThemeId } from '../utils/visualTheme.js';
+import { MapAtmosphereCanvas } from './MapAtmosphereCanvas.js';
+import { WebGLStrategyMap } from './WebGLStrategyMap.js';
 
 export interface ActiveMapMarch {
   id: string;
@@ -53,6 +57,7 @@ export interface ActiveMapMarch {
 interface StrategyMapProps {
   state: GameState;
   lang: Language;
+  visualTheme?: VisualThemeId;
   selectedCityId: string | null;
   attackMode: boolean;
   activeMapMarch?: ActiveMapMarch | null;
@@ -152,6 +157,7 @@ function evalQuadBezier(
 export function StrategyMap({
   state,
   lang,
+  visualTheme = 'cinema',
   selectedCityId,
   attackMode,
   activeMapMarch,
@@ -164,7 +170,12 @@ export function StrategyMap({
   const selectedCity = selectedCityId ? state.cities[selectedCityId] : null;
   const strikeableIds = new Set(getStrikeableEnemyCityIds(state, state.playerFaction));
 
-  const [is3D, setIs3D] = useState(true);
+  const [mapMode, setMapMode] = useState<'webgl' | '3d' | '2d'>(() => {
+    const p = new URLSearchParams(window.location.search).get('mapMode');
+    if (p === 'webgl' || p === '3d' || p === '2d') return p;
+    return '3d';
+  });
+  const is3D = mapMode === '3d';
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -312,90 +323,141 @@ export function StrategyMap({
             </span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setIs3D((v) => !v)}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition cursor-pointer ${
-              is3D
-                ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200 shadow-[0_0_12px_rgba(56,189,248,0.2)]'
-                : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Box className="w-3.5 h-3.5" />
-            <span>{is3D ? (lang === 'zh' ? '3D 立体' : '3D Tilt') : '2D'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowTerritory((v) => !v)}
-            className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
-              showTerritory
-                ? 'bg-indigo-500/20 border-indigo-400/45 text-indigo-200'
-                : 'bg-slate-800/60 border-slate-700 text-slate-400'
-            }`}
-          >
-            <Layers className="w-3 h-3" />
-            <span>{lang === 'zh' ? '势力版图' : 'Realms'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowGeoLabels((v) => !v)}
-            className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
-              showGeoLabels
-                ? 'bg-indigo-500/20 border-indigo-400/45 text-indigo-200'
-                : 'bg-slate-800/60 border-slate-700 text-slate-400'
-            }`}
-          >
-            <MapIcon className="w-3 h-3" />
-            <span>{lang === 'zh' ? '山川地名' : 'Geography'}</span>
-          </button>
-
-          <div className="flex items-center rounded-lg border border-slate-700/80 bg-slate-900/80 overflow-hidden ml-0.5">
+          {/* 3-Mode Map Engine Switcher: WebGL 3D World | 3D Relief | 2D */}
+          <div className="flex items-center rounded-lg border border-slate-700/80 bg-slate-900/85 overflow-hidden text-[11px] font-semibold">
             <button
               type="button"
-              onClick={() => applyZoom(zoom - 0.3)}
-              disabled={zoom <= 1}
-              className="p-1 text-slate-300 hover:bg-white/10 disabled:opacity-35 cursor-pointer"
+              onClick={() => setMapMode('webgl')}
+              className={`flex items-center gap-1 px-2 py-1 transition cursor-pointer ${
+                mapMode === 'webgl'
+                  ? 'bg-gradient-to-r from-cyan-500/35 to-indigo-500/35 text-cyan-100'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
             >
-              <ZoomOut className="w-3.5 h-3.5" />
+              <Globe className="w-3.5 h-3.5 text-cyan-300" />
+              <span>{lang === 'zh' ? 'WebGL 3D' : 'WebGL 3D'}</span>
             </button>
-            <span className="px-1.5 text-[10px] font-mono text-cyan-300">
-              {Math.round(zoom * 100)}%
-            </span>
             <button
               type="button"
-              onClick={() => applyZoom(zoom + 0.3)}
-              disabled={zoom >= 2.4}
-              className="p-1 text-slate-300 hover:bg-white/10 disabled:opacity-35 cursor-pointer"
+              onClick={() => setMapMode('3d')}
+              className={`flex items-center gap-1 px-2 py-1 border-l border-slate-700/80 transition cursor-pointer ${
+                mapMode === '3d'
+                  ? 'bg-cyan-500/25 text-cyan-100'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
             >
-              <ZoomIn className="w-3.5 h-3.5" />
+              <Box className="w-3.5 h-3.5" />
+              <span>{lang === 'zh' ? '立体沙盘' : '3D Relief'}</span>
             </button>
-            {zoom > 1 && (
+            <button
+              type="button"
+              onClick={() => setMapMode('2d')}
+              className={`px-2 py-1 border-l border-slate-700/80 transition cursor-pointer ${
+                mapMode === '2d'
+                  ? 'bg-cyan-500/25 text-cyan-100'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              2D
+            </button>
+          </div>
+
+          {mapMode !== 'webgl' && (
+            <>
               <button
                 type="button"
-                onClick={() => applyZoom(1)}
-                className="p-1 text-slate-300 hover:bg-white/10 border-l border-slate-700 cursor-pointer"
+                onClick={() => setShowTerritory((v) => !v)}
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
+                  showTerritory
+                    ? 'bg-indigo-500/20 border-indigo-400/45 text-indigo-200'
+                    : 'bg-slate-800/60 border-slate-700 text-slate-400'
+                }`}
               >
-                <Maximize2 className="w-3 h-3" />
+                <Layers className="w-3 h-3" />
+                <span>{lang === 'zh' ? '势力版图' : 'Realms'}</span>
               </button>
-            )}
-          </div>
+
+              <button
+                type="button"
+                onClick={() => setShowGeoLabels((v) => !v)}
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
+                  showGeoLabels
+                    ? 'bg-indigo-500/20 border-indigo-400/45 text-indigo-200'
+                    : 'bg-slate-800/60 border-slate-700 text-slate-400'
+                }`}
+              >
+                <MapIcon className="w-3 h-3" />
+                <span>{lang === 'zh' ? '山川地名' : 'Geography'}</span>
+              </button>
+
+              <div className="flex items-center rounded-lg border border-slate-700/80 bg-slate-900/80 overflow-hidden ml-0.5">
+                <button
+                  type="button"
+                  onClick={() => applyZoom(zoom - 0.3)}
+                  disabled={zoom <= 1}
+                  className="p-1 text-slate-300 hover:bg-white/10 disabled:opacity-35 cursor-pointer"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                <span className="px-1.5 text-[10px] font-mono text-cyan-300">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <button
+                  type="button"
+                  onClick={() => applyZoom(zoom + 0.3)}
+                  disabled={zoom >= 2.4}
+                  className="p-1 text-slate-300 hover:bg-white/10 disabled:opacity-35 cursor-pointer"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                {zoom > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => applyZoom(1)}
+                    className="p-1 text-slate-300 hover:bg-white/10 border-l border-slate-700 cursor-pointer"
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      {/* 3D Perspective Tabletop Stage */}
+      {/* 3D Perspective Tabletop / Real-Time Three.js WebGL World Stage */}
       <div className="relative w-full aspect-[1000/660] rounded-xl overflow-hidden border border-cyan-500/25 bg-[radial-gradient(ellipse_at_center,#0f2947_0%,#071526_70%,#040b16_100%)] shadow-[inset_0_0_50px_rgba(2,6,23,0.9)] map-3d-stage">
-        <div
-          className={`w-full h-full map-3d-surface ${
-            is3D ? 'rounded-xl overflow-hidden ring-1 ring-cyan-400/35 shadow-[0_24px_48px_rgba(2,6,23,0.85)]' : ''
-          }`}
-          style={{
-            transform: is3D
-              ? 'rotateX(20deg) scale(0.95) translateY(-1%)'
-              : 'rotateX(0deg) scale(1)',
-          }}
-        >
+        {mapMode === 'webgl' ? (
+          <WebGLStrategyMap
+            state={state}
+            lang={lang}
+            theme={visualTheme}
+            selectedCityId={selectedCityId}
+            attackMode={attackMode}
+            activeMapMarch={activeMapMarch}
+            onSelectCity={onSelectCity}
+            onQuickTargetEnemy={onQuickTargetEnemy}
+            onInspectHero={onInspectHero}
+            onWebGLFallback={() => setMapMode('3d')}
+          />
+        ) : (
+          <div
+            className={`w-full h-full map-3d-surface relative theme-art-grade ${
+              is3D ? 'rounded-xl overflow-hidden ring-1 ring-cyan-400/35 shadow-[0_24px_48px_rgba(2,6,23,0.85)]' : ''
+            }`}
+            style={{
+              transform: is3D
+                ? 'rotateX(20deg) scale(0.95) translateY(-1%)'
+                : 'rotateX(0deg) scale(1)',
+            }}
+          >
+            {/* 60fps Seasonal Weather, Volumetric Drifting Clouds & Battle Smoke Overlay */}
+            <MapAtmosphereCanvas
+              season={state.season}
+              theme={visualTheme}
+              cities={cities}
+              recentMarches={state.recentMarches}
+            />
           <svg
             viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
             className={`w-full h-full select-none ${
@@ -1426,7 +1488,8 @@ export function StrategyMap({
               </g>
             </g>
           </svg>
-        </div>
+          </div>
+        )}
 
         {/* Floating Live Campaign March Banner */}
         {activeMapMarch && (
@@ -1449,7 +1512,7 @@ export function StrategyMap({
         )}
 
         {/* Floating City Inspector Tooltip */}
-        {hoveredCity && (
+        {mapMode !== 'webgl' && hoveredCity && (
           <div className="pointer-events-none absolute top-3 left-3 z-20 rounded-xl bg-slate-950/90 border border-cyan-400/45 px-3.5 py-2.5 shadow-2xl backdrop-blur-md text-xs max-w-[240px]">
             <div className="flex items-center justify-between gap-3 mb-1">
               <span className="font-display font-bold text-sm text-white">
@@ -1481,7 +1544,7 @@ export function StrategyMap({
         )}
 
         {/* Zoom / 3D Hint */}
-        {zoom === 1 && (
+        {mapMode !== 'webgl' && zoom === 1 && (
           <div className="pointer-events-none absolute bottom-2.5 left-1/2 -translate-x-1/2 text-[10px] text-slate-200/80 bg-slate-950/75 px-3 py-1 rounded-full border border-cyan-400/25 flex items-center gap-1.5 backdrop-blur-md">
             <Compass className="w-3 h-3 text-cyan-400" />
             <span>
