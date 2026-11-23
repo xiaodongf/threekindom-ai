@@ -6,13 +6,23 @@ import type {
   DuelExchangeEvent,
   DuelMatchupOutcome,
   ExchangePlan,
+  ExchangeScript,
   RiderActionPose,
   RiderFrameState,
   SampledDuelFrame,
+  SideScript,
 } from './duelTypes.js';
+import { isPolearmVariant, weaponStyleOf } from './duelWeapons3D.js';
 
-export const INTRO_DURATION = 1.55;
-export const FINALE_DURATION = 1.95;
+export const INTRO_DURATION = 2.1;
+export const FINALE_DURATION = 2.8;
+/** Where each general waits between exchanges (distance from the centre line) */
+export const IDLE_X = 3.5;
+/** Strike blend at which the blade arrives — must match the rig's pose library */
+const STRIKE_CONTACT = 0.7;
+const RESET = 0.7;
+
+const IDLE_CAM = { y: 3.0, z: 10.6, lookY: 2.2, fov: 34 };
 
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
@@ -22,7 +32,7 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * clamp01(t);
 }
 
-function smoothstep(t: number): number {
+function ease(t: number): number {
   const x = clamp01(t);
   return x * x * (3 - 2 * x);
 }
@@ -52,11 +62,16 @@ export function classifyDuelMatchup(log: DuelRoundLog): DuelMatchupOutcome {
 }
 
 function attackPoseForWeapon(profile: HeroDuelProfile): RiderActionPose {
-  if (profile.weaponClass === 'spear') return 'thrust';
+  if (weaponStyleOf(profile) === 'spear') return 'thrust';
   if (profile.weaponClass === 'guandao' || profile.weaponClass === 'heavy') {
     return 'slash_overhead';
   }
   return 'slash_sweep';
+}
+
+/** How close a general must ride for their weapon to land */
+function strikingDistance(profile: HeroDuelProfile): number {
+  return isPolearmVariant(profile.weaponVariant) ? 1.8 : 1.42;
 }
 
 /** Builds a deterministic multi-beat choreography plan for a duel round */
@@ -74,21 +89,52 @@ export function buildExchangePlan(
   let duration = 2.45;
   let hpApplyTime = 1.18;
 
+  const left: SideScript = { strikes: [], knock: 0 };
+  const right: SideScript = { strikes: [], knock: 0 };
+  let focus: ExchangeScript['focus'] = 'left';
+  let closeUp: ExchangeScript['closeUp'];
+  let rear: ExchangeScript['rear'];
+  let letterbox = 0;
+
   if (matchup === 'skill_burst') {
-    duration = 2.9;
+    duration = 3.0;
     cutIn = { start: 0.12, end: 1.04, side: 'left', kind: 'skill' };
+    closeUp = { side: 'left', start: 0.12, end: 0.74 };
+    letterbox = 0.85;
     slowMoWindows.push({ start: 0.14, end: 0.68, scale: 0.48 });
     swingCues.push({ key: 'sw-1', time: 1.05, weight: atkProfile.weaponWeight });
-    swingCues.push({ key: 'sw-2', time: 1.38, weight: defProfile.weaponWeight });
+    left.strikes.push(1.22);
+    right.guard = [0.5, 1.22];
+    right.staggerAt = 1.22;
+    right.knock = 2.1;
+    if (log.enemyDamage > 0) {
+      // The enemy lands a glancing blow first; the signature strike answers it.
+      right.guard = undefined;
+      right.strikes.push(0.96);
+      swingCues.push({ key: 'sw-0', time: 0.82, weight: defProfile.weaponWeight });
+      bursts.push({
+        key: 'b-skill-0',
+        time: 0.96,
+        x: -0.3,
+        y: 2.6,
+        z: 0.3,
+        kind: 'parry',
+        striker: 'right',
+        hitStopSec: 0.035,
+        shake: 0.26,
+        dmgLeft: log.enemyDamage,
+      });
+    }
     bursts.push({
       key: 'b-skill-1',
       time: 1.22,
       x: 0.45,
-      y: 2.35,
-      z: 0.15,
+      y: 2.6,
+      z: 0.3,
       kind: 'skill',
-      hitStopSec: 0.085,
-      shake: 0.72,
+      striker: 'left',
+      hitStopSec: 0.1,
+      shake: 0.85,
       dmgRight: log.playerDamage,
       callout: {
         id: `c-${event.id}-1`,
@@ -97,46 +143,41 @@ export function buildExchangePlan(
         tone: 'gold',
       },
     });
-    if (log.enemyDamage > 0) {
-      bursts.push({
-        key: 'b-skill-2',
-        time: 1.56,
-        x: -0.3,
-        y: 2.2,
-        z: -0.1,
-        kind: 'parry',
-        hitStopSec: 0.04,
-        shake: 0.28,
-        dmgLeft: log.enemyDamage,
-      });
-    }
     hpApplyTime = 1.24;
   } else if (matchup === 'chrono_counter') {
-    duration = 2.85;
+    duration = 2.95;
     cutIn = { start: 0.1, end: 0.94, side: 'left', kind: 'chrono' };
+    letterbox = 0.75;
     chronoScanWindow = { start: 0.55, end: 1.18 };
     slowMoWindows.push({ start: 0.58, end: 1.06, scale: 0.42 });
     swingCues.push({ key: 'sw-e', time: 0.96, weight: defProfile.weaponWeight });
     swingCues.push({ key: 'sw-p', time: 1.22, weight: atkProfile.weaponWeight });
+    right.strikes.push(1.05);
+    left.duckAt = 1.05;
+    left.strikes.push(1.36);
+    right.staggerAt = 1.36;
+    right.knock = 1.7;
     bursts.push({
       key: 'b-chrono-whiff',
       time: 1.05,
       x: -0.2,
-      y: 2.4,
-      z: -0.5,
+      y: 2.6,
+      z: 0.3,
       kind: 'whiff',
+      striker: 'right',
       hitStopSec: 0,
       shake: 0.12,
     });
     bursts.push({
       key: 'b-chrono-hit',
-      time: 1.32,
+      time: 1.36,
       x: 0.45,
-      y: 2.25,
-      z: 0.1,
+      y: 2.6,
+      z: 0.3,
       kind: 'chrono',
-      hitStopSec: 0.08,
-      shake: 0.62,
+      striker: 'left',
+      hitStopSec: 0.09,
+      shake: 0.7,
       dmgRight: log.playerDamage,
       dmgLeft: log.enemyDamage,
       callout: {
@@ -149,19 +190,24 @@ export function buildExchangePlan(
         tone: 'cyan',
       },
     });
-    hpApplyTime = 1.34;
+    hpApplyTime = 1.38;
   } else if (matchup === 'guard_break') {
-    duration = 2.55;
+    duration = 2.6;
     swingCues.push({ key: 'sw-1', time: 0.85, weight: 'heavy' });
+    left.strikes.push(1.02);
+    right.guard = [0.4, 1.02];
+    right.staggerAt = 1.02;
+    right.knock = 1.6;
     bursts.push({
       key: 'b-gb',
       time: 1.02,
       x: 0.35,
-      y: 2.3,
-      z: 0.12,
+      y: 2.6,
+      z: 0.3,
       kind: 'heavy',
-      hitStopSec: 0.075,
-      shake: 0.66,
+      striker: 'left',
+      hitStopSec: 0.085,
+      shake: 0.72,
       dmgRight: log.playerDamage,
       dmgLeft: log.enemyDamage,
       callout: {
@@ -176,28 +222,35 @@ export function buildExchangePlan(
     });
     hpApplyTime = 1.04;
   } else if (matchup === 'riposte') {
-    duration = 2.6;
+    duration = 2.7;
     swingCues.push({ key: 'sw-e', time: 0.78, weight: defProfile.weaponWeight });
     swingCues.push({ key: 'sw-p', time: 1.12, weight: atkProfile.weaponWeight });
+    right.strikes.push(0.88);
+    left.duckAt = 0.88;
+    left.strikes.push(1.26);
+    right.staggerAt = 1.26;
+    right.knock = 1.5;
     bursts.push({
       key: 'b-evade',
       time: 0.88,
       x: -0.25,
-      y: 2.55,
-      z: -0.35,
+      y: 2.6,
+      z: 0.3,
       kind: 'whiff',
+      striker: 'right',
       hitStopSec: 0,
       shake: 0.1,
     });
     bursts.push({
       key: 'b-riposte',
-      time: 1.24,
+      time: 1.26,
       x: 0.35,
-      y: 2.2,
-      z: 0.2,
+      y: 2.6,
+      z: 0.3,
       kind: 'heavy',
-      hitStopSec: 0.07,
-      shake: 0.56,
+      striker: 'left',
+      hitStopSec: 0.08,
+      shake: 0.6,
       dmgRight: log.playerDamage,
       dmgLeft: log.enemyDamage,
       callout: {
@@ -210,20 +263,26 @@ export function buildExchangePlan(
         tone: 'gold',
       },
     });
-    hpApplyTime = 1.26;
+    hpApplyTime = 1.28;
   } else if (matchup === 'parry_punish') {
-    duration = 2.55;
+    duration = 2.7;
     swingCues.push({ key: 'sw-1', time: 0.78, weight: defProfile.weaponWeight });
     swingCues.push({ key: 'sw-2', time: 1.16, weight: atkProfile.weaponWeight });
+    right.strikes.push(0.88);
+    left.guard = [0.36, 0.98];
+    left.strikes.push(1.32);
+    right.staggerAt = 1.32;
+    right.knock = 1.4;
     bursts.push({
       key: 'b-parry',
       time: 0.88,
       x: -0.1,
-      y: 2.4,
-      z: 0.08,
+      y: 2.6,
+      z: 0.3,
       kind: 'parry',
-      hitStopSec: 0.055,
-      shake: 0.32,
+      striker: 'right',
+      hitStopSec: 0.06,
+      shake: 0.34,
       callout: {
         id: `c-${event.id}-pr`,
         side: 'left',
@@ -233,72 +292,91 @@ export function buildExchangePlan(
     });
     bursts.push({
       key: 'b-punish',
-      time: 1.28,
+      time: 1.32,
       x: 0.38,
-      y: 2.2,
-      z: 0.12,
+      y: 2.6,
+      z: 0.3,
       kind: 'heavy',
-      hitStopSec: 0.065,
-      shake: 0.5,
+      striker: 'left',
+      hitStopSec: 0.075,
+      shake: 0.56,
       dmgRight: log.playerDamage,
       dmgLeft: log.enemyDamage,
     });
-    hpApplyTime = 1.3;
+    hpApplyTime = 1.34;
   } else if (matchup === 'enemy_dominates') {
-    duration = log.enemyStance === 'skill' ? 2.8 : 2.55;
-    if (log.enemyStance === 'skill') {
+    const isSkill = log.enemyStance === 'skill';
+    const tc = isSkill ? 1.26 : 1.04;
+    duration = isSkill ? 2.95 : 2.6;
+    focus = 'right';
+    if (isSkill) {
       cutIn = { start: 0.14, end: 0.82, side: 'right', kind: 'skill' };
+      closeUp = { side: 'right', start: 0.14, end: 0.72 };
+      letterbox = 0.8;
       slowMoWindows.push({ start: 0.16, end: 0.58, scale: 0.5 });
     }
-    const offset = log.enemyStance === 'skill' ? 0.22 : 0;
-    swingCues.push({ key: 'sw-e', time: 0.86 + offset, weight: defProfile.weaponWeight });
+    swingCues.push({ key: 'sw-e', time: tc - 0.18, weight: defProfile.weaponWeight });
+    right.strikes.push(tc);
+    if (log.playerStance === 'guard') left.guard = [0.4, tc];
+    else left.strikes.push(tc + 0.14);
+    left.staggerAt = tc;
+    left.knock = isSkill ? 2.0 : 1.5;
     bursts.push({
       key: 'b-enemy-hit',
-      time: 1.04 + offset,
+      time: tc,
       x: -0.35,
-      y: 2.28,
-      z: 0.1,
-      kind: log.enemyStance === 'skill' ? 'skill' : 'heavy',
-      hitStopSec: 0.075,
-      shake: 0.64,
+      y: 2.6,
+      z: 0.3,
+      kind: isSkill ? 'skill' : 'heavy',
+      striker: 'right',
+      hitStopSec: isSkill ? 0.1 : 0.08,
+      shake: isSkill ? 0.82 : 0.68,
       dmgLeft: log.enemyDamage,
       dmgRight: log.playerDamage,
       callout: {
         id: `c-${event.id}-ed`,
         side: 'right',
-        text:
-          log.enemyStance === 'skill'
-            ? { en: `ENEMY SKILL! -${log.enemyDamage}`, zh: `敌将绝技！-${log.enemyDamage}` }
-            : { en: `COUNTERED! -${log.enemyDamage}`, zh: `受敌反制！-${log.enemyDamage}` },
+        text: isSkill
+          ? { en: `ENEMY SKILL! -${log.enemyDamage}`, zh: `敌将绝技！-${log.enemyDamage}` }
+          : { en: `COUNTERED! -${log.enemyDamage}`, zh: `受敌反制！-${log.enemyDamage}` },
         tone: 'crimson',
       },
     });
-    hpApplyTime = 1.06 + offset;
+    hpApplyTime = tc + 0.02;
   } else {
-    // Mirror Clash: 3 rapid back-and-forth mounted steel clashes ("大战数合!")
-    duration = 2.65;
-    swingCues.push({ key: 'sw-m1', time: 0.72, weight: atkProfile.weaponWeight });
-    swingCues.push({ key: 'sw-m2', time: 1.08, weight: defProfile.weaponWeight });
+    // Mirror clash: three exchanges of steel, the last with both horses rearing ("大战数合!")
+    duration = 2.9;
+    focus = 'both';
+    swingCues.push({ key: 'sw-m1', time: 0.7, weight: atkProfile.weaponWeight });
+    swingCues.push({ key: 'sw-m2', time: 1.04, weight: defProfile.weaponWeight });
     swingCues.push({ key: 'sw-m3', time: 1.42, weight: atkProfile.weaponWeight });
+    left.strikes.push(0.84, 1.58);
+    right.strikes.push(0.84, 1.2, 1.58);
+    left.guard = [1.0, 1.32];
+    left.knock = 0.9;
+    right.knock = 0.9;
+    rear = [1.3, 1.9];
     bursts.push({
       key: 'b-m1',
       time: 0.84,
-      x: 0.0,
-      y: 2.42,
-      z: 0.12,
+      x: 0,
+      y: 2.7,
+      z: 0.3,
       kind: 'parry',
-      hitStopSec: 0.04,
-      shake: 0.3,
+      striker: 'both',
+      hitStopSec: 0.045,
+      shake: 0.32,
     });
     bursts.push({
       key: 'b-m2',
-      time: 1.18,
-      x: 0.08,
-      y: 2.28,
-      z: -0.08,
+      time: 1.2,
+      x: 0,
+      y: 2.7,
+      z: 0.3,
       kind: 'parry',
-      hitStopSec: 0.045,
-      shake: 0.36,
+      striker: 'right',
+      hitStopSec: 0.05,
+      shake: 0.38,
       callout: {
         id: `c-${event.id}-mc`,
         side: 'center',
@@ -308,21 +386,51 @@ export function buildExchangePlan(
     });
     bursts.push({
       key: 'b-m3',
-      time: 1.54,
-      x: -0.06,
-      y: 2.34,
-      z: 0.06,
+      time: 1.58,
+      x: 0,
+      y: 3.0,
+      z: 0.3,
       kind: 'heavy',
-      hitStopSec: 0.065,
-      shake: 0.5,
+      striker: 'both',
+      hitStopSec: 0.075,
+      shake: 0.6,
       dmgLeft: log.enemyDamage,
       dmgRight: log.playerDamage,
     });
-    hpApplyTime = 1.56;
+    hpApplyTime = 1.6;
   }
+
+  // A beat of slow motion right after every decisive blow gives it weight
+  for (const b of bursts) {
+    if (b.kind === 'heavy' || b.kind === 'skill' || b.kind === 'chrono') {
+      slowMoWindows.push({ start: b.time, end: b.time + 0.12, scale: b.kind === 'heavy' ? 0.3 : 0.22 });
+    }
+  }
+
+  const contacts = [...left.strikes, ...right.strikes].sort((a, b) => a - b);
+  const reach =
+    focus === 'left'
+      ? strikingDistance(atkProfile)
+      : focus === 'right'
+        ? strikingDistance(defProfile)
+        : Math.min(strikingDistance(atkProfile), strikingDistance(defProfile)) + 0.12;
+
+  const script: ExchangeScript = {
+    left,
+    right,
+    firstContact: contacts[0],
+    lastContact: contacts[contacts.length - 1],
+    rear,
+    focus,
+    closeUp,
+    letterbox,
+    contactHalf: reach,
+    contactZ: reach < 1.7 ? 0.5 : 0,
+  };
 
   return {
     duration,
+    script,
     matchup,
     playerStance: log.playerStance,
     enemyStance: log.enemyStance,
@@ -337,89 +445,80 @@ export function buildExchangePlan(
   };
 }
 
-/** Intro sequence: both warhorses gallop in from opposite wings, rear up in challenge, settle to idle */
+function baseRider(side: 'left' | 'right', trailColor: string, fatigue: number): RiderFrameState {
+  return {
+    x: side === 'left' ? -IDLE_X : IDLE_X,
+    z: 0,
+    yaw: side === 'left' ? 0 : Math.PI,
+    gait: 'idle',
+    gaitSpeed: 1,
+    rearAngle: 0,
+    bodyPitch: 0,
+    pose: 'ready',
+    poseBlend: 0,
+    trailIntensity: 0,
+    trailColor,
+    disarmed: false,
+    fatigue,
+  };
+}
+
+function fatigueOf(hp: number): number {
+  return hp < 40 ? (40 - hp) / 40 : 0;
+}
+
+/** Intro: both warhorses gallop in from the wings, rear in challenge, then settle */
 export function sampleIntroFrame(
   t: number,
   atkProfile: HeroDuelProfile,
   defProfile: HeroDuelProfile
 ): SampledDuelFrame {
   const n = clamp01(t / INTRO_DURATION);
-  let xDist = 4.4;
-  let gait: RiderFrameState['gait'] = 'idle';
-  let rear = 0;
-  let pose: RiderActionPose = 'ready';
-  let poseBlend = 0;
+  const left = baseRider('left', atkProfile.auraColor, 0);
+  const right = baseRider('right', defProfile.auraColor, 0);
 
-  if (n < 0.56) {
-    const p = smoothstep(n / 0.56);
-    xDist = lerp(9.4, 3.85, p);
-    gait = 'gallop';
-    pose = 'charge_windup';
-    poseBlend = p * 0.45;
-  } else if (n < 0.88) {
-    const p = (n - 0.56) / 0.32;
-    xDist = 3.85;
-    gait = 'rear';
-    rear = Math.sin(p * Math.PI) * 0.52;
-    pose = 'salute';
-    poseBlend = Math.sin(p * Math.PI);
-  } else {
-    xDist = 3.85;
-    gait = 'idle';
-    rear = 0;
-    pose = 'ready';
-    poseBlend = 0;
+  let dist = IDLE_X;
+  for (const r of [left, right]) {
+    if (n < 0.56) {
+      const p = n / 0.56;
+      dist = lerp(11.5, IDLE_X, 1 - Math.pow(1 - p, 2.2));
+      r.gait = p < 0.86 ? 'gallop' : 'skid';
+      r.gaitSpeed = 1.15;
+      r.pose = 'charge_windup';
+      r.poseBlend = 0.35 * (1 - ease((p - 0.7) / 0.3));
+    } else if (n < 0.88) {
+      const p = (n - 0.56) / 0.32;
+      r.gait = 'rear';
+      r.rearAngle = Math.sin(p * Math.PI) * 0.5;
+      r.pose = 'salute';
+      r.poseBlend = Math.sin(p * Math.PI);
+    }
   }
+  left.x = -dist;
+  right.x = dist;
 
-  // Symmetrical sweeping intro camera keeping BOTH galloping warhorses heroically framed!
-  const camP = smoothstep(n);
+  const camP = ease(n);
   const camera: CameraFrameState = {
-    posX: 0,
-    posY: lerp(5.1, 3.85, camP),
-    posZ: lerp(15.2, 11.4, camP),
+    posX: lerp(-1.6, 0, camP),
+    posY: lerp(1.9, IDLE_CAM.y, camP),
+    posZ: lerp(13.4, IDLE_CAM.z, camP),
     lookX: 0,
-    lookY: lerp(2.15, 2.05, camP),
+    lookY: lerp(2.5, IDLE_CAM.lookY, camP),
     lookZ: 0,
-    fov: lerp(45, 42, camP),
+    fov: lerp(40, IDLE_CAM.fov, camP),
     shake: 0,
+    cutId: 0,
   };
 
   return {
-    left: {
-      x: -xDist,
-      z: 0,
-      yaw: 0,
-      gait,
-      gaitSpeed: 1.15,
-      rearAngle: rear,
-      bodyPitch: gait === 'gallop' ? -0.06 : 0,
-      pose,
-      poseBlend,
-      trailIntensity: 0,
-      trailColor: atkProfile.auraColor,
-      disarmed: false,
-      fatigue: 0,
-    },
-    right: {
-      x: xDist,
-      z: 0,
-      yaw: Math.PI,
-      gait,
-      gaitSpeed: 1.15,
-      rearAngle: rear,
-      bodyPitch: gait === 'gallop' ? -0.06 : 0,
-      pose,
-      poseBlend,
-      trailIntensity: 0,
-      trailColor: defProfile.auraColor,
-      disarmed: false,
-      fatigue: 0,
-    },
+    left,
+    right,
     camera,
     timeScale: 1,
     letterbox: n < 0.85 ? 0.55 : lerp(0.55, 0, (n - 0.85) / 0.15),
     chronoScanAlpha: 0,
-    bannerCheer: n > 0.55 && n < 0.88 ? 0.65 : 0.1,
+    bannerCheer: n > 0.55 && n < 0.9 ? 0.7 : 0.15,
+    radialBlur: n < 0.45 ? 0.012 : 0,
   };
 }
 
@@ -431,56 +530,132 @@ export function sampleIdleFrame(
   atkProfile: HeroDuelProfile,
   defProfile: HeroDuelProfile
 ): SampledDuelFrame {
-  const sway = Math.sin(elapsedSec * 0.55);
-  const atkFatigue = atkHp < 40 ? (40 - atkHp) / 40 : 0;
-  const defFatigue = defHp < 40 ? (40 - defHp) / 40 : 0;
+  const left = baseRider('left', atkProfile.auraColor, fatigueOf(atkHp));
+  const right = baseRider('right', defProfile.auraColor, fatigueOf(defHp));
+  left.yaw = 0.04 * Math.sin(elapsedSec * 0.6);
+  right.yaw = Math.PI - 0.04 * Math.sin(elapsedSec * 0.6 + 0.5);
 
   return {
-    left: {
-      x: -3.85 + Math.sin(elapsedSec * 0.9) * 0.08,
-      z: Math.cos(elapsedSec * 0.7) * 0.08,
-      yaw: 0.06 * Math.sin(elapsedSec * 0.6),
-      gait: 'idle',
-      gaitSpeed: 1,
-      rearAngle: 0,
-      bodyPitch: 0,
-      pose: 'ready',
-      poseBlend: 0,
-      trailIntensity: 0,
-      trailColor: atkProfile.auraColor,
-      disarmed: false,
-      fatigue: atkFatigue,
-    },
-    right: {
-      x: 3.85 - Math.sin(elapsedSec * 0.9 + 1.1) * 0.08,
-      z: -Math.cos(elapsedSec * 0.7 + 0.8) * 0.08,
-      yaw: Math.PI - 0.06 * Math.sin(elapsedSec * 0.6 + 0.5),
-      gait: 'idle',
-      gaitSpeed: 1,
-      rearAngle: 0,
-      bodyPitch: 0,
-      pose: 'ready',
-      poseBlend: 0,
-      trailIntensity: 0,
-      trailColor: defProfile.auraColor,
-      disarmed: false,
-      fatigue: defFatigue,
-    },
+    left,
+    right,
     camera: {
-      posX: sway * 0.75,
-      posY: 3.85 + Math.cos(elapsedSec * 0.4) * 0.14,
-      posZ: 11.4 + Math.sin(elapsedSec * 0.35) * 0.28,
+      posX: Math.sin(elapsedSec * 0.5) * 0.7,
+      posY: IDLE_CAM.y + Math.cos(elapsedSec * 0.4) * 0.12,
+      posZ: IDLE_CAM.z + Math.sin(elapsedSec * 0.35) * 0.25,
       lookX: 0,
-      lookY: 2.05,
+      lookY: IDLE_CAM.lookY,
       lookZ: 0,
-      fov: 42,
+      fov: IDLE_CAM.fov,
       shake: 0,
+      cutId: 0,
     },
     timeScale: 1,
     letterbox: 0,
     chronoScanAlpha: 0,
     bannerCheer: 0,
+    radialBlur: 0,
   };
+}
+
+/** Maps exchange time to the strike pose's blend so the blade arrives exactly at `contact`. */
+function strikeBlend(t: number, contact: number): number | null {
+  const start = contact - 0.5;
+  const cut = contact - 0.13;
+  if (t < start || t > contact + 0.5) return null;
+  if (t < cut) return 0.38 * ease((t - start) / (cut - start));
+  if (t < contact) return 0.38 + (STRIKE_CONTACT - 0.38) * Math.pow((t - cut) / (contact - cut), 1.6);
+  return STRIKE_CONTACT + (1 - STRIKE_CONTACT) * (1 - Math.pow(1 - clamp01((t - contact) / 0.24), 2));
+}
+
+function sampleSide(
+  t: number,
+  plan: ExchangePlan,
+  me: 'left' | 'right',
+  profile: HeroDuelProfile,
+  rider: RiderFrameState
+): void {
+  const sc = plan.script;
+  const mine = sc[me];
+  const theirs = sc[me === 'left' ? 'right' : 'left'];
+  const resetStart = plan.duration - RESET;
+  const start = 0.12;
+  const arrive = sc.firstContact - 0.06;
+  const cz = sc.contactZ * (me === 'left' ? 1 : -1);
+
+  const knockAt = mine.knock > 0 ? (mine.staggerAt ?? sc.lastContact + 0.1) : undefined;
+  const pushAt = theirs.staggerAt;
+  const endDist = sc.contactHalf + (mine.knock > 0 ? mine.knock : pushAt !== undefined ? -0.28 : 0);
+
+  let dist = IDLE_X;
+  let z = 0;
+
+  if (t < start) {
+    // Gather: the horse sinks onto its haunches before it springs
+    const p = ease(t / start);
+    dist = IDLE_X + 0.1 * p;
+    rider.bodyPitch = 0.07 * p;
+  } else if (t < arrive) {
+    const a = (t - start) / (arrive - start);
+    const e = ease(a);
+    dist = lerp(IDLE_X + 0.1, sc.contactHalf, e);
+    z = cz * e;
+    rider.gait = a < 0.88 ? 'gallop' : 'skid';
+    rider.gaitSpeed = 1.2;
+    rider.bodyPitch = -0.05 * Math.sin(a * Math.PI);
+  } else if (t < resetStart) {
+    dist = sc.contactHalf;
+    z = cz;
+    rider.gait = 'trot';
+    if (knockAt !== undefined && t >= knockAt) {
+      const k = clamp01((t - knockAt) / 0.62);
+      dist = sc.contactHalf + mine.knock * (1 - Math.pow(1 - k, 2.6));
+      rider.gait = k < 0.75 ? 'skid' : 'stagger';
+      rider.rearAngle = Math.sin(k * Math.PI) * 0.2;
+    } else if (pushAt !== undefined && t >= pushAt) {
+      dist = sc.contactHalf - 0.28 * ease((t - pushAt) / 0.5);
+    }
+    if (sc.rear && t >= sc.rear[0] && t <= sc.rear[1]) {
+      const p = (t - sc.rear[0]) / (sc.rear[1] - sc.rear[0]);
+      rider.gait = 'rear';
+      rider.rearAngle = Math.sin(p * Math.PI) * 0.46;
+    }
+  } else {
+    const p = ease((t - resetStart) / RESET);
+    dist = lerp(endDist, IDLE_X, p);
+    z = cz * (1 - p);
+    rider.gait = 'trot';
+  }
+
+  rider.x = me === 'left' ? -dist : dist;
+  rider.z = z;
+
+  if (t >= resetStart + 0.2) return;
+
+  if (t < arrive) {
+    rider.pose = 'charge_windup';
+    rider.poseBlend = clamp01(t / arrive);
+  }
+  if (mine.guard && t >= mine.guard[0] && t <= mine.guard[1] + 0.25) {
+    rider.pose = 'guard_parry';
+    rider.poseBlend = (t - mine.guard[0]) / 0.3;
+  }
+  if (mine.duckAt !== undefined && t >= mine.duckAt - 0.24 && t <= mine.duckAt + 0.3) {
+    rider.pose = 'evade_duck';
+    rider.poseBlend = (t - (mine.duckAt - 0.24)) / 0.54;
+  }
+  const strikePose = attackPoseForWeapon(profile);
+  for (const contact of mine.strikes) {
+    const b = strikeBlend(t, contact);
+    if (b === null) continue;
+    rider.pose = strikePose;
+    rider.poseBlend = b;
+    rider.trailIntensity = t > contact - 0.2 && t < contact + 0.16 ? 1 : 0;
+  }
+  if (mine.staggerAt !== undefined && t >= mine.staggerAt) {
+    rider.pose = 'stagger_hit';
+    rider.poseBlend = (t - mine.staggerAt) / 0.95;
+    rider.trailIntensity = 0;
+  }
 }
 
 /** Samples any frame of a multi-beat mounted duel exchange */
@@ -492,9 +667,8 @@ export function sampleExchangeFrame(
   atkProfile: HeroDuelProfile,
   defProfile: HeroDuelProfile
 ): SampledDuelFrame {
-  const dur = plan.duration;
-  const atkFatigue = atkHp < 40 ? (40 - atkHp) / 40 : 0;
-  const defFatigue = defHp < 40 ? (40 - defHp) / 40 : 0;
+  const sc = plan.script;
+  const resetStart = plan.duration - RESET;
 
   let timeScale = 1;
   for (const w of plan.slowMoWindows) {
@@ -511,381 +685,86 @@ export function sampleExchangeFrame(
     chronoScanAlpha = Math.sin(clamp01(p) * Math.PI);
   }
 
-  const left: RiderFrameState = {
-    x: -3.85,
-    z: 0,
-    yaw: 0,
-    gait: 'idle',
-    gaitSpeed: 1,
-    rearAngle: 0,
-    bodyPitch: 0,
-    pose: 'ready',
-    poseBlend: 0,
-    trailIntensity: 0,
-    trailColor: plan.matchup === 'chrono_counter' ? '#38bdf8' : atkProfile.auraColor,
-    disarmed: false,
-    fatigue: atkFatigue,
-  };
+  const left = baseRider(
+    'left',
+    plan.matchup === 'chrono_counter' ? '#38bdf8' : atkProfile.auraColor,
+    fatigueOf(atkHp)
+  );
+  const right = baseRider('right', defProfile.auraColor, fatigueOf(defHp));
+  sampleSide(t, plan, 'left', atkProfile, left);
+  sampleSide(t, plan, 'right', defProfile, right);
 
-  const right: RiderFrameState = {
-    x: 3.85,
-    z: 0,
-    yaw: Math.PI,
-    gait: 'idle',
-    gaitSpeed: 1,
-    rearAngle: 0,
-    bodyPitch: 0,
-    pose: 'ready',
-    poseBlend: 0,
-    trailIntensity: 0,
-    trailColor: defProfile.auraColor,
-    disarmed: false,
-    fatigue: defFatigue,
-  };
+  // ---------------------------------------------------------------- camera
+  const pushIn = ease((t - 0.08) / (sc.firstContact - 0.08));
+  const out = ease((t - resetStart) / RESET);
+  const k = pushIn * (1 - out);
+  const mid = (left.x + right.x) * 0.5;
+  const bias = sc.focus === 'left' ? 1 : sc.focus === 'right' ? -1 : 0;
 
   const camera: CameraFrameState = {
-    posX: 0,
-    posY: 4.15,
-    posZ: 12.1,
-    lookX: 0,
-    lookY: 2.05,
-    lookZ: 0,
-    fov: 42,
+    posX: lerp(0, mid + bias * 1.4, k),
+    posY: lerp(IDLE_CAM.y, 2.4, k),
+    posZ: lerp(IDLE_CAM.z, 7.5, k),
+    lookX: lerp(0, mid, k),
+    lookY: lerp(IDLE_CAM.lookY, 2.55, k),
+    lookZ: 0.1 * k,
+    fov: lerp(IDLE_CAM.fov, 37, k),
     shake: 0,
+    cutId: 0,
   };
 
-  let letterbox = 0;
-  let bannerCheer = 0.25;
+  if (sc.rear && t >= sc.rear[0] - 0.1) {
+    // Drop low under the rearing horses
+    const p = ease((t - (sc.rear[0] - 0.1)) / 0.35) * (1 - out);
+    camera.posY -= 0.75 * p;
+    camera.lookY += 0.45 * p;
+    camera.posZ -= 0.5 * p;
+  }
 
-  const atkStrikePose = attackPoseForWeapon(atkProfile);
-  const defStrikePose = attackPoseForWeapon(defProfile);
+  const decisive = sc.left.staggerAt ?? sc.right.staggerAt;
+  if (decisive !== undefined && t > decisive) {
+    // Follow the general who was driven back
+    const loser = sc.left.staggerAt !== undefined ? left : right;
+    const f = ease((t - decisive) / 0.55) * (1 - out);
+    camera.lookX += (loser.x * 0.5 - camera.lookX) * f * 0.7;
+    camera.posX += (loser.x * 0.25 - camera.posX) * f * 0.5;
+    camera.posZ += 1.0 * f;
+  }
 
-  // Common wheel-back tail phase (last 0.68s)
-  const resetStart = dur - 0.68;
-
-  if (plan.matchup === 'mirror_clash') {
-    // 3 rapid circling mounted steel passes!
-    if (t < 0.62) {
-      const p = smoothstep(t / 0.62);
-      left.x = lerp(-4.4, -1.35, p);
-      right.x = lerp(4.4, 1.35, p);
-      left.z = lerp(0, 0.42, p);
-      right.z = lerp(0, -0.42, p);
-      left.gait = 'gallop';
-      right.gait = 'gallop';
-      left.pose = 'charge_windup';
-      right.pose = 'charge_windup';
-      left.poseBlend = p;
-      right.poseBlend = p;
-      camera.posZ = lerp(12.1, 8.2, p);
-      camera.posY = lerp(4.15, 3.1, p);
-    } else if (t < resetStart) {
-      const p = (t - 0.62) / (resetStart - 0.62);
-      const orbit = p * Math.PI * 1.4;
-      left.x = -Math.cos(orbit) * 1.32;
-      left.z = Math.sin(orbit) * 1.05 + 0.25;
-      left.yaw = Math.atan2(-(right.z - left.z), right.x - left.x);
-      right.x = Math.cos(orbit) * 1.32;
-      right.z = -Math.sin(orbit) * 1.05 - 0.25;
-      right.yaw = Math.atan2(-(left.z - right.z), left.x - right.x);
-      left.gait = 'gallop';
-      right.gait = 'gallop';
-      left.gaitSpeed = 1.25;
-      right.gaitSpeed = 1.25;
-
-      const beat = (p * 3) % 1;
-      left.pose = beat < 0.55 ? atkStrikePose : 'guard_parry';
-      right.pose = beat >= 0.45 ? defStrikePose : 'guard_parry';
-      left.poseBlend = clamp01(beat * 1.6);
-      right.poseBlend = clamp01(((beat + 0.5) % 1) * 1.6);
-      left.trailIntensity = 0.85;
-      right.trailIntensity = 0.85;
-
-      camera.posX = Math.sin(orbit) * 3.8;
-      camera.posY = 2.95;
-      camera.posZ = 7.6;
-      camera.lookY = 2.15;
-      bannerCheer = 0.7;
-    } else {
-      const p = smoothstep((t - resetStart) / 0.68);
-      left.x = lerp(-0.5, -4.4, p);
-      right.x = lerp(0.5, 4.4, p);
-      left.z = lerp(0.5, 0, p);
-      right.z = lerp(-0.5, 0, p);
-      left.yaw = lerp(0.4, 0, p);
-      right.yaw = lerp(Math.PI + 0.4, Math.PI, p);
-      left.gait = 'trot';
-      right.gait = 'trot';
-      camera.posX = lerp(1.5, 0, p);
-      camera.posY = lerp(3.1, 4.15, p);
-      camera.posZ = lerp(7.8, 12.1, p);
-    }
-  } else if (plan.matchup === 'riposte' || plan.matchup === 'chrono_counter') {
-    const isChrono = plan.matchup === 'chrono_counter';
-    const chargeEnd = isChrono ? 0.92 : 0.72;
-    const riposteTime = isChrono ? 1.32 : 1.24;
-
-    if (isChrono) {
-      letterbox = t < resetStart ? 0.75 : lerp(0.75, 0, (t - resetStart) / 0.68);
-    }
-
-    if (t < chargeEnd) {
-      const p = smoothstep(t / chargeEnd);
-      left.x = lerp(-4.4, -1.4, p);
-      right.x = lerp(4.4, 1.35, p);
-      left.gait = 'gallop';
-      right.gait = 'gallop';
-      left.pose = 'ready';
-      right.pose = 'charge_windup';
-      right.poseBlend = p;
-      camera.posX = lerp(0, isChrono ? -1.4 : 0.4, p);
-      camera.posY = lerp(4.15, 2.8, p);
-      camera.posZ = lerp(12.1, isChrono ? 7.2 : 8.1, p);
-    } else if (t < riposteTime) {
-      // Enemy whiffs overhead while player ducks low & weaves diagonally inside!
-      const p = clamp01((t - chargeEnd) / (riposteTime - chargeEnd));
-      left.x = lerp(-1.4, 0.35, smoothstep(p));
-      left.z = Math.sin(p * Math.PI) * 1.15;
-      left.yaw = -0.22 * Math.sin(p * Math.PI);
-      left.gait = 'gallop';
-      left.pose = p < 0.55 ? 'evade_duck' : atkStrikePose;
-      left.poseBlend = p < 0.55 ? p / 0.55 : (p - 0.55) / 0.45;
-      left.trailIntensity = p > 0.55 ? 1.0 : 0.2;
-
-      right.x = lerp(1.35, -0.35, smoothstep(p));
-      right.z = -0.45 * Math.sin(p * Math.PI);
-      right.gait = 'gallop';
-      right.pose = defStrikePose;
-      right.poseBlend = clamp01(p * 1.35);
-      right.trailIntensity = p < 0.65 ? 0.75 : 0;
-
-      camera.posX = lerp(-0.8, 1.8, p);
-      camera.posY = 2.75;
-      camera.posZ = 7.4;
-      camera.lookX = 0.25;
+  if (sc.closeUp) {
+    if (t >= sc.closeUp.start && t < sc.closeUp.end) {
+      const hero = sc.closeUp.side === 'left' ? left : right;
+      const toward = sc.closeUp.side === 'left' ? 1 : -1;
+      const p = (t - sc.closeUp.start) / (sc.closeUp.end - sc.closeUp.start);
+      camera.posX = hero.x + toward * (3.3 - p * 0.35);
+      camera.posY = 1.75;
+      camera.posZ = 4.3 - p * 0.35;
+      camera.lookX = hero.x + toward * 0.45;
       camera.lookY = 2.2;
-    } else if (t < resetStart) {
-      // Enemy recoils & skids back from lethal riposte!
-      const p = clamp01((t - riposteTime) / (resetStart - riposteTime));
-      left.x = lerp(0.35, -1.6, smoothstep(p));
-      left.z = lerp(0.3, 0, p);
-      left.gait = 'trot';
-      left.pose = atkStrikePose;
-      left.poseBlend = 1;
-      left.trailIntensity = Math.max(0, 1 - p * 2.2);
-
-      right.x = lerp(0.95, 5.4, smoothstep(p));
-      right.z = 0;
-      right.gait = 'skid';
-      right.rearAngle = Math.sin(p * Math.PI) * 0.24;
-      right.pose = 'stagger_hit';
-      right.poseBlend = p;
-
-      camera.posX = lerp(1.8, 1.2, p);
-      camera.posY = lerp(2.75, 3.4, p);
-      camera.posZ = lerp(7.4, 9.5, p);
-      camera.lookX = lerp(0.4, 1.4, p);
-      bannerCheer = 0.85;
-    } else {
-      const p = smoothstep((t - resetStart) / 0.68);
-      left.x = lerp(-1.6, -4.4, p);
-      right.x = lerp(5.4, 4.4, p);
-      left.gait = 'trot';
-      right.gait = 'trot';
-      camera.posX = lerp(1.2, 0, p);
-      camera.posY = lerp(3.4, 4.15, p);
-      camera.posZ = lerp(9.5, 12.1, p);
-      camera.lookX = lerp(1.4, 0, p);
-    }
-  } else if (plan.matchup === 'parry_punish') {
-    const parryTime = 0.88;
-    const punishTime = 1.28;
-    if (t < parryTime) {
-      const p = smoothstep(t / parryTime);
-      left.x = lerp(-4.4, -1.25, p);
-      right.x = lerp(4.4, 1.25, p);
-      left.gait = p < 0.72 ? 'gallop' : 'skid';
-      right.gait = 'gallop';
-      left.pose = 'guard_parry';
-      left.poseBlend = p;
-      right.pose = defStrikePose;
-      right.poseBlend = clamp01((p - 0.35) / 0.65);
-      right.trailIntensity = p > 0.5 ? 0.8 : 0;
-      camera.posX = lerp(0, -1.2, p);
-      camera.posY = lerp(4.15, 2.95, p);
-      camera.posZ = lerp(12.1, 8.0, p);
-    } else if (t < punishTime) {
-      const p = clamp01((t - parryTime) / (punishTime - parryTime));
-      left.x = lerp(-1.25, -0.35, smoothstep(p));
-      right.x = lerp(1.25, 1.55, p);
-      left.gait = 'gallop';
-      right.gait = 'stagger';
-      left.pose = atkStrikePose;
-      left.poseBlend = p;
-      left.trailIntensity = 0.95;
-      right.pose = 'stagger_hit';
-      right.poseBlend = p * 0.6;
-      camera.posX = lerp(-1.2, 1.2, p);
-      camera.posY = 2.85;
-      camera.posZ = 7.6;
-    } else if (t < resetStart) {
-      const p = clamp01((t - punishTime) / (resetStart - punishTime));
-      left.x = lerp(-0.35, -1.8, smoothstep(p));
-      right.x = lerp(1.55, 5.3, smoothstep(p));
-      left.gait = 'trot';
-      right.gait = 'skid';
-      right.pose = 'stagger_hit';
-      right.poseBlend = p;
-      camera.posX = lerp(1.2, 0.5, p);
-      camera.posY = lerp(2.85, 3.6, p);
-      camera.posZ = lerp(7.6, 10.2, p);
-      bannerCheer = 0.75;
-    } else {
-      const p = smoothstep((t - resetStart) / 0.68);
-      left.x = lerp(-1.8, -4.4, p);
-      right.x = lerp(5.3, 4.4, p);
-      left.gait = 'trot';
-      right.gait = 'trot';
-      camera.posX = lerp(0.5, 0, p);
-      camera.posY = lerp(3.6, 4.15, p);
-      camera.posZ = lerp(10.2, 12.1, p);
-    }
-  } else if (plan.matchup === 'enemy_dominates') {
-    const isEnemySkill = plan.enemyStance === 'skill';
-    const impactTime = isEnemySkill ? 1.26 : 1.04;
-    if (isEnemySkill) {
-      letterbox = t < resetStart ? 0.8 : lerp(0.8, 0, (t - resetStart) / 0.68);
-    }
-
-    if (t < impactTime) {
-      const p = smoothstep(t / impactTime);
-      left.x = lerp(-4.4, -1.25, p);
-      right.x = lerp(4.4, 1.1, p);
-      left.gait = 'gallop';
-      right.gait = 'gallop';
-      right.gaitSpeed = isEnemySkill ? 1.35 : 1.15;
-      left.pose = plan.playerStance === 'guard' ? 'guard_parry' : 'charge_windup';
-      left.poseBlend = p;
-      right.pose = p < 0.55 ? 'charge_windup' : defStrikePose;
-      right.poseBlend = p < 0.55 ? p / 0.55 : (p - 0.55) / 0.45;
-      right.trailIntensity = p > 0.52 ? (isEnemySkill ? 1.0 : 0.85) : 0;
-
-      if (isEnemySkill && t < 0.72) {
-        // Dramatic close-up push-in on enemy general unleashing skill!
-        camera.posX = right.x - 1.6;
-        camera.posY = 2.85;
-        camera.posZ = 5.6;
-        camera.lookX = right.x;
-        camera.lookY = 2.35;
-      } else {
-        camera.posX = lerp(1.0, -1.4, p);
-        camera.posY = lerp(4.0, 2.85, p);
-        camera.posZ = lerp(11.6, 7.6, p);
-      }
-    } else if (t < resetStart) {
-      const p = clamp01((t - impactTime) / (resetStart - impactTime));
-      left.x = lerp(-1.25, -5.8, smoothstep(p));
-      right.x = lerp(1.1, 2.2, smoothstep(p));
-      left.gait = 'skid';
-      left.rearAngle = Math.sin(p * Math.PI) * 0.25;
-      left.pose = 'stagger_hit';
-      left.poseBlend = p;
-      right.gait = 'trot';
-      right.pose = defStrikePose;
-      right.poseBlend = 1;
-      right.trailIntensity = Math.max(0, 1 - p * 2.5);
-      camera.posX = lerp(-1.4, -1.6, p);
-      camera.posY = lerp(2.85, 3.5, p);
-      camera.posZ = lerp(7.6, 9.8, p);
-      camera.lookX = lerp(-0.5, -1.5, p);
-    } else {
-      const p = smoothstep((t - resetStart) / 0.68);
-      left.x = lerp(-5.8, -4.4, p);
-      right.x = lerp(2.2, 4.4, p);
-      left.gait = 'trot';
-      right.gait = 'trot';
-      camera.posX = lerp(-1.6, 0, p);
-      camera.posY = lerp(3.5, 4.15, p);
-      camera.posZ = lerp(9.8, 12.1, p);
-      camera.lookX = lerp(-1.5, 0, p);
-    }
-  } else {
-    // guard_break OR skill_burst: Dominant thunderous player charge!
-    const isSkill = plan.matchup === 'skill_burst';
-    const impactTime = isSkill ? 1.22 : 1.02;
-    if (isSkill) {
-      letterbox = t < resetStart ? 0.85 : lerp(0.85, 0, (t - resetStart) / 0.68);
-    }
-
-    if (t < impactTime) {
-      const p = smoothstep(t / impactTime);
-      left.x = lerp(-4.4, -1.05, p);
-      right.x = lerp(4.4, 1.3, p);
-      left.gait = 'gallop';
-      left.gaitSpeed = isSkill ? 1.4 : 1.2;
-      right.gait = p < 0.72 ? 'gallop' : 'skid';
-      left.pose = p < 0.56 ? 'charge_windup' : atkStrikePose;
-      left.poseBlend = p < 0.56 ? p / 0.56 : (p - 0.56) / 0.44;
-      left.trailIntensity = p > 0.5 ? 1.0 : isSkill ? 0.4 : 0;
-      right.pose = 'guard_parry';
-      right.poseBlend = p;
-
-      if (isSkill && t < 0.72) {
-        // Hero close-up push-in during KOEI Portrait Cut-In!
-        camera.posX = left.x + 1.8;
-        camera.posY = 2.85;
-        camera.posZ = 5.4;
-        camera.lookX = left.x;
-        camera.lookY = 2.35;
-      } else {
-        camera.posX = lerp(-1.2, 1.5, p);
-        camera.posY = lerp(3.9, 2.75, p);
-        camera.posZ = lerp(11.4, 7.3, p);
-      }
-    } else if (t < resetStart) {
-      const p = clamp01((t - impactTime) / (resetStart - impactTime));
-      left.x = lerp(-1.05, -2.0, smoothstep(p));
-      right.x = lerp(1.3, 6.0, smoothstep(p));
-      left.gait = 'trot';
-      left.pose = atkStrikePose;
-      left.poseBlend = 1;
-      left.trailIntensity = Math.max(0, 1 - p * 2.2);
-
-      right.gait = 'skid';
-      right.rearAngle = Math.sin(p * Math.PI) * 0.3;
-      right.pose = 'stagger_hit';
-      right.poseBlend = p;
-
-      camera.posX = lerp(1.5, 1.8, p);
-      camera.posY = lerp(2.75, 3.4, p);
-      camera.posZ = lerp(7.3, 9.6, p);
-      camera.lookX = lerp(0.5, 1.6, p);
-      bannerCheer = 0.9;
-    } else {
-      const p = smoothstep((t - resetStart) / 0.68);
-      left.x = lerp(-2.0, -4.4, p);
-      right.x = lerp(6.0, 4.4, p);
-      left.gait = 'trot';
-      right.gait = 'trot';
-      camera.posX = lerp(1.8, 0, p);
-      camera.posY = lerp(3.4, 4.15, p);
-      camera.posZ = lerp(9.6, 12.1, p);
-      camera.lookX = lerp(1.6, 0, p);
+      camera.lookZ = 0.1;
+      camera.fov = 36;
+      camera.cutId = 1;
+    } else if (t >= sc.closeUp.end) {
+      camera.cutId = 2;
     }
   }
+
+  const approach = clamp01((t - 0.12) / (sc.firstContact - 0.18));
+  const decided = decisive !== undefined ? t >= decisive : t >= sc.lastContact;
 
   return {
     left,
     right,
     camera,
     timeScale,
-    letterbox,
+    letterbox: sc.letterbox * (1 - out),
     chronoScanAlpha,
-    bannerCheer,
+    bannerCheer: decided ? 0.9 : 0.3,
+    radialBlur: t < sc.firstContact ? 0.02 * Math.sin(approach * Math.PI) : 0,
   };
 }
 
-/** Dramatic Slow-Motion KO & Victory Orbit Finale */
+/** Slow-motion finish: the victor rides forward, rears and raises the weapon; the loser reels away */
 export function sampleFinaleFrame(
   t: number,
   winner: 'attacker' | 'defender' | 'draw',
@@ -893,66 +772,66 @@ export function sampleFinaleFrame(
   defProfile: HeroDuelProfile
 ): SampledDuelFrame {
   const n = clamp01(t / FINALE_DURATION);
-  const p = smoothstep(n);
+  const left = baseRider('left', atkProfile.auraColor, 0.2);
+  const right = baseRider('right', defProfile.auraColor, 0.2);
 
-  const atkWon = winner === 'attacker';
-  const defWon = winner === 'defender';
-
-  const left: RiderFrameState = {
-    x: atkWon ? lerp(-4.4, -1.6, p) : defWon ? lerp(-4.4, -6.5, p) : -3.4,
-    z: 0,
-    yaw: 0,
-    gait: atkWon ? (n < 0.35 ? 'trot' : 'rear') : defWon ? 'stagger' : 'idle',
-    gaitSpeed: 1,
-    rearAngle: atkWon && n >= 0.35 ? Math.sin(Math.min(1, (n - 0.35) / 0.55) * Math.PI * 0.72) * 0.56 : 0,
-    bodyPitch: 0,
-    pose: atkWon ? 'victory_raise' : defWon ? 'defeat_slump' : 'salute',
-    poseBlend: p,
-    trailIntensity: atkWon && n > 0.35 && n < 0.8 ? 0.6 : 0,
-    trailColor: atkProfile.auraColor,
-    disarmed: defWon && n > 0.15,
-    fatigue: defWon ? 1 : 0.25,
+  const pose = (r: RiderFrameState, won: boolean, lost: boolean) => {
+    const sign = r.x < 0 ? -1 : 1;
+    if (won) {
+      const advance = ease(n / 0.3);
+      r.x = sign * lerp(IDLE_X, 1.4, advance);
+      r.pose = 'victory_raise';
+      r.poseBlend = clamp01((n - 0.08) / 0.3);
+      if (n < 0.3) {
+        r.gait = 'trot';
+      } else if (n < 0.74) {
+        const p = (n - 0.3) / 0.44;
+        r.gait = 'rear';
+        r.rearAngle = Math.sin(p * Math.PI) * 0.52;
+        r.trailIntensity = p > 0.1 && p < 0.7 ? 0.55 : 0;
+      }
+      r.fatigue = 0;
+    } else if (lost) {
+      const retreat = 1 - Math.pow(1 - clamp01(n / 0.55), 2);
+      r.x = sign * lerp(IDLE_X, 5.7, retreat);
+      r.gait = n < 0.5 ? 'stagger' : 'idle';
+      r.pose = 'defeat_slump';
+      r.poseBlend = clamp01(n / 0.3);
+      r.disarmed = n > 0.06;
+      r.fatigue = 1;
+    } else {
+      r.pose = 'salute';
+      r.poseBlend = Math.sin(clamp01(n / 0.8) * Math.PI) * 0.9;
+    }
   };
+  pose(left, winner === 'attacker', winner === 'defender');
+  pose(right, winner === 'defender', winner === 'attacker');
 
-  const right: RiderFrameState = {
-    x: defWon ? lerp(4.4, 1.6, p) : atkWon ? lerp(4.4, 6.5, p) : 3.4,
-    z: 0,
-    yaw: Math.PI,
-    gait: defWon ? (n < 0.35 ? 'trot' : 'rear') : atkWon ? 'stagger' : 'idle',
-    gaitSpeed: 1,
-    rearAngle: defWon && n >= 0.35 ? Math.sin(Math.min(1, (n - 0.35) / 0.55) * Math.PI * 0.72) * 0.56 : 0,
-    bodyPitch: 0,
-    pose: defWon ? 'victory_raise' : atkWon ? 'defeat_slump' : 'salute',
-    poseBlend: p,
-    trailIntensity: defWon && n > 0.35 && n < 0.8 ? 0.6 : 0,
-    trailColor: defProfile.auraColor,
-    disarmed: atkWon && n > 0.15,
-    fatigue: atkWon ? 1 : 0.25,
-  };
-
-  // Heroic 105-degree 3D cinema orbit around the triumphant general!
-  const focusX = atkWon ? left.x : defWon ? right.x : 0;
-  const orbitAngle = lerp(-0.35, 1.15, p) * (defWon ? -1 : 1);
-  const radius = lerp(9.2, 6.8, p);
+  const p = ease(n);
+  const focusX = winner === 'attacker' ? left.x : winner === 'defender' ? right.x : 0;
+  const orbit = winner === 'draw' ? lerp(-0.3, 0.3, p) : lerp(-0.2, 0.85, p) * (winner === 'defender' ? -1 : 1);
+  const radius = winner === 'draw' ? lerp(10.4, 9.4, p) : lerp(9.0, 6.3, p);
 
   const camera: CameraFrameState = {
-    posX: focusX + Math.sin(orbitAngle) * radius,
-    posY: lerp(3.4, 2.75, p),
-    posZ: Math.cos(orbitAngle) * radius,
+    posX: focusX + Math.sin(orbit) * radius,
+    posY: lerp(3.0, winner === 'draw' ? 2.8 : 1.85, p),
+    posZ: Math.cos(orbit) * radius,
     lookX: focusX,
-    lookY: 2.35,
+    lookY: lerp(2.3, 2.85, p),
     lookZ: 0,
-    fov: lerp(42, 38, p),
+    fov: lerp(34, 32, p),
     shake: 0,
+    cutId: 0,
   };
 
   return {
     left,
     right,
     camera,
-    timeScale: n < 0.32 ? 0.5 : 0.85,
+    timeScale: n < 0.22 ? 0.45 : 1,
     letterbox: 0.9,
     chronoScanAlpha: 0,
     bannerCheer: 1.0,
+    radialBlur: 0,
   };
 }

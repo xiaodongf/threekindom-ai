@@ -84,6 +84,8 @@ export interface CameraFrameState {
   lookZ: number;
   fov: number;
   shake: number;
+  /** Changes whenever the shot cuts, so the camera rig jumps instead of gliding */
+  cutId: number;
 }
 
 export interface ClashBurstEvent {
@@ -93,6 +95,8 @@ export interface ClashBurstEvent {
   y: number;
   z: number;
   kind: 'parry' | 'heavy' | 'skill' | 'chrono' | 'whiff';
+  /** Who delivers the blow; the stage places the effect on the actual blades */
+  striker: 'left' | 'right' | 'both';
   hitStopSec: number;
   shake: number;
   callout?: DuelCalloutBanner;
@@ -100,8 +104,36 @@ export interface ClashBurstEvent {
   dmgRight?: number;
 }
 
+/** What one general does during an exchange, as moments on the exchange clock */
+export interface SideScript {
+  /** Times at which this general's blows make contact */
+  strikes: number[];
+  guard?: [number, number];
+  duckAt?: number;
+  staggerAt?: number;
+  /** How far the general is driven back after the decisive blow */
+  knock: number;
+}
+
+export interface ExchangeScript {
+  left: SideScript;
+  right: SideScript;
+  firstContact: number;
+  lastContact: number;
+  /** Both horses rear against each other during this window */
+  rear?: [number, number];
+  /** Whose blow decides the exchange (the camera favours them) */
+  focus: 'left' | 'right' | 'both';
+  closeUp?: { side: 'left' | 'right'; start: number; end: number };
+  letterbox: number;
+  /** Half the distance between the riders when blades meet, and their sideways offset */
+  contactHalf: number;
+  contactZ: number;
+}
+
 export interface ExchangePlan {
   duration: number;
+  script: ExchangeScript;
   matchup: DuelMatchupOutcome;
   playerStance: DuelStance;
   enemyStance: DuelStance;
@@ -132,4 +164,6 @@ export interface SampledDuelFrame {
   letterbox: number;
   chronoScanAlpha: number;
   bannerCheer: number;
+  /** Zoom-blur strength for the sense of speed during a charge */
+  radialBlur: number;
 }

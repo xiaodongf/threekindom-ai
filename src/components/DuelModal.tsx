@@ -565,7 +565,7 @@ export function DuelModal({
 
             {/* KOEI-Style Diagonal Hero Skill / Chrono Portrait Cut-In Slash! */}
             {cutIn && (
-              <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 z-30 overflow-hidden">
+              <div className="pointer-events-none absolute inset-x-0 bottom-[9%] z-30 overflow-hidden">
                 <div
                   className={`mx-auto flex items-center gap-4 px-6 py-3 border-y-2 backdrop-blur-md shadow-2xl animate-duel-cutin ${
                     cutIn.side === 'right' ? 'flex-row-reverse text-right' : ''
