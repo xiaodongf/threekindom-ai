@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
+  Bot,
   Castle,
   Crown,
   FlaskConical,
+  Grid2x2,
   Handshake,
   ScrollText,
+  ShieldAlert,
   Skull,
   Sparkles,
   Users,
@@ -26,6 +29,7 @@ import {
 } from './components/MilitaryModal.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { StrategyMap, type ActiveMapMarch } from './components/StrategyMap.js';
+import { TacticalBattleModal } from './components/TacticalBattleModal.js';
 import { TechLabPanel } from './components/TechLabPanel.js';
 import { TopBar } from './components/TopBar.js';
 import { WarSceneModal, type WarSceneConfig } from './components/WarSceneModal.js';
@@ -33,6 +37,7 @@ import {
   advanceSeason,
   applyDiplomacyOutcome,
   applyHeroEncounterOutcome,
+  applyTacticalBattleOutcome,
   createDefaultPlayerProfile,
   createNewGame,
   executeAITurnAction,
@@ -53,8 +58,13 @@ import {
   resolveStoryEventChoice,
 } from './game/engine.js';
 import type {
+  TacticalBattleConfig,
+  TacticalBattleOutcome,
+} from './game/tacticalTypes.js';
+import type {
   AIProviderStatus,
   AIRequestConfig,
+  AITurnAction,
   BattleReport,
   DiplomacyProposalType,
   DiplomacyResponse,
@@ -344,15 +354,76 @@ export default function App() {
   }, []);
 
   const [demoElapsed, setDemoElapsed] = useState<number>(0);
+  const [demoTacticalPreset, setDemoTacticalPreset] = useState<boolean>(false);
 
-  // Optional ?demoWar=1 or ?demoMarch=1 URL preview for instant War Scene inspection
+  // 8x8 Direct Tactical Grid Battle pipeline states
+  const [tacticalMarch, setTacticalMarch] = useState<{
+    march: ActiveMapMarch;
+    config: TacticalBattleConfig;
+    onAfterTactical?: (updatedState: GameState) => void;
+  } | null>(null);
+  const [activeTactical, setActiveTactical] = useState<{
+    config: TacticalBattleConfig;
+    onAfterTactical?: (updatedState: GameState) => void;
+  } | null>(null);
+  const [tacticalReportModal, setTacticalReportModal] = useState<{
+    report: BattleReport;
+    afterClose?: () => void;
+  } | null>(null);
+
+  // Incoming Enemy Assault Choice Modal during End Season (Direct 8x8 Defense vs AI Default)
+  const [incomingDefensePrompt, setIncomingDefensePrompt] = useState<{
+    attackerFaction: PlayableFactionId;
+    fromCityId: string;
+    toCityId: string;
+    troops: number;
+    action: AITurnAction;
+    proclamation?: string;
+    snapshotState: GameState;
+    remainingAiFactions: PlayableFactionId[];
+    accumulatedWarItems: WarTheaterQueueItem[];
+  } | null>(null);
+
+  // Optional ?demoWar=1, ?demoMarch=1, or ?demoTactical=1 URL preview for visual inspection
   useEffect(() => {
     if (!gameState) return;
     const params = new URLSearchParams(window.location.search);
+    const demoTactical = params.get('demoTactical');
     const demoWar = params.get('demoWar');
     const demoMarch = params.get('demoMarch');
     const demoTime = Number(params.get('demoTime') || '0');
     const demoTerrain = params.get('demoTerrain');
+
+    if (demoTactical === '1' && !activeTactical) {
+      const upgraded: GameState = {
+        ...gameState,
+        chrono: {
+          ...gameState.chrono,
+          unlockedTechs: ['gunpowder', 'stirrups', 'balloon', 'steamship', 'spyglass'],
+        },
+      };
+      setGameState(upgraded);
+      setDemoTacticalPreset(true);
+      setActiveTactical({
+        config: {
+          id: 'demo-tactical',
+          fromCityId: 'jiangling',
+          toCityId: demoTerrain === 'mountain' ? 'hanzhong' : 'xiangyang',
+          attackerFaction: 'shu',
+          defenderFaction: 'wei',
+          playerSide: 'attacker',
+          primaryTroops: 11000,
+          pincerFromCityId: 'hanzhong',
+          pincerTroops: 4500,
+          tactic: 'fire',
+          attackerGeneralId: 'zhugeliang',
+          deputyGeneralId: 'guanyu',
+          consumeAP: false,
+        },
+      });
+      return;
+    }
+
     if ((demoWar === '1' || demoMarch === '1') && warQueue.length === 0) {
       const atkHero = gameState.generals.guanyu || Object.values(gameState.generals)[0];
       const defHero = gameState.generals.xiahou || Object.values(gameState.generals)[1];
@@ -395,6 +466,20 @@ export default function App() {
     // Run only once on mount for URL preview params
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Advance On-Map March -> Direct 8x8 Tactical Grid Battle Modal
+  useEffect(() => {
+    if (!tacticalMarch) return;
+    battleAudio.playWarDrum(0.26);
+    const timer = window.setTimeout(() => {
+      setActiveTactical({
+        config: tacticalMarch.config,
+        onAfterTactical: tacticalMarch.onAfterTactical,
+      });
+      setTacticalMarch(null);
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [tacticalMarch]);
 
   // Advance Stage 1 (On-Map Animated March) -> Stage 2 (60fps Canvas War Scene Theater)
   useEffect(() => {
@@ -452,6 +537,11 @@ export default function App() {
     setWarQueue([]);
     setWarStage('idle');
     setWarBatchTotal(0);
+    setTacticalMarch(null);
+    setActiveTactical(null);
+    setTacticalReportModal(null);
+    setIncomingDefensePrompt(null);
+    setDemoTacticalPreset(false);
     setPendingMilitary(null);
     setActiveDuel(null);
     setHeroEncounter(null);
@@ -476,11 +566,81 @@ export default function App() {
     setActiveTab('heroes');
   }
 
+  function handleTacticalBattleCompleted(outcome: TacticalBattleOutcome) {
+    if (!gameState) return;
+    const afterHook = activeTactical?.onAfterTactical;
+    const updated = applyTacticalBattleOutcome(gameState, outcome);
+    setGameState(updated);
+    setActiveTactical(null);
+    setDemoTacticalPreset(false);
+
+    if (updated.lastBattle) {
+      setTacticalReportModal({
+        report: updated.lastBattle,
+        afterClose: afterHook ? () => afterHook(updated) : undefined,
+      });
+    } else if (afterHook) {
+      afterHook(updated);
+    }
+  }
+
   function executeAssaultWithOptionalDuel(
     payload: ExecuteMilitaryPayload,
     duelResult?: DuelResult
   ) {
     if (!gameState) return;
+
+    const useTacticalGrid = (payload.battleMode ?? 'tactical') === 'tactical';
+    setPendingMilitary(null);
+    setActiveDuel(null);
+    setAttackMode(false);
+
+    if (useTacticalGrid) {
+      const targetCity = gameState.cities[payload.toCityId];
+      const fromCity = gameState.cities[payload.fromCityId];
+      const atkHero = payload.generalId ? gameState.generals[payload.generalId] : undefined;
+      const mode: ActiveMapMarch['mode'] =
+        payload.actionType === 'river_strike'
+          ? 'river_strike'
+          : payload.pincerFromCityId
+            ? 'pincer'
+            : 'assault';
+      const config: TacticalBattleConfig = {
+        id: `tac-${Date.now().toString(36)}`,
+        fromCityId: payload.fromCityId,
+        toCityId: payload.toCityId,
+        attackerFaction: gameState.playerFaction,
+        defenderFaction: targetCity?.owner ?? 'neutral',
+        playerSide: 'attacker',
+        primaryTroops: payload.troops,
+        pincerFromCityId: payload.pincerFromCityId,
+        pincerTroops: payload.pincerTroops,
+        tactic: payload.tactic,
+        isRiverStrike: payload.actionType === 'river_strike',
+        attackerGeneralId: payload.generalId,
+        deputyGeneralId: payload.deputyId,
+        consumeAP: true,
+        initialDuelResult: duelResult,
+      };
+      const march: ActiveMapMarch = {
+        id: `tac-march-${Date.now().toString(36)}`,
+        fromCityId: payload.fromCityId,
+        toCityId: payload.toCityId,
+        pincerFromCityId: payload.pincerFromCityId,
+        faction: gameState.playerFaction,
+        mode,
+        heroPortrait: atkHero?.portrait,
+        label: {
+          en: `Deploying 8×8 Tactical Battlefield: ${fromCity?.name.en || ''} → ${targetCity?.name.en || ''}…`,
+          zh: `大军进发，展开 ${targetCity?.name.zh || ''} 8×8 阵前沙盘战…`,
+        },
+      };
+      setDemoTacticalPreset(false);
+      setTacticalMarch({ march, config });
+      return;
+    }
+
+    // AI Default Mode: Auto-resolve & play 3-Stage On-Map March -> 60fps War Scene Animation -> Report
     const updated = performAttackCity(
       gameState,
       gameState.playerFaction,
@@ -501,9 +661,6 @@ export default function App() {
       }
     );
     setGameState(updated);
-    setPendingMilitary(null);
-    setActiveDuel(null);
-    setAttackMode(false);
     if (updated.lastBattle) {
       const warItem = buildBattleWarItem(updated, updated.lastBattle, {
         pincerFromCityId: payload.pincerFromCityId,
@@ -694,19 +851,21 @@ export default function App() {
     );
   }
 
-  async function handleEndTurn() {
-    if (!gameState || isEndingTurn || gameState.winner || gameState.isPlayerDefeated) return;
+  async function runEndTurnPipeline(
+    startState: GameState,
+    remainingAiFactions: PlayableFactionId[],
+    accumulatedWarItems: WarTheaterQueueItem[]
+  ) {
     setIsEndingTurn(true);
-
     try {
-      let current = gameState;
-      const incomingPlayerAttacks: WarTheaterQueueItem[] = [];
-      const aiFactions = (['wei', 'shu', 'wu'] as PlayableFactionId[]).filter(
-        (fid) => fid !== current.playerFaction && !current.factions[fid].isEliminated
-      );
+      let current = startState;
+      const warItems = [...accumulatedWarItems];
 
-      for (const fid of aiFactions) {
+      for (let idx = 0; idx < remainingAiFactions.length; idx++) {
+        const fid = remainingAiFactions[idx];
         if (current.winner || current.isPlayerDefeated) break;
+        if (current.factions[fid].isEliminated) continue;
+
         try {
           const decision = await requestAITurnDecision({
             gameState: current,
@@ -715,19 +874,49 @@ export default function App() {
             aiConfig,
           });
 
+          const targetId = decision.action.targetCityId;
+          const originCity = current.cities[decision.action.cityId];
+          const targetCity = targetId ? current.cities[targetId] : undefined;
+          const isValidPlayerAssault =
+            decision.action.type === 'attack' &&
+            originCity &&
+            originCity.owner === fid &&
+            targetCity &&
+            targetCity.owner === current.playerFaction &&
+            originCity.neighbors.includes(targetCity.id) &&
+            originCity.troops >= 3500;
+
+          // Pause End Season to ask player: Defend Manually on 8x8 Grid vs AI Default Animation!
+          if (isValidPlayerAssault && targetCity && originCity) {
+            const ratio = Math.min(0.8, Math.max(0.45, decision.action.troopsRatio ?? 0.65));
+            const sendTroops = Math.round(originCity.troops * ratio);
+            setGameState(current);
+            setIncomingDefensePrompt({
+              attackerFaction: fid,
+              fromCityId: originCity.id,
+              toCityId: targetCity.id,
+              troops: sendTroops,
+              action: decision.action,
+              proclamation: decision.proclamation,
+              snapshotState: current,
+              remainingAiFactions: remainingAiFactions.slice(idx + 1),
+              accumulatedWarItems: warItems,
+            });
+            return;
+          }
+
           const prevBattleId = current.lastBattle?.id;
           const prevOpId = current.lastOperation?.id;
-          const targetId = decision.action.targetCityId;
           const targetWasPlayer = Boolean(
             targetId && current.cities[targetId]?.owner === current.playerFaction
           );
-          const preFromTroops = current.cities[decision.action.cityId]?.troops ?? 0;
-          const preTargetTroops = targetId ? current.cities[targetId]?.troops ?? 0 : 0;
+          const preFromTroops = originCity?.troops ?? 0;
+          const preTargetTroops = targetCity?.troops ?? 0;
 
           current = executeAITurnAction(current, fid, decision.action, decision.proclamation);
 
           if (targetWasPlayer && current.lastBattle && current.lastBattle.id !== prevBattleId) {
-            incomingPlayerAttacks.push(
+            warItems.push(
               buildBattleWarItem(current, current.lastBattle, { isPlayerDefending: true })
             );
           } else if (
@@ -735,7 +924,7 @@ export default function App() {
             current.lastOperation &&
             current.lastOperation.id !== prevOpId
           ) {
-            incomingPlayerAttacks.push(
+            warItems.push(
               buildOperationWarItem(
                 current,
                 current.lastOperation,
@@ -756,12 +945,96 @@ export default function App() {
       }
 
       setGameState(current);
-      if (incomingPlayerAttacks.length > 0) {
-        enqueueWarItems(incomingPlayerAttacks);
+      if (warItems.length > 0) {
+        enqueueWarItems(warItems);
       }
     } finally {
       setIsEndingTurn(false);
     }
+  }
+
+  function handleResolveIncomingDefense(mode: 'tactical' | 'ai_default') {
+    if (!incomingDefensePrompt) return;
+    const prompt = incomingDefensePrompt;
+    setIncomingDefensePrompt(null);
+
+    if (mode === 'ai_default') {
+      const prevBattleId = prompt.snapshotState.lastBattle?.id;
+      const afterAi = executeAITurnAction(
+        prompt.snapshotState,
+        prompt.attackerFaction,
+        prompt.action,
+        prompt.proclamation
+      );
+      const nextWarItems = [...prompt.accumulatedWarItems];
+      if (afterAi.lastBattle && afterAi.lastBattle.id !== prevBattleId) {
+        nextWarItems.push(
+          buildBattleWarItem(afterAi, afterAi.lastBattle, { isPlayerDefending: true })
+        );
+      }
+      void runEndTurnPipeline(afterAi, prompt.remainingAiFactions, nextWarItems);
+      return;
+    }
+
+    // Direct 8x8 Tactical Defense!
+    const atkHero = getCityGenerals(prompt.snapshotState, prompt.fromCityId)[0];
+    const targetName = prompt.snapshotState.cities[prompt.toCityId]?.name ?? { en: '', zh: '' };
+    const atkShort = prompt.snapshotState.factions[prompt.attackerFaction].shortName;
+    const config: TacticalBattleConfig = {
+      id: `tac-def-${Date.now().toString(36)}`,
+      fromCityId: prompt.fromCityId,
+      toCityId: prompt.toCityId,
+      attackerFaction: prompt.attackerFaction,
+      defenderFaction: prompt.snapshotState.playerFaction,
+      playerSide: 'defender',
+      primaryTroops: prompt.troops,
+      tactic: prompt.action.tactic ?? 'assault',
+      attackerGeneralId: atkHero?.id,
+      consumeAP: false,
+    };
+    const march: ActiveMapMarch = {
+      id: `tac-def-march-${Date.now().toString(36)}`,
+      fromCityId: prompt.fromCityId,
+      toCityId: prompt.toCityId,
+      faction: prompt.attackerFaction,
+      mode: 'assault',
+      heroPortrait: atkHero?.portrait,
+      isPlayerDefending: true,
+      label: {
+        en: `DEFEND ${targetName.en}! ${atkShort.en} forces approaching 8×8 perimeter!`,
+        zh: `保卫${targetName.zh}！${atkShort.zh}军压境，展开 8×8 守城沙盘战！`,
+      },
+    };
+    setDemoTacticalPreset(false);
+    setTacticalMarch({
+      march,
+      config,
+      onAfterTactical: (updatedAfterDef) => {
+        void runEndTurnPipeline(
+          updatedAfterDef,
+          prompt.remainingAiFactions,
+          prompt.accumulatedWarItems
+        );
+      },
+    });
+  }
+
+  async function handleEndTurn() {
+    if (
+      !gameState ||
+      isEndingTurn ||
+      gameState.winner ||
+      gameState.isPlayerDefeated ||
+      incomingDefensePrompt ||
+      activeTactical ||
+      tacticalMarch
+    ) {
+      return;
+    }
+    const aiFactions = (['wei', 'shu', 'wu'] as PlayableFactionId[]).filter(
+      (fid) => fid !== gameState.playerFaction && !gameState.factions[fid].isEliminated
+    );
+    await runEndTurnPipeline(gameState, aiFactions, []);
   }
 
   const providerLabel =
@@ -812,6 +1085,12 @@ export default function App() {
   const activeWarItem = warQueue[0] ?? null;
   const queueBadge =
     warBatchTotal > 1 ? `${warBatchTotal - warQueue.length + 1} / ${warBatchTotal}` : undefined;
+  const isBattleIdle =
+    warStage === 'idle' &&
+    !activeTactical &&
+    !tacticalMarch &&
+    !tacticalReportModal &&
+    !incomingDefensePrompt;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -835,7 +1114,10 @@ export default function App() {
             lang={lang}
             selectedCityId={selectedCityId}
             attackMode={attackMode}
-            activeMapMarch={warStage === 'march' ? activeWarItem?.march ?? null : null}
+            activeMapMarch={
+              tacticalMarch?.march ??
+              (warStage === 'march' ? activeWarItem?.march ?? null : null)
+            }
             onToggleAttackMode={() => setAttackMode((v) => !v)}
             onSelectCity={handleSelectCity}
             onQuickTargetEnemy={(targetCityId) => {
@@ -997,7 +1279,99 @@ export default function App() {
         />
       )}
 
-      {/* Stage 2: 60fps HTML5 Canvas 2.5D War Scene Theater Modal */}
+      {/* Incoming Enemy Assault Defense Choice Modal (Direct 8x8 Grid vs AI Default) */}
+      {incomingDefensePrompt && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="ink-panel gold-border-glow rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-rose-500/45">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-rose-500/20 border border-rose-400/50">
+                <ShieldAlert className="w-6 h-6 text-rose-400 animate-pulse" />
+              </div>
+              <div>
+                <div className="text-[11px] font-extrabold uppercase tracking-wider text-rose-300">
+                  {lang === 'zh' ? '急报 · 敌军兵临城下！' : 'URGENT · ENEMY ASSAULT INCOMING!'}
+                </div>
+                <h3 className="font-display text-lg font-extrabold text-white">
+                  {lang === 'zh'
+                    ? `${tLoc(gameState.factions[incomingDefensePrompt.attackerFaction].name, lang)}发兵 ${incomingDefensePrompt.troops.toLocaleString()} 猛攻${tLoc(gameState.cities[incomingDefensePrompt.toCityId]?.name || { en: '', zh: '' }, lang)}！`
+                    : `${tLoc(gameState.factions[incomingDefensePrompt.attackerFaction].name, lang)} (${incomingDefensePrompt.troops.toLocaleString()} troops) attacks ${tLoc(gameState.cities[incomingDefensePrompt.toCityId]?.name || { en: '', zh: '' }, lang)}!`}
+                </h3>
+              </div>
+            </div>
+
+            {incomingDefensePrompt.proclamation && (
+              <p className="text-xs italic text-slate-200 bg-slate-900/90 border border-slate-700 rounded-xl px-3.5 py-2.5">
+                “{incomingDefensePrompt.proclamation}”
+              </p>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => handleResolveIncomingDefense('tactical')}
+                className="p-3 rounded-xl bg-gradient-to-br from-cyan-600/30 to-indigo-600/30 hover:from-cyan-500/40 hover:to-indigo-500/40 border border-cyan-400 text-left space-y-1 cursor-pointer"
+              >
+                <div className="flex items-center gap-1.5 text-sm font-extrabold text-cyan-100">
+                  <Grid2x2 className="w-4 h-4 text-cyan-300" />
+                  <span>{lang === 'zh' ? '亲自守城（8×8 沙盘）' : 'Defend Manually (8×8)'}</span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  {lang === 'zh'
+                    ? '依托城墙、河道与《孙子兵法》空城计/火攻亲手击退敌军！'
+                    : 'Command garrison generals behind walls with Empty Fort, Fire & Art of War tactics!'}
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleResolveIncomingDefense('ai_default')}
+                className="p-3 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-600 text-left space-y-1 cursor-pointer"
+              >
+                <div className="flex items-center gap-1.5 text-sm font-extrabold text-indigo-200">
+                  <Bot className="w-4 h-4 text-indigo-300" />
+                  <span>{lang === 'zh' ? 'AI 默认守城（看动画）' : 'AI Default (Animation)'}</span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  {lang === 'zh'
+                    ? '由守城 AI 自动迎敌，观看 60fps 战况动画并结算结果。'
+                    : 'Auto-resolve defense and watch the 60fps War Scene Theater animation.'}
+                </p>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Direct 8x8 Tactical Grid Battle Modal (The Art of War Edition) */}
+      {activeTactical && (
+        <TacticalBattleModal
+          gameState={gameState}
+          config={activeTactical.config}
+          lang={lang}
+          demoPreset={demoTacticalPreset}
+          onComplete={handleTacticalBattleCompleted}
+        />
+      )}
+
+      {/* Post-Tactical-Grid Battle Report + Prisoner Fate Modal */}
+      {tacticalReportModal && (
+        <BattleReportModal
+          report={tacticalReportModal.report}
+          state={gameState}
+          lang={lang}
+          onClose={() => {
+            const cb = tacticalReportModal.afterClose;
+            setTacticalReportModal(null);
+            if (cb) cb();
+          }}
+          onPersuadePrisoner={(heroId) => setHeroEncounter({ heroId, mode: 'persuade' })}
+          onPrisonerAction={(heroId, action) =>
+            setGameState(performPrisonerAction(gameState, heroId, action))
+          }
+        />
+      )}
+
+      {/* Stage 2: 60fps HTML5 Canvas 2.5D War Scene Theater Modal (AI Default Mode) */}
       {warStage === 'theater' && activeWarItem && (
         <WarSceneModal
           scene={activeWarItem.scene}
@@ -1047,7 +1421,7 @@ export default function App() {
       )}
 
       {/* Fated History Crisis / Court Suspicion Trial / What-If Event Modal */}
-      {warStage === 'idle' && gameState.activeEvent && (
+      {isBattleIdle && gameState.activeEvent && (
         <HeroEventModal
           event={gameState.activeEvent}
           state={gameState}
@@ -1067,7 +1441,7 @@ export default function App() {
       )}
 
       {/* Victory / Defeat Overlay */}
-      {warStage === 'idle' && (gameState.winner || gameState.isPlayerDefeated) && (
+      {isBattleIdle && (gameState.winner || gameState.isPlayerDefeated) && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="ink-panel gold-border-glow rounded-2xl max-w-md w-full p-8 text-center space-y-5">
             {gameState.winner === gameState.playerFaction ? (

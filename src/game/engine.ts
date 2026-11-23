@@ -12,6 +12,7 @@ import {
 } from './data.js';
 import { pickSeasonalStoryEvent } from './events.js';
 import { HERO_BONDS } from './heroes.js';
+import type { TacticalBattleOutcome } from './tacticalTypes.js';
 import { MODERN_TECHS } from './tech.js';
 import type {
   AITurnAction,
@@ -1697,6 +1698,245 @@ export function performAttackCity(
   const nextState: GameState = {
     ...state,
     actionPoints: consumeAP ? state.actionPoints - 1 : state.actionPoints,
+    factions: updatedFactions,
+    cities: updatedCities,
+    generals: updatedGenerals,
+    diplomacy: updatedDiplomacy,
+    chrono: nextChrono,
+    lastBattle: report,
+    recentMarches: [...newMarches, ...state.recentMarches].slice(0, 6),
+    chronicle: appendChronicle(state, 'battle', narrative, attackerFaction),
+  };
+
+  return checkVictoryState(nextState);
+}
+
+/**
+ * Commits the exact outcome of an 8x8 Direct Generals Tactical Grid Battle
+ * cleanly back into the strategic campaign GameState.
+ */
+export function applyTacticalBattleOutcome(
+  state: GameState,
+  outcome: TacticalBattleOutcome,
+  rng: () => number = Math.random
+): GameState {
+  const { config } = outcome;
+  const fromCity = state.cities[config.fromCityId];
+  const toCity = state.cities[config.toCityId];
+  if (!fromCity || !toCity) return state;
+
+  const attackerFaction = config.attackerFaction;
+  const defenderFaction = toCity.owner;
+  const captured = outcome.attackerWon;
+
+  const primaryTroops = Math.min(Math.max(1000, Math.round(config.primaryTroops)), Math.max(0, fromCity.troops - 1000));
+  const pincerCity =
+    config.pincerFromCityId &&
+    config.pincerFromCityId !== config.fromCityId &&
+    state.cities[config.pincerFromCityId]?.owner === attackerFaction
+      ? state.cities[config.pincerFromCityId]
+      : undefined;
+  const pincerTroops =
+    pincerCity && config.pincerTroops
+      ? Math.min(Math.max(0, Math.round(config.pincerTroops)), Math.max(0, pincerCity.troops - 1000))
+      : 0;
+
+  const totalSent = Math.max(1000, primaryTroops + pincerTroops);
+  const survivingAttackers = Math.max(0, outcome.attackerRemainingTroops);
+  const primaryShare = primaryTroops / Math.max(1, totalSent);
+  const survivingPrimary = Math.round(survivingAttackers * primaryShare);
+  const survivingPincer = survivingAttackers - survivingPrimary;
+
+  const updatedCities = { ...state.cities };
+  updatedCities[fromCity.id] = {
+    ...fromCity,
+    troops: Math.max(500, fromCity.troops - primaryTroops + (captured ? 0 : survivingPrimary)),
+  };
+
+  if (pincerCity && pincerTroops > 0) {
+    updatedCities[pincerCity.id] = {
+      ...pincerCity,
+      troops: Math.max(500, pincerCity.troops - pincerTroops + (captured ? 0 : survivingPincer)),
+    };
+  }
+
+  if (captured) {
+    updatedCities[toCity.id] = {
+      ...toCity,
+      owner: attackerFaction,
+      troops: Math.max(1000, survivingAttackers),
+      defense: Math.max(1, toCity.defense - 1),
+    };
+  } else {
+    updatedCities[toCity.id] = {
+      ...toCity,
+      troops: Math.max(500, outcome.defenderRemainingTroops),
+    };
+  }
+
+  const updatedGenerals = { ...state.generals };
+  let capturedHeroId: string | undefined;
+
+  if (outcome.attackerGeneralId && updatedGenerals[outcome.attackerGeneralId]) {
+    let g = grantHeroXp(updatedGenerals[outcome.attackerGeneralId], captured ? 65 : 28);
+    if (outcome.skillTriggered) {
+      g = { ...g, skillCooldown: g.signatureSkill.cooldownTurns };
+    }
+    if (captured) {
+      g = { ...g, cityId: toCity.id, loyalty: clamp(g.loyalty + 4, 0, 100) };
+    }
+    updatedGenerals[g.id] = g;
+  }
+
+  if (outcome.deputyGeneralId && updatedGenerals[outcome.deputyGeneralId]) {
+    let d = grantHeroXp(updatedGenerals[outcome.deputyGeneralId], captured ? 45 : 18);
+    if (captured) d = { ...d, cityId: toCity.id };
+    updatedGenerals[d.id] = d;
+  }
+
+  if (captured && defenderFaction !== 'neutral') {
+    const fallbackCity = Object.values(updatedCities).find(
+      (c) => c.owner === defenderFaction && c.id !== toCity.id
+    );
+    const defendersInCity = Object.values(updatedGenerals).filter(
+      (g) => g.faction === defenderFaction && g.cityId === toCity.id && g.status === 'active'
+    );
+
+    for (const defHero of defendersInCity) {
+      const encircledOrSurrendered = outcome.surrenderedOrEncircledHeroIds.includes(defHero.id);
+      const captureChance = !fallbackCity
+        ? 0.9
+        : encircledOrSurrendered
+          ? 0.82
+          : outcome.defeatedEnemyHeroIds.includes(defHero.id)
+            ? 0.48
+            : 0.25;
+
+      if (!capturedHeroId && rng() < captureChance) {
+        capturedHeroId = defHero.id;
+        updatedGenerals[defHero.id] = {
+          ...defHero,
+          status: 'captured',
+          capturedBy: attackerFaction,
+          loyalty: clamp(defHero.loyalty - 8, 0, 100),
+        };
+      } else if (fallbackCity) {
+        updatedGenerals[defHero.id] = {
+          ...defHero,
+          cityId: fallbackCity.id,
+          loyalty: clamp(defHero.loyalty - 5, 0, 100),
+        };
+      } else {
+        updatedGenerals[defHero.id] = {
+          ...defHero,
+          faction: 'neutral',
+          status: 'wandering',
+          loyalty: 75,
+        };
+      }
+    }
+  } else if (!captured && outcome.defenderGeneralId && updatedGenerals[outcome.defenderGeneralId]) {
+    updatedGenerals[outcome.defenderGeneralId] = grantHeroXp(
+      updatedGenerals[outcome.defenderGeneralId],
+      50
+    );
+  }
+
+  const updatedDiplomacy = { ...state.diplomacy };
+  if (defenderFaction !== 'neutral') {
+    const key = getDiplomacyKey(attackerFaction, defenderFaction);
+    const rel = updatedDiplomacy[key];
+    if (rel) {
+      const nextScore = Math.max(-100, rel.score - (rel.truceTurnsLeft > 0 ? 45 : 22));
+      updatedDiplomacy[key] = {
+        ...rel,
+        score: nextScore,
+        truceTurnsLeft: 0,
+        status: 'war',
+      };
+    }
+  }
+
+  const updatedFactions = { ...state.factions };
+  if (config.isRiverStrike) {
+    updatedFactions[attackerFaction] = {
+      ...updatedFactions[attackerFaction],
+      food: Math.max(0, updatedFactions[attackerFaction].food - ACTION_COSTS.riverStrikeFood),
+    };
+  }
+
+  let nextChrono = { ...state.chrono };
+  if (attackerFaction === state.playerFaction) {
+    nextChrono = {
+      ...nextChrono,
+      trust: clamp(nextChrono.trust + (captured ? 8 : -5), 0, 100),
+      suspicion: clamp(nextChrono.suspicion + (captured ? -4 : 4), 0, 100),
+      divergence: clamp(nextChrono.divergence + (captured ? 4 : 0), 0, 100),
+    };
+  } else if (defenderFaction === state.playerFaction) {
+    nextChrono = {
+      ...nextChrono,
+      trust: clamp(nextChrono.trust + (captured ? -10 : 6), 0, 100),
+      suspicion: clamp(nextChrono.suspicion + (captured ? 6 : -3), 0, 100),
+    };
+  }
+
+  const capHero = capturedHeroId ? state.generals[capturedHeroId] : undefined;
+  const narrative: LocalizedText = {
+    en: `[8×8 Tactical Battle · ${outcome.roundsPlayed}R] ${outcome.victoryReason.en}${
+      capHero ? ` Captured ${capHero.name.en}!` : ''
+    } (Attacker lost ${outcome.attackerLosses.toLocaleString()} vs Defender lost ${outcome.defenderLosses.toLocaleString()}).`,
+    zh: `【8×8 沙盘决战·第 ${outcome.roundsPlayed} 合】${outcome.victoryReason.zh}${
+      capHero ? ` 生擒敌将${capHero.name.zh}！` : ''
+    }（攻损 ${outcome.attackerLosses.toLocaleString()}，守折 ${outcome.defenderLosses.toLocaleString()}）。`,
+  };
+
+  const report: BattleReport = {
+    id: nextId('battle'),
+    turn: state.turn,
+    attackerFaction,
+    defenderFaction,
+    fromCityId: config.fromCityId,
+    toCityId: config.toCityId,
+    attackerGeneralId: outcome.attackerGeneralId,
+    deputyGeneralId: outcome.deputyGeneralId,
+    defenderGeneralId: outcome.defenderGeneralId,
+    tactic: config.tactic,
+    skillTriggered: outcome.skillTriggered,
+    duelWinner: config.initialDuelResult?.winner,
+    capturedHeroId,
+    attackerStartTroops: outcome.attackerStartTroops,
+    defenderStartTroops: outcome.defenderStartTroops,
+    attackerLosses: outcome.attackerLosses,
+    defenderLosses: outcome.defenderLosses,
+    captured,
+    narrative,
+  };
+
+  const newMarches: MarchEvent[] = [
+    {
+      id: nextId('march'),
+      fromCityId: config.fromCityId,
+      toCityId: config.toCityId,
+      faction: attackerFaction,
+      type: config.isRiverStrike ? 'river_strike' : 'attack',
+      captured,
+    },
+  ];
+  if (pincerCity && pincerTroops > 0) {
+    newMarches.push({
+      id: nextId('march'),
+      fromCityId: pincerCity.id,
+      toCityId: config.toCityId,
+      faction: attackerFaction,
+      type: 'attack',
+      captured,
+    });
+  }
+
+  const nextState: GameState = {
+    ...state,
+    actionPoints: config.consumeAP ? Math.max(0, state.actionPoints - 1) : state.actionPoints,
     factions: updatedFactions,
     cities: updatedCities,
     generals: updatedGenerals,

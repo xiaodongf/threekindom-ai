@@ -2,10 +2,12 @@ import { useState } from 'react';
 import {
   Anchor,
   Bomb,
+  Bot,
   Coins,
   Eye,
   Flame,
   GitMerge,
+  Grid2x2,
   Moon,
   ShieldAlert,
   Sparkles,
@@ -37,6 +39,8 @@ import type {
 import { TERRAIN_TEXT, UI_TEXT, tLoc } from '../i18n/translations.js';
 import { HeroAvatar } from './HeroAvatar.js';
 
+export type BattleCommandMode = 'tactical' | 'ai_default';
+
 export interface ExecuteMilitaryPayload {
   actionType: MilitaryActionType;
   fromCityId: string;
@@ -50,6 +54,7 @@ export interface ExecuteMilitaryPayload {
   defenderHeroId?: string;
   pincerFromCityId?: string;
   pincerTroops?: number;
+  battleMode?: BattleCommandMode;
 }
 
 interface MilitaryModalProps {
@@ -92,6 +97,7 @@ export function MilitaryModal({
         : 'discord');
 
   const [actionType, setActionType] = useState<MilitaryActionType>(defaultAction);
+  const [battleMode, setBattleMode] = useState<BattleCommandMode>('tactical');
   const stagingList = actionType === 'river_strike' ? riverStaging : adjacentStaging;
 
   const [fromCityId, setFromCityId] = useState<string>(
@@ -745,6 +751,69 @@ export function MilitaryModal({
                 </div>
               </div>
             )}
+
+            {/* BATTLE COMMAND MODE SELECTOR: Direct 8x8 Tactical Grid vs AI Default Animation */}
+            {(actionType === 'assault' || actionType === 'river_strike') && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBattleMode('tactical')}
+                  className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                    battleMode === 'tactical'
+                      ? 'bg-cyan-500/18 border-cyan-400 shadow-[0_0_16px_rgba(56,189,248,0.22)]'
+                      : 'bg-slate-950/70 border-slate-700/80 hover:border-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-cyan-200 flex items-center gap-1.5">
+                      <Grid2x2 className="w-4 h-4 text-cyan-300" />
+                      <span>
+                        {lang === 'zh' ? '亲临指挥（8×8 沙盘战）' : 'Direct Command (8×8 Grid)'}
+                      </span>
+                    </span>
+                    {battleMode === 'tactical' && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-cyan-500/30 text-cyan-100">
+                        {lang === 'zh' ? '已选' : 'SELECTED'}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-300 mt-1">
+                    {lang === 'zh'
+                      ? '亲自调遣名将，利用江河、密林火攻与《孙子兵法》战法（智力决定成功率）决胜！'
+                      : 'Command generals on an 8×8 terrain/water/forest battlefield with INT-driven Art of War tactics!'}
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setBattleMode('ai_default')}
+                  className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                    battleMode === 'ai_default'
+                      ? 'bg-indigo-500/20 border-indigo-400 shadow-[0_0_16px_rgba(99,102,241,0.25)]'
+                      : 'bg-slate-950/70 border-slate-700/80 hover:border-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-indigo-200 flex items-center gap-1.5">
+                      <Bot className="w-4 h-4 text-indigo-300" />
+                      <span>
+                        {lang === 'zh' ? 'AI 默认托管（自动战报动画）' : 'AI Default (Auto-Battle)'}
+                      </span>
+                    </span>
+                    {battleMode === 'ai_default' && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-500/30 text-indigo-100">
+                        {lang === 'zh' ? '已选' : 'SELECTED'}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-300 mt-1">
+                    {lang === 'zh'
+                      ? '由 AI 自动指挥决战，观看 60fps 战争动画并直接结算胜负！'
+                      : 'Let AI resolve the battle automatically and watch the 60fps War Scene animation!'}
+                  </p>
+                </button>
+              </div>
+            )}
           </>
         )}
 
@@ -793,6 +862,7 @@ export function MilitaryModal({
                     defenderHeroId: defenderHero.id,
                     pincerFromCityId: clampedPincerTroops > 0 ? activePincerCity?.id : undefined,
                     pincerTroops: clampedPincerTroops,
+                    battleMode,
                   })
                 }
                 className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shadow-lg cursor-pointer"
@@ -820,6 +890,7 @@ export function MilitaryModal({
                   defenderHeroId: defenderHero?.id,
                   pincerFromCityId: clampedPincerTroops > 0 ? activePincerCity?.id : undefined,
                   pincerTroops: clampedPincerTroops,
+                  battleMode,
                 })
               }
               className="px-5 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-orange-600 hover:from-rose-500 hover:to-orange-500 disabled:opacity-40 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-lg cursor-pointer"
