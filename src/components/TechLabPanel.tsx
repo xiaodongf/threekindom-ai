@@ -15,6 +15,7 @@ import {
 import { MODERN_TECHS, TECH_ORDER } from '../game/tech.js';
 import type { GameState, Language, PlayableFactionId, TechId } from '../game/types.js';
 import { tLoc } from '../i18n/translations.js';
+import { Art } from './ui/Art.js';
 
 interface TechLabPanelProps {
   state: GameState;
@@ -49,7 +50,7 @@ export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps)
   );
 
   return (
-    <div className="p-3.5 space-y-3 overflow-y-auto h-[580px]">
+    <div className="p-3.5 space-y-3 overflow-y-auto h-full">
       {/* Top Status Banner */}
       <div className="rounded-xl bg-slate-950/80 border border-cyan-500/30 p-3 space-y-2">
         <div className="flex items-center justify-between">
@@ -130,12 +131,12 @@ export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps)
               className={`rounded-xl border overflow-hidden transition ${
                 unlocked
                   ? 'bg-emerald-950/25 border-emerald-500/50 shadow-[0_0_16px_rgba(16,185,129,0.14)]'
-                  : 'bg-[#0d1015]/90 border-white/10 hover:border-cyan-400/35'
+                  : 'bg-[#12100d]/90 border-white/10 hover:border-cyan-400/35'
               }`}
             >
               {/* Studio-Painted 16:9 Tech Illustration Banner */}
               <div className="relative h-24 w-full overflow-hidden border-b border-white/10">
-                <img
+                <Art
                   src={TECH_ART[tid]}
                   alt={tLoc(tech.name, lang)}
                   loading="lazy"
@@ -163,7 +164,7 @@ export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps)
                     <button
                       disabled={!canAfford}
                       onClick={() => onResearchTech(tid, selectedResearcher?.id)}
-                      className="shrink-0 px-3 py-1 rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 disabled:opacity-40 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow-lg"
+                      className="shrink-0 px-3 py-1 rounded-lg btn-gold disabled:opacity-40 font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow-lg"
                     >
                       <Sparkles className="w-3 h-3" />
                       <span>{lang === 'zh' ? '研造' : 'Build'}</span>

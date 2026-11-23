@@ -17,13 +17,13 @@ import {
 } from '../game/mapGeo.js';
 import type { City, FactionId, GameState, Language } from '../game/types.js';
 import { tLoc } from '../i18n/translations.js';
-import { VISUAL_THEMES, type VisualThemeId } from '../utils/visualTheme.js';
+import { INK_LOOK } from '../utils/visualTheme.js';
 import type { ActiveMapMarch } from './StrategyMap.js';
+import { Art } from './ui/Art.js';
 
 interface WebGLStrategyMapProps {
   state: GameState;
   lang: Language;
-  theme: VisualThemeId;
   selectedCityId: string | null;
   attackMode: boolean;
   activeMapMarch?: ActiveMapMarch | null;
@@ -34,15 +34,15 @@ interface WebGLStrategyMapProps {
 }
 
 const FACTION_HEX: Record<FactionId, number> = {
-  wei: 0x3b82f6,
-  shu: 0x10b981,
+  wei: 0x4c78a8,
+  shu: 0x438554,
   wu: 0xf43f5e,
   neutral: 0x94a3b8,
 };
 
 const FACTION_CSS: Record<FactionId, string> = {
-  wei: '#3b82f6',
-  shu: '#10b981',
+  wei: '#4c78a8',
+  shu: '#438554',
   wu: '#f43f5e',
   neutral: '#94a3b8',
 };
@@ -59,8 +59,7 @@ function mapToWorld(x: number, y: number): { wx: number; wz: number } {
 
 /** Rasterizes Natural Earth paths & ridges into a smooth heightmap + painted physical albedo texture */
 function buildChinaTerrainTextures(
-  cities: City[],
-  theme: VisualThemeId
+  cities: City[]
 ): { heightData: Uint8ClampedArray; hmW: number; hmH: number; albedoCanvas: HTMLCanvasElement } {
   const hmW = 256;
   const hmH = 168;
@@ -131,14 +130,14 @@ function buildChinaTerrainTextures(
   const actx = alb.getContext('2d')!;
 
   // Ocean floor base
-  actx.fillStyle = theme === 'ink' ? '#1a282c' : theme === 'chrono' ? '#05152b' : '#08253f';
+  actx.fillStyle = '#1a282c';
   actx.fillRect(0, 0, albW, albH);
 
   actx.save();
   actx.scale(albW / MAP_WIDTH, albH / MAP_HEIGHT);
 
   // Coastal shelf glow
-  actx.strokeStyle = theme === 'ink' ? 'rgba(212, 168, 83, 0.25)' : 'rgba(56, 189, 248, 0.32)';
+  actx.strokeStyle = 'rgba(212, 168, 83, 0.25)';
   actx.lineWidth = 14;
   for (const d of LAND_PATHS) {
     actx.stroke(new Path2D(d));
@@ -146,20 +145,9 @@ function buildChinaTerrainTextures(
 
   // Land base fill
   const landGrad = actx.createLinearGradient(0, 0, MAP_WIDTH, MAP_HEIGHT);
-  if (theme === 'ink') {
-    landGrad.addColorStop(0, '#5d5342');
-    landGrad.addColorStop(0.5, '#3e4a3d');
-    landGrad.addColorStop(1, '#2b3d34');
-  } else if (theme === 'chrono') {
-    landGrad.addColorStop(0, '#2a364c');
-    landGrad.addColorStop(0.5, '#1d3948');
-    landGrad.addColorStop(1, '#12313b');
-  } else {
-    landGrad.addColorStop(0, '#5a6258');
-    landGrad.addColorStop(0.38, '#365647');
-    landGrad.addColorStop(0.72, '#224d3e');
-    landGrad.addColorStop(1, '#1b3e37');
-  }
+  landGrad.addColorStop(0, '#5d5342');
+  landGrad.addColorStop(0.5, '#3e4a3d');
+  landGrad.addColorStop(1, '#2b3d34');
   actx.fillStyle = landGrad;
   for (const d of LAND_PATHS) {
     actx.fill(new Path2D(d));
@@ -256,7 +244,7 @@ function buildChinaTerrainTextures(
   actx.restore();
 
   // Luminous Coastline Rim
-  actx.strokeStyle = theme === 'ink' ? 'rgba(229, 190, 106, 0.55)' : 'rgba(125, 211, 252, 0.6)';
+  actx.strokeStyle = 'rgba(229, 190, 106, 0.55)';
   actx.lineWidth = 1.6;
   for (const d of LAND_PATHS) {
     actx.stroke(new Path2D(d));
@@ -373,7 +361,6 @@ function create3DPagodaCitadel(city: City): THREE.Group {
 export function WebGLStrategyMap({
   state,
   lang,
-  theme,
   selectedCityId,
   attackMode,
   activeMapMarch,
@@ -434,10 +421,9 @@ export function WebGLStrategyMap({
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
-    const themeMeta = VISUAL_THEMES[theme];
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(themeMeta.webglSkyHex);
-    scene.fog = new THREE.FogExp2(themeMeta.webglFogHex, 0.0052);
+    scene.background = new THREE.Color(INK_LOOK.webglSkyHex);
+    scene.fog = new THREE.FogExp2(INK_LOOK.webglFogHex, 0.0052);
 
     const camera = new THREE.PerspectiveCamera(42, width / height, 0.5, 450);
     camera.position.set(2, 62, 62);
@@ -453,15 +439,15 @@ export function WebGLStrategyMap({
     controls.update();
 
     // Cinematic 3-Point Imperial Lighting
-    const ambient = new THREE.AmbientLight(0xdbeafe, theme === 'ink' ? 0.85 : 0.72);
+    const ambient = new THREE.AmbientLight(0xefe4cf, 0.85);
     scene.add(ambient);
 
-    const sunLight = new THREE.DirectionalLight(themeMeta.webglSunHex, 1.85);
+    const sunLight = new THREE.DirectionalLight(INK_LOOK.webglSunHex, 1.85);
     sunLight.position.set(-48, 68, -32);
     scene.add(sunLight);
 
     const rimLight = new THREE.DirectionalLight(
-      theme === 'chrono' ? 0x22d3ee : 0x38bdf8,
+      0x8fc2b0,
       0.85
     );
     rimLight.position.set(55, 36, 48);
@@ -469,8 +455,7 @@ export function WebGLStrategyMap({
 
     // Build Real Displaced 3D China Heightmap Terrain!
     const { heightData, hmW, hmH, albedoCanvas } = buildChinaTerrainTextures(
-      Object.values(state.cities),
-      theme
+      Object.values(state.cities)
     );
 
     const sampleHeightAt = (mapX: number, mapY: number): number => {
@@ -513,7 +498,7 @@ export function WebGLStrategyMap({
     const oceanMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(WORLD_W * 2.2, WORLD_H * 2.2),
       new THREE.MeshStandardMaterial({
-        color: themeMeta.webglOceanHex,
+        color: INK_LOOK.webglOceanHex,
         roughness: 0.62,
         metalness: 0.18,
         transparent: true,
@@ -592,9 +577,7 @@ export function WebGLStrategyMap({
           ? 0xfbcfe8
           : state.season === 'autumn'
             ? 0xfb923c
-            : theme === 'chrono'
-              ? 0x22d3ee
-              : 0xfde047;
+            : 0xfde047;
     const pMat = new THREE.PointsMaterial({
       color: seasonParticleColor,
       size: state.season === 'winter' ? 0.55 : 0.7,
@@ -641,6 +624,8 @@ export function WebGLStrategyMap({
       renderer.setSize(w, h);
     };
     window.addEventListener('resize', handleResize);
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(container);
 
     // Animation Loop
     let rafId = 0;
@@ -744,6 +729,7 @@ export function WebGLStrategyMap({
     return () => {
       cancelAnimationFrame(rafId);
       window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       controls.dispose();
@@ -753,10 +739,9 @@ export function WebGLStrategyMap({
       pMat.dispose();
       renderer.dispose();
     };
-    // Rebuild WebGL terrain cleanly when ownership counts, season, or visual theme changes
+    // Rebuild WebGL terrain cleanly when ownership counts or season change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    theme,
     state.season,
     cities.map((c) => `${c.id}:${c.owner}`).join('|'),
   ]);
@@ -803,7 +788,7 @@ export function WebGLStrategyMap({
                       title={tLoc(g.name, lang)}
                       className="w-6 h-6 rounded-full overflow-hidden border border-cyan-300 shadow-md cursor-pointer hover:scale-110 transition"
                     >
-                      <img
+                      <Art thumb
                         src={g.portrait}
                         alt={tLoc(g.name, lang)}
                         className="w-full h-full object-cover object-top"
@@ -820,7 +805,7 @@ export function WebGLStrategyMap({
                       }}
                       className="w-6 h-6 rounded-full overflow-hidden border-2 border-amber-300 shadow-[0_0_10px_#facc15] cursor-pointer"
                     >
-                      <img
+                      <Art thumb
                         src={wandering[0].portrait}
                         alt={tLoc(wandering[0].name, lang)}
                         className="w-full h-full object-cover object-top"

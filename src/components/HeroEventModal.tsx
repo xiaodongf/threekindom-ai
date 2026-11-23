@@ -46,7 +46,7 @@ export function HeroEventModal({ event, state, lang, onChoose }: HeroEventModalP
         </div>
 
         {/* Narrative */}
-        <p className="text-sm text-[#e6dfd0] leading-relaxed bg-[#0d1015]/85 border border-white/10 rounded-xl p-4">
+        <p className="text-sm text-[#e6dfd0] leading-relaxed bg-[#12100d]/85 border border-white/10 rounded-xl p-4">
           {tLoc(event.body, lang)}
         </p>
 

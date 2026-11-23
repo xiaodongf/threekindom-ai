@@ -74,7 +74,7 @@ export function DiplomacyPanel({
   const lastReply = lastReplies[activeRival];
 
   return (
-    <div className="p-4 space-y-4 overflow-y-auto max-h-[580px]">
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
       {/* Rival Switcher Cards */}
       <div className="grid grid-cols-2 gap-2.5">
         {rivals.map((fid) => {
@@ -88,7 +88,7 @@ export function DiplomacyPanel({
               className={`text-left p-3 rounded-xl border transition cursor-pointer ${
                 active
                   ? 'bg-white/[0.07] border-[#d4a853]'
-                  : 'bg-[#0d1015]/80 border-white/10 hover:border-white/25'
+                  : 'bg-[#12100d]/80 border-white/10 hover:border-white/25'
               }`}
             >
               <div className="flex items-center justify-between mb-1">
@@ -120,7 +120,7 @@ export function DiplomacyPanel({
       </div>
 
       {/* Selected Warlord Detail */}
-      <div className="rounded-xl bg-[#0d1015]/85 border border-white/10 p-3.5 space-y-3">
+      <div className="rounded-xl bg-[#12100d]/85 border border-white/10 p-3.5 space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-bold text-[#f7efe0]">
@@ -152,9 +152,9 @@ export function DiplomacyPanel({
                   width: `${Math.round(((relation.score + 100) / 200) * 100)}%`,
                   backgroundColor:
                     relation.score >= 20
-                      ? '#10b981'
+                      ? '#438554'
                       : relation.score <= -25
-                        ? '#ef4444'
+                        ? '#c2432f'
                         : '#d4a853',
                 }}
               />
@@ -218,12 +218,12 @@ export function DiplomacyPanel({
               value={envoyText}
               onChange={(e) => setEnvoyText(e.target.value)}
               placeholder={tLoc(UI_TEXT.envoyPlaceholder, lang)}
-              className="flex-1 rounded-xl bg-[#0d1015] border border-white/15 px-3 py-2 text-xs text-[#f5ecd7] placeholder:text-[#6f7787] focus:outline-none focus:border-[#d4a853]"
+              className="flex-1 rounded-xl bg-[#12100d] border border-white/15 px-3 py-2 text-xs text-[#f5ecd7] placeholder:text-[#6f7787] focus:outline-none focus:border-[#d4a853]"
             />
             <button
               type="submit"
               disabled={loading || !envoyText.trim()}
-              className="px-3 py-2 rounded-xl bg-[#d4a853] hover:bg-[#e1b866] disabled:opacity-40 text-[#11151d] font-semibold text-xs flex items-center gap-1 cursor-pointer"
+              className="px-3 py-2 rounded-xl bg-[#d4a853] hover:bg-[#e1b866] disabled:opacity-40 text-[#14110d] font-semibold text-xs flex items-center gap-1 cursor-pointer"
             >
               {loading ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />

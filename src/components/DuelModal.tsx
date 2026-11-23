@@ -31,7 +31,6 @@ import type {
 } from '../game/types.js';
 import { tLoc } from '../i18n/translations.js';
 import { battleAudio } from '../utils/battleAudio.js';
-import { loadSavedVisualTheme, type VisualThemeId } from '../utils/visualTheme.js';
 import { DuelStage3D } from './DuelStage3D.js';
 import { HeroAvatar } from './HeroAvatar.js';
 import { classifyDuelMatchup } from './duel/duelChoreography.js';
@@ -40,6 +39,7 @@ import type {
   DuelCutInState,
   DuelExchangeEvent,
 } from './duel/duelTypes.js';
+import { Art } from './ui/Art.js';
 
 interface DuelModalProps {
   state: GameState;
@@ -48,7 +48,6 @@ interface DuelModalProps {
   defender: General;
   terrain?: TerrainType;
   isNight?: boolean;
-  theme?: VisualThemeId;
   /** Optional demo preview triggers for direct visual inspection */
   demoAction?: DuelStance | 'finale';
   demoTimeSec?: number;
@@ -85,12 +84,10 @@ export function DuelModal({
   defender,
   terrain = 'plains',
   isNight = false,
-  theme,
   demoAction,
   demoTimeSec,
   onComplete,
 }: DuelModalProps) {
-  const activeTheme = theme ?? loadSavedVisualTheme();
   const atkProfile = useMemo(() => getHeroDuelProfile(attacker), [attacker]);
   const defProfile = useMemo(() => getHeroDuelProfile(defender), [defender]);
 
@@ -524,7 +521,6 @@ export function DuelModal({
               defender={defender}
               terrain={terrain}
               isNight={isNight}
-              theme={activeTheme}
               lang={lang}
               atkHp={displayAtkHp}
               defHp={displayDefHp}
@@ -575,7 +571,7 @@ export function DuelModal({
                       : 'bg-gradient-to-r from-slate-950/95 via-amber-950/92 to-slate-950/95 border-amber-300/90'
                   }`}
                 >
-                  <img
+                  <Art thumb
                     src={cutIn.portrait}
                     alt={tLoc(cutIn.heroName, lang)}
                     className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl object-cover border-2 shadow-lg shrink-0"

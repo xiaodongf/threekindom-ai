@@ -1,112 +1,405 @@
 @import "tailwindcss";
 
+/*
+ * Ink-on-paper design language.
+ *
+ * One material everywhere: sumi-ink surfaces with paper-toned text, a single antique-gold accent,
+ * cinnabar seals for commitment and war, and mineral-pigment hues used as a code (never as
+ * decoration). The palette below re-maps Tailwind's stock scales to those pigments so every
+ * existing utility class speaks the same language:
+ *
+ *   slate   -> sumi ink / xuan paper        amber  -> antique gold
+ *   rose    -> cinnabar (war, danger, seal) emerald-> malachite (Shu, growth, loyalty)
+ *   sky     -> azurite (Wei, intellect)     indigo -> indigo dye (realm, strategy)
+ *   cyan    -> celadon (selection, movement) fuchsia-> wisteria purple (charisma, rare)
+ *   chrono  -> the ONE anachronism: electric cyan reserved for the time-traveller's modern tech.
+ */
+@theme {
+  --font-display: 'Crimson Pro', 'Noto Serif SC', Georgia, serif;
+  --font-serif-cn: 'Noto Serif SC', Georgia, serif;
+  --font-brush: 'Crimson Pro', 'Ma Shan Zheng', 'Noto Serif SC', Georgia, serif;
+  --font-sans: 'Inter', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 3px;
+  --radius-xl: 4px;
+  --radius-2xl: 5px;
+  --radius-3xl: 6px;
+
+  --color-slate-50: #f5eddc;
+  --color-slate-100: #ebe2cd;
+  --color-slate-200: #d9cdb2;
+  --color-slate-300: #bcae92;
+  --color-slate-400: #968a73;
+  --color-slate-500: #6e6453;
+  --color-slate-600: #4c4438;
+  --color-slate-700: #352f27;
+  --color-slate-800: #231f1a;
+  --color-slate-900: #171411;
+  --color-slate-950: #0d0b09;
+
+  --color-zinc-600: #4c4438;
+  --color-zinc-900: #171411;
+
+  --color-amber-50: #faf4e4;
+  --color-amber-100: #f3e6c3;
+  --color-amber-200: #e8d199;
+  --color-amber-300: #dcbb6e;
+  --color-amber-400: #d0a74f;
+  --color-amber-500: #b98d38;
+  --color-amber-600: #96702b;
+  --color-amber-700: #745623;
+  --color-amber-800: #553f1c;
+  --color-amber-900: #3a2b14;
+  --color-amber-950: #20180b;
+
+  --color-yellow-50: #fbf6e0;
+  --color-yellow-100: #f7ecbd;
+  --color-yellow-200: #f2dc8c;
+  --color-yellow-300: #ebc95c;
+  --color-yellow-400: #e0b53a;
+  --color-yellow-500: #c99a24;
+  --color-yellow-600: #a47a1b;
+  --color-yellow-700: #7d5c17;
+  --color-yellow-800: #5a4214;
+  --color-yellow-900: #3d2d10;
+  --color-yellow-950: #221908;
+
+  --color-orange-50: #fbf1e6;
+  --color-orange-100: #f6e1cd;
+  --color-orange-200: #edc6a3;
+  --color-orange-300: #e0a36e;
+  --color-orange-400: #d1864a;
+  --color-orange-500: #b96c32;
+  --color-orange-600: #975627;
+  --color-orange-700: #76431f;
+  --color-orange-800: #573219;
+  --color-orange-900: #3e230f;
+  --color-orange-950: #23130a;
+
+  --color-rose-50: #fbeeea;
+  --color-rose-100: #f6d9d1;
+  --color-rose-200: #edb3a5;
+  --color-rose-300: #e18a77;
+  --color-rose-400: #d4614c;
+  --color-rose-500: #c2432f;
+  --color-rose-600: #a53323;
+  --color-rose-700: #84281c;
+  --color-rose-800: #641f17;
+  --color-rose-900: #451611;
+  --color-rose-950: #290c09;
+
+  --color-emerald-50: #edf6ef;
+  --color-emerald-100: #d5ead9;
+  --color-emerald-200: #add4b6;
+  --color-emerald-300: #82ba90;
+  --color-emerald-400: #5c9f6e;
+  --color-emerald-500: #438554;
+  --color-emerald-600: #346a43;
+  --color-emerald-700: #295436;
+  --color-emerald-800: #1f3f29;
+  --color-emerald-900: #162c1d;
+  --color-emerald-950: #0c1a11;
+
+  --color-cyan-50: #eef6f1;
+  --color-cyan-100: #d8ebe2;
+  --color-cyan-200: #b7d9cb;
+  --color-cyan-300: #8fc2b0;
+  --color-cyan-400: #68a895;
+  --color-cyan-500: #4a8c7a;
+  --color-cyan-600: #387061;
+  --color-cyan-700: #2c594e;
+  --color-cyan-800: #21433b;
+  --color-cyan-900: #172f2a;
+  --color-cyan-950: #0d1c19;
+
+  --color-sky-50: #eef3f8;
+  --color-sky-100: #dbe6f1;
+  --color-sky-200: #b9d0e6;
+  --color-sky-300: #8fb2d6;
+  --color-sky-400: #6a94c2;
+  --color-sky-500: #4c78a8;
+  --color-sky-600: #3a5f8a;
+  --color-sky-700: #2d4a6c;
+  --color-sky-800: #22374f;
+  --color-sky-900: #182636;
+  --color-sky-950: #0e1722;
+
+  --color-indigo-50: #f0f1f8;
+  --color-indigo-100: #e0e2f0;
+  --color-indigo-200: #c6c9e3;
+  --color-indigo-300: #a3a8d0;
+  --color-indigo-400: #7f86bb;
+  --color-indigo-500: #6067a3;
+  --color-indigo-600: #4a5087;
+  --color-indigo-700: #3a3f6b;
+  --color-indigo-800: #2b2f50;
+  --color-indigo-900: #1e2138;
+  --color-indigo-950: #121423;
+
+  --color-fuchsia-50: #f7eff8;
+  --color-fuchsia-100: #eedfef;
+  --color-fuchsia-200: #dcc3de;
+  --color-fuchsia-300: #c49bc8;
+  --color-fuchsia-400: #a976af;
+  --color-fuchsia-500: #8d5a94;
+  --color-fuchsia-600: #724778;
+  --color-fuchsia-700: #59385e;
+  --color-fuchsia-800: #432b47;
+  --color-fuchsia-900: #2f1e32;
+  --color-fuchsia-950: #1b111d;
+
+  /* The time-traveller's anachronism: used only where 21st-century knowledge shows through. */
+  --color-chrono-100: #cffafe;
+  --color-chrono-200: #a5f3fc;
+  --color-chrono-300: #67e8f9;
+  --color-chrono-400: #22d3ee;
+  --color-chrono-500: #06b6d4;
+  --color-chrono-600: #0891b2;
+  --color-chrono-700: #0e7490;
+  --color-chrono-900: #164e63;
+  --color-chrono-950: #083344;
+
+  /* Named roles */
+  --color-ink: #0d0b09;
+  --color-paper: #ebe2cd;
+  --color-gold: #d0a74f;
+  --color-seal: #b5382a;
+}
+
 @layer base {
-  :root,
-  [data-theme="cinema"] {
-    --font-display: 'Cinzel', 'Noto Serif SC', Georgia, serif;
-    --font-serif-cn: 'Noto Serif SC', Georgia, serif;
-    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-    --bg-body:
-      radial-gradient(ellipse 80% 50% at 20% -10%, rgba(56, 189, 248, 0.16), transparent 60%),
-      radial-gradient(ellipse 70% 50% at 85% 0%, rgba(99, 102, 241, 0.15), transparent 55%),
-      radial-gradient(ellipse 60% 50% at 50% 105%, rgba(245, 158, 11, 0.09), transparent 60%),
-      linear-gradient(180deg, #060a14 0%, #0b1222 50%, #050912 100%);
-    --panel-bg: linear-gradient(180deg, rgba(16, 24, 41, 0.84) 0%, rgba(9, 15, 29, 0.92) 100%);
-    --panel-border: rgba(148, 163, 184, 0.19);
-    --glow-border: rgba(56, 189, 248, 0.5);
-    --glow-shadow: rgba(56, 189, 248, 0.18);
-    --art-grade: saturate(1.06) contrast(1.04);
-    --scroll-thumb: rgba(56, 189, 248, 0.34);
-  }
+  :root {
+    --tex-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.93  0 0 0 0 0.87  0 0 0 0 0.74  0 0 0 0.11 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    --tex-fibre: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='320'%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.006 0.42' numOctaves='3' seed='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.86  0 0 0 0 0.78  0 0 0 0 0.62  0 0 0 0.16 -0.035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+    --tex-brush-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 80' preserveAspectRatio='none'%3E%3Cdefs%3E%3Cfilter id='b' x='-5%25' y='-50%25' width='110%25' height='200%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.008 0.22' numOctaves='3' seed='7' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='26' xChannelSelector='R' yChannelSelector='G' result='d'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.9' numOctaves='2' seed='3' result='s'/%3E%3CfeColorMatrix in='s' type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -9 5.8' result='m'/%3E%3CfeComposite in='d' in2='m' operator='in'/%3E%3C/filter%3E%3C/defs%3E%3Cpath d='M14 30 C 120 14, 300 18, 586 24 C 592 34, 590 46, 580 54 C 380 62, 160 60, 20 56 C 8 48, 8 38, 14 30 Z' fill='%230b0907' filter='url(%23b)'/%3E%3C/svg%3E");
+    --tex-brush-banner: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 100' preserveAspectRatio='none'%3E%3Cdefs%3E%3Cfilter id='b' x='-5%25' y='-30%25' width='110%25' height='160%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.007 0.16' numOctaves='3' seed='9' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='18' xChannelSelector='R' yChannelSelector='G' result='d'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.003 0.8' numOctaves='2' seed='4' result='s'/%3E%3CfeColorMatrix in='s' type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -9 7.1' result='m'/%3E%3CfeComposite in='d' in2='m' operator='in'/%3E%3C/filter%3E%3C/defs%3E%3Cpath d='M10 22 C 130 8, 330 10, 590 14 C 596 36, 596 64, 588 86 C 380 94, 150 92, 16 88 C 6 68, 4 42, 10 22 Z' fill='%230b0907' filter='url(%23b)'/%3E%3C/svg%3E");
+    --tex-brush-red: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 80' preserveAspectRatio='none'%3E%3Cdefs%3E%3Cfilter id='b' x='-5%25' y='-50%25' width='110%25' height='200%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.008 0.22' numOctaves='3' seed='13' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='26' xChannelSelector='R' yChannelSelector='G' result='d'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.9' numOctaves='2' seed='3' result='s'/%3E%3CfeColorMatrix in='s' type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -9 6.1' result='m'/%3E%3CfeComposite in='d' in2='m' operator='in'/%3E%3C/filter%3E%3C/defs%3E%3Cpath d='M14 30 C 120 14, 300 18, 586 24 C 592 34, 590 46, 580 54 C 380 62, 160 60, 20 56 C 8 48, 8 38, 14 30 Z' fill='%23a53323' filter='url(%23b)'/%3E%3C/svg%3E");
+    --tex-brush-gold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 80' preserveAspectRatio='none'%3E%3Cdefs%3E%3Cfilter id='b' x='-5%25' y='-50%25' width='110%25' height='200%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.008 0.22' numOctaves='3' seed='21' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='26' xChannelSelector='R' yChannelSelector='G' result='d'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.9' numOctaves='2' seed='3' result='s'/%3E%3CfeColorMatrix in='s' type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -9 6.0' result='m'/%3E%3CfeComposite in='d' in2='m' operator='in'/%3E%3C/filter%3E%3C/defs%3E%3Cpath d='M14 30 C 120 14, 300 18, 586 24 C 592 34, 590 46, 580 54 C 380 62, 160 60, 20 56 C 8 48, 8 38, 14 30 Z' fill='%23b98d38' filter='url(%23b)'/%3E%3C/svg%3E");
+    --tex-seal-wear: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='w' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='3' seed='23' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -7 4.6'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)'/%3E%3C/svg%3E");
 
-  [data-theme="ink"] {
-    --bg-body:
-      radial-gradient(ellipse 85% 55% at 20% -8%, rgba(212, 168, 83, 0.18), transparent 60%),
-      radial-gradient(ellipse 70% 50% at 88% 5%, rgba(185, 28, 28, 0.15), transparent 58%),
-      radial-gradient(ellipse 65% 55% at 50% 105%, rgba(161, 98, 7, 0.11), transparent 62%),
-      linear-gradient(180deg, #130f0b 0%, #1c1610 52%, #100c08 100%);
-    --panel-bg: linear-gradient(180deg, rgba(34, 27, 20, 0.88) 0%, rgba(20, 16, 12, 0.95) 100%);
-    --panel-border: rgba(212, 168, 83, 0.28);
-    --glow-border: rgba(229, 190, 106, 0.65);
-    --glow-shadow: rgba(212, 168, 83, 0.22);
-    --art-grade: sepia(0.28) saturate(0.92) contrast(1.08);
-    --scroll-thumb: rgba(212, 168, 83, 0.42);
-  }
+    /* Motion tokens: quick, proportional, never in the way. */
+    --dur-press: 110ms;
+    --dur-quick: 180ms;
+    --dur-panel: 260ms;
+    --dur-scene: 420ms;
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-in: cubic-bezier(0.5, 0, 0.75, 0.2);
+    --ease-stamp: cubic-bezier(0.2, 1.5, 0.4, 1);
 
-  [data-theme="chrono"] {
-    --bg-body:
-      radial-gradient(ellipse 80% 50% at 15% -10%, rgba(34, 211, 238, 0.2), transparent 58%),
-      radial-gradient(ellipse 75% 55% at 88% -5%, rgba(168, 85, 247, 0.2), transparent 55%),
-      radial-gradient(ellipse 60% 45% at 50% 108%, rgba(14, 165, 233, 0.14), transparent 60%),
-      linear-gradient(180deg, #04040c 0%, #090718 52%, #03030a 100%);
-    --panel-bg: linear-gradient(180deg, rgba(12, 10, 28, 0.88) 0%, rgba(5, 5, 16, 0.95) 100%);
-    --panel-border: rgba(34, 211, 238, 0.26);
-    --glow-border: rgba(34, 211, 238, 0.65);
-    --glow-shadow: rgba(168, 85, 247, 0.28);
-    --art-grade: saturate(1.18) contrast(1.12) hue-rotate(-6deg);
-    --scroll-thumb: rgba(168, 85, 247, 0.45);
+    --panel-border: rgba(208, 167, 79, 0.2);
+    --glow-border: rgba(208, 167, 79, 0.58);
+    --glow-shadow: rgba(208, 167, 79, 0.14);
+    --art-grade: saturate(0.98) contrast(1.04);
+    --scroll-thumb: rgba(208, 167, 79, 0.36);
+
+    color-scheme: dark;
   }
 
   body {
     font-family: var(--font-sans);
-    background: var(--bg-body);
-    color: #f1f5f9;
+    background:
+      var(--tex-grain),
+      radial-gradient(ellipse 90% 60% at 50% -10%, rgba(120, 88, 40, 0.2), transparent 62%),
+      radial-gradient(ellipse 70% 55% at 50% 110%, rgba(110, 38, 26, 0.13), transparent 60%),
+      linear-gradient(180deg, #14110d 0%, #0f0d0a 55%, #0a0806 100%);
+    background-attachment: fixed;
+    color: var(--color-slate-100);
     min-height: 100vh;
-    transition: background 360ms ease;
+    font-variant-numeric: tabular-nums;
+  }
+
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-amber-300);
+    outline-offset: 2px;
+  }
+
+  button, [role='button'], select, input {
+    transition:
+      background-color var(--dur-quick) var(--ease-out),
+      border-color var(--dur-quick) var(--ease-out),
+      color var(--dur-quick) var(--ease-out),
+      box-shadow var(--dur-quick) var(--ease-out),
+      transform var(--dur-press) var(--ease-out),
+      opacity var(--dur-quick) var(--ease-out),
+      filter var(--dur-quick) var(--ease-out);
+  }
+
+  button:not(:disabled):active {
+    transform: translateY(1px) scale(0.985);
   }
 }
 
-.font-display {
-  font-family: var(--font-display);
+@layer components {
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: 0.005em;
+  }
+
+  /* Brush lettering: titles, names on banners and single-character stamps only. */
+  .font-brush {
+    font-family: var(--font-brush);
+  }
+
+  .font-seal {
+    font-family: var(--font-serif-cn);
+  }
+
+  .theme-art-grade {
+    filter: var(--art-grade);
+  }
+
+  /* Lacquered ink surface: the one panel material of the game. */
+  .ink-panel {
+    background:
+      var(--tex-grain),
+      linear-gradient(180deg, rgba(35, 30, 24, 0.95) 0%, rgba(20, 17, 13, 0.97) 100%);
+    border: 1px solid var(--panel-border);
+    box-shadow:
+      0 16px 40px rgba(0, 0, 0, 0.55),
+      inset 0 0 0 1px rgba(0, 0, 0, 0.55),
+      inset 0 1px 0 rgba(245, 237, 220, 0.055);
+  }
+
+  .gold-border-glow {
+    border-color: var(--glow-border);
+    box-shadow:
+      0 0 0 3px rgba(13, 11, 9, 0.9),
+      0 0 0 4px rgba(208, 167, 79, 0.28),
+      0 0 30px var(--glow-shadow),
+      0 22px 54px rgba(0, 0, 0, 0.7),
+      inset 0 1px 0 rgba(245, 237, 220, 0.08);
+  }
+
+  /* Xuan-paper reading surface for narrative text (events, chronicle, dossiers). */
+  .paper-sheet {
+    background:
+      var(--tex-fibre),
+      var(--tex-grain),
+      linear-gradient(180deg, #eadfc6 0%, #e0d3b5 100%);
+    color: #2a231a;
+    border: 1px solid #b9a67e;
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.5),
+      inset 0 0 44px rgba(126, 92, 40, 0.2);
+  }
+
+  /* A dry-brush stroke drawn under a heading (gold on ink; cinnabar for war). */
+  .brush-heading {
+    position: relative;
+    isolation: isolate;
+    display: inline-block;
+  }
+  .brush-heading::before {
+    content: '';
+    position: absolute;
+    left: -0.5em;
+    right: -0.9em;
+    bottom: -0.34em;
+    height: 0.5em;
+    background: var(--tex-brush-gold) center / 100% 100% no-repeat;
+    opacity: 0.85;
+    z-index: -1;
+    pointer-events: none;
+  }
+  .brush-heading.brush-red::before {
+    background-image: var(--tex-brush-red);
+  }
+
+  /* A single stroke used as an underline / divider. */
+  .brush-rule {
+    height: 0.5rem;
+    background: var(--tex-brush-gold) center / 100% 100% no-repeat;
+    opacity: 0.75;
+  }
+
+  /* Hairline gold rule with a centred diamond, for sheet sections. */
+  .gold-rule {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(208, 167, 79, 0.55) 18%, rgba(208, 167, 79, 0.55) 82%, transparent);
+  }
+
+  /* Cinnabar seal: commitment, ownership, verdicts. */
+  .seal {
+    display: inline-grid;
+    place-items: center;
+    aspect-ratio: 1;
+    font-family: 'Ma Shan Zheng', var(--font-serif-cn);
+    font-weight: 400;
+    line-height: 1;
+    color: #f6ead2;
+    background: linear-gradient(145deg, #c2432f 0%, #9c2e20 100%);
+    border-radius: 3px;
+    box-shadow:
+      inset 0 0 0 1.5px rgba(246, 234, 210, 0.82),
+      inset 0 0 0 3px #a53323,
+      0 2px 8px rgba(0, 0, 0, 0.45);
+    -webkit-mask-image: var(--tex-seal-wear);
+    mask-image: var(--tex-seal-wear);
+    -webkit-mask-size: 120px 120px;
+    mask-size: 120px 120px;
+    text-shadow: 0 0 1px rgba(60, 10, 4, 0.5);
+  }
+
+  /* Primary commitment button: gold leaf with ink lettering. */
+  .btn-gold {
+    background: linear-gradient(180deg, #dcbb6e 0%, #b98d38 100%);
+    color: #17120a;
+    border: 1px solid #f0d99a;
+    box-shadow:
+      0 6px 18px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 246, 214, 0.6);
+    font-weight: 700;
+  }
+  .btn-gold:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+  .btn-gold:disabled {
+    opacity: 0.45;
+  }
+
+  /* War / irreversible commitment button: cinnabar. */
+  .btn-seal {
+    background: linear-gradient(180deg, #c2432f 0%, #8f2a1d 100%);
+    color: #f6ead2;
+    border: 1px solid rgba(237, 179, 165, 0.6);
+    box-shadow:
+      0 6px 18px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 214, 200, 0.35);
+    font-weight: 700;
+  }
+  .btn-seal:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+  .btn-seal:disabled {
+    opacity: 0.45;
+  }
+
+  /* Hanging-scroll frame for large portraits and banners. */
+  .scroll-mount {
+    position: relative;
+    background: #0d0b09;
+    border: 1px solid rgba(208, 167, 79, 0.42);
+    box-shadow:
+      0 0 0 4px #14110d,
+      0 0 0 5px rgba(208, 167, 79, 0.2),
+      0 24px 60px rgba(0, 0, 0, 0.65);
+  }
+
+  /* The campaign table the map lies on. */
+  .map-table {
+    background:
+      var(--tex-fibre),
+      radial-gradient(ellipse 80% 70% at 50% 45%, #2a2118 0%, #17120d 62%, #0b0907 100%);
+  }
 }
 
-.font-seal {
-  font-family: var(--font-serif-cn);
-}
-
-.theme-art-grade {
-  filter: var(--art-grade);
-  transition: filter 320ms ease;
-}
-
-/* Theme-Aware Frosted Glass / Inkstone / Obsidian Tactical Panel */
-.ink-panel {
-  background: var(--panel-bg);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid var(--panel-border);
-  box-shadow:
-    0 18px 44px rgba(2, 6, 23, 0.62),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  transition: border-color 280ms ease, box-shadow 280ms ease;
-}
-
-.gold-border-glow {
-  border-color: var(--glow-border);
-  box-shadow:
-    0 0 36px var(--glow-shadow),
-    0 22px 54px rgba(2, 6, 23, 0.78),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
-}
-
-/* Cyber-Chrono subtle holographic grid accent */
-[data-theme="chrono"] .ink-panel {
-  background-image:
-    linear-gradient(rgba(34, 211, 238, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(168, 85, 247, 0.03) 1px, transparent 1px),
-    var(--panel-bg);
-  background-size: 28px 28px, 28px 28px, 100% 100%;
-}
-
-/* Ink & Gold subtle double-line imperial framing */
-[data-theme="ink"] .gold-border-glow {
-  box-shadow:
-    0 0 28px rgba(212, 168, 83, 0.2),
-    0 22px 54px rgba(10, 6, 2, 0.85),
-    inset 0 0 0 1px rgba(212, 168, 83, 0.22);
-}
-
-/* S-Tier Legendary Hero Shimmering Metallic Gold Foil Frame */
+/* S-tier legendary hero: gold-leaf frame with a slow sheen */
 @keyframes foilSheen {
   0% {
     transform: translateX(-140%) rotate(22deg);
@@ -119,8 +412,8 @@
 .legendary-foil-ring {
   position: relative;
   box-shadow:
-    0 0 16px rgba(251, 191, 36, 0.5),
-    0 0 4px rgba(254, 240, 138, 0.85);
+    0 0 12px rgba(208, 167, 79, 0.42),
+    0 0 3px rgba(243, 230, 195, 0.8);
 }
 
 .legendary-foil-ring::after {
@@ -130,27 +423,26 @@
   background: linear-gradient(
     90deg,
     transparent 20%,
-    rgba(254, 249, 195, 0.58) 50%,
+    rgba(250, 244, 228, 0.5) 50%,
     transparent 80%
   );
-  animation: foilSheen 3.6s ease-in-out infinite;
+  animation: foilSheen 4.2s ease-in-out infinite;
   pointer-events: none;
 }
 
-/* Modern minimal scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(13, 11, 9, 0.5);
 }
 ::-webkit-scrollbar-thumb {
   background: var(--scroll-thumb);
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(56, 189, 248, 0.65);
+  background: rgba(208, 167, 79, 0.6);
 }
 
 /* Map & River Flows */
@@ -188,19 +480,149 @@
   animation: pulseRing 2.1s ease-in-out infinite;
 }
 
-/* Modal & Cut-in Juice Animations */
+/* ---- Interface motion ---- */
+
+/* Modals bloom in like ink meeting paper: a soft focus pull, no bounce. */
 @keyframes modalPopIn {
   0% {
     opacity: 0;
-    transform: scale(0.95) translateY(8px);
+    transform: scale(0.972) translateY(6px);
+    filter: blur(5px);
   }
   100% {
     opacity: 1;
     transform: scale(1) translateY(0);
+    filter: blur(0);
   }
 }
 .animate-modal-in {
-  animation: modalPopIn 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: modalPopIn var(--dur-panel) var(--ease-out);
+}
+
+@keyframes sheetIn {
+  0% {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.anim-sheet-in {
+  animation: sheetIn var(--dur-panel) var(--ease-out);
+}
+
+@keyframes riseIn {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.anim-rise {
+  animation: riseIn var(--dur-panel) var(--ease-out) both;
+}
+
+/* A brush stroke wipes in from the left. */
+@keyframes brushReveal {
+  0% {
+    clip-path: inset(0 100% 0 0);
+    opacity: 0.4;
+  }
+  100% {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+}
+.anim-brush {
+  animation: brushReveal var(--dur-scene) var(--ease-out) both;
+}
+
+/* A seal comes down hard and settles. */
+@keyframes sealStamp {
+  0% {
+    opacity: 0;
+    transform: scale(2.1) rotate(-14deg);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(0.94) rotate(-5deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(-6deg);
+  }
+}
+.anim-stamp {
+  animation: sealStamp 300ms var(--ease-stamp) both;
+}
+
+@keyframes bannerOut {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+.anim-banner-out {
+  animation: bannerOut var(--dur-panel) var(--ease-in) both;
+}
+
+/* Resource gain / loss lifts off the number it changed. */
+@keyframes deltaFly {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  18% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(-10px);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-16px);
+  }
+}
+.anim-delta {
+  animation: deltaFly 1.25s var(--ease-out) both;
+}
+
+@keyframes numberTick {
+  0% {
+    transform: scale(1.16);
+    filter: brightness(1.5);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+.anim-tick {
+  display: inline-block;
+  animation: numberTick 260ms var(--ease-out);
+}
+
+/* Slow breathing drift for large painted art, so stills never sit dead. */
+@keyframes artDrift {
+  0% {
+    transform: scale(1.04) translate3d(0, 0, 0);
+  }
+  100% {
+    transform: scale(1.1) translate3d(-1.2%, -1.4%, 0);
+  }
+}
+.anim-art-drift {
+  animation: artDrift 26s ease-in-out infinite alternate;
 }
 
 @keyframes cutInSlash {
@@ -317,4 +739,29 @@
 .tactical-25d-board {
   transform-style: preserve-3d;
   transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/*
+ * Reduced motion: honour the system preference and the in-game switch (data-motion="reduced" on
+ * <html>). Decorative loops stop and transitions collapse; nothing a player needs is conveyed by
+ * motion alone.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) *,
+  :root:not([data-motion='full']) *::before,
+  :root:not([data-motion='full']) *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+:root[data-motion='reduced'] *,
+:root[data-motion='reduced'] *::before,
+:root[data-motion='reduced'] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+  scroll-behavior: auto !important;
 }

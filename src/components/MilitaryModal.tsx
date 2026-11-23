@@ -327,7 +327,7 @@ export function MilitaryModal({
                 onClick={() => switchOperation(tab.id)}
                 className={`relative flex flex-col items-center gap-1 py-2 px-1 rounded-xl border text-[10.5px] font-semibold transition cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed ${
                   active
-                    ? 'bg-gradient-to-b from-cyan-500/25 to-indigo-600/25 border-cyan-400 text-white shadow-[0_0_16px_rgba(56,189,248,0.2)]'
+                    ? 'bg-gradient-to-b from-cyan-500/25 to-indigo-600/25 border-cyan-400 text-white shadow-[0_0_16px_rgba(208,167,79,0.2)]'
                     : 'bg-slate-900/70 border-slate-700/80 text-slate-300 hover:border-slate-500'
                 }`}
               >
@@ -792,7 +792,7 @@ export function MilitaryModal({
                   onClick={() => setBattleMode('tactical')}
                   className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
                     battleMode === 'tactical'
-                      ? 'bg-cyan-500/18 border-cyan-400 shadow-[0_0_16px_rgba(56,189,248,0.22)]'
+                      ? 'bg-cyan-500/18 border-cyan-400 shadow-[0_0_16px_rgba(208,167,79,0.22)]'
                       : 'bg-slate-950/70 border-slate-700/80 hover:border-slate-500'
                   }`}
                 >
@@ -821,7 +821,7 @@ export function MilitaryModal({
                   onClick={() => setBattleMode('ai_default')}
                   className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
                     battleMode === 'ai_default'
-                      ? 'bg-indigo-500/20 border-indigo-400 shadow-[0_0_16px_rgba(99,102,241,0.25)]'
+                      ? 'bg-indigo-500/20 border-indigo-400 shadow-[0_0_16px_rgba(208,167,79,0.25)]'
                       : 'bg-slate-950/70 border-slate-700/80 hover:border-slate-500'
                   }`}
                 >
@@ -1046,7 +1046,7 @@ export function OperationReportModal({
 
         <button
           onClick={onClose}
-          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-sm cursor-pointer"
+          className="w-full py-2.5 rounded-xl btn-seal font-bold text-sm cursor-pointer"
         >
           {tLoc(UI_TEXT.close, lang)}
         </button>

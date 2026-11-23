@@ -64,6 +64,7 @@ import { tLoc } from '../i18n/translations.js';
 import { battleAudio } from '../utils/battleAudio.js';
 import { DuelModal } from './DuelModal.js';
 import { TacticalVfxCanvas, type TacticalVfxEvent } from './TacticalVfxCanvas.js';
+import { Art } from './ui/Art.js';
 
 const TILE_TEXTURE_ART: Record<TacticalTileType, string> = {
   plains: '/art/tile_plains.jpg',
@@ -736,7 +737,7 @@ export function TacticalBattleModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/92 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="ink-panel gold-border-glow rounded-2xl max-w-[1260px] w-full overflow-hidden shadow-[0_24px_80px_rgba(2,6,23,0.95)] flex flex-col max-h-[96vh]">
+      <div className="ink-panel gold-border-glow rounded-2xl max-w-[1260px] w-full overflow-hidden shadow-[0_24px_80px_rgba(6,4,2,0.95)] flex flex-col max-h-[96vh]">
         {/* TOP TACTICAL HUD */}
         <div className="px-4 py-2.5 bg-slate-950/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-3">
@@ -846,7 +847,7 @@ export function TacticalBattleModal({
               onClick={() => setAiAutoPlay((v) => !v)}
               className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-40 ${
                 aiAutoPlay
-                  ? 'bg-indigo-600 border-indigo-300 text-white shadow-[0_0_16px_rgba(99,102,241,0.5)]'
+                  ? 'bg-indigo-600 border-indigo-300 text-white shadow-[0_0_16px_rgba(208,167,79,0.5)]'
                   : 'bg-slate-800 hover:bg-slate-700 border-slate-600 text-indigo-200'
               }`}
             >
@@ -866,7 +867,7 @@ export function TacticalBattleModal({
               type="button"
               disabled={!isPlayerTurn}
               onClick={handleEndPlayerTurn}
-              className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white text-xs font-bold shadow cursor-pointer disabled:opacity-40"
+              className="px-3.5 py-1.5 rounded-lg btn-gold text-xs font-bold shadow cursor-pointer disabled:opacity-40"
             >
               {lang === 'zh' ? '结束本回合' : 'End Turn'}
             </button>
@@ -980,7 +981,7 @@ export function TacticalBattleModal({
                           onMouseLeave={() => setHoveredCoord(null)}
                           className={`relative min-w-0 min-h-0 rounded-lg overflow-hidden border transition-all flex items-center justify-center cursor-pointer shadow-inner ${
                             isSelectedTile
-                              ? 'ring-2 ring-cyan-300 border-cyan-200 z-10 shadow-[0_0_20px_rgba(56,189,248,0.65)]'
+                              ? 'ring-2 ring-cyan-300 border-cyan-200 z-10 shadow-[0_0_20px_rgba(208,167,79,0.65)]'
                               : isStratTarget
                                 ? 'ring-2 ring-orange-400 border-amber-300 shadow-[0_0_16px_rgba(251,146,60,0.5)]'
                                 : isBombTarget
@@ -995,7 +996,7 @@ export function TacticalBattleModal({
                           }`}
                         >
                           {/* Studio-Painted Top-Down Terrain Texture */}
-                          <img
+                          <Art thumb
                             src={TILE_TEXTURE_ART[tile.type]}
                             alt={tile.type}
                             className={`pointer-events-none absolute inset-0 w-full h-full object-cover theme-art-grade ${
@@ -1122,7 +1123,7 @@ export function TacticalBattleModal({
                                 }}
                               >
                                 {visibleUnit.portrait ? (
-                                  <img
+                                  <Art thumb
                                     src={visibleUnit.portrait}
                                     alt={tLoc(visibleUnit.name, lang)}
                                     className="w-full h-full object-cover object-top"
@@ -1227,7 +1228,7 @@ export function TacticalBattleModal({
               {skillCutIn && (
                 <div className="pointer-events-none absolute inset-x-0 top-1/2 z-40 animate-cutin-slash bg-gradient-to-r from-slate-950/95 via-amber-950/90 to-slate-950/95 border-y-2 border-amber-300/90 py-3 px-6 flex items-center justify-center gap-4 shadow-[0_0_50px_rgba(251,191,36,0.5)]">
                   {skillCutIn.portrait && (
-                    <img
+                    <Art thumb
                       src={skillCutIn.portrait}
                       alt={tLoc(skillCutIn.heroName, lang)}
                       className="w-16 h-16 rounded-2xl object-cover object-top border-2 border-amber-300 shadow-2xl"
@@ -1282,7 +1283,7 @@ export function TacticalBattleModal({
                   <button
                     type="button"
                     onClick={() => onComplete(extractTacticalBattleOutcome(battle))}
-                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-sm shadow-lg cursor-pointer"
+                    className="px-6 py-2.5 rounded-xl btn-gold font-bold text-sm shadow-lg cursor-pointer"
                   >
                     {lang === 'zh' ? '结算战果与俘虏' : 'Continue to Battle Report'}
                   </button>
@@ -1306,7 +1307,7 @@ export function TacticalBattleModal({
                       }}
                     >
                       {selectedUnit.portrait ? (
-                        <img
+                        <Art thumb
                           src={selectedUnit.portrait}
                           alt={tLoc(selectedUnit.name, lang)}
                           className="w-full h-full object-cover object-top"

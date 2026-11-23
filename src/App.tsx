@@ -11,6 +11,7 @@ import {
   Skull,
   Sparkles,
   Users,
+  X,
 } from 'lucide-react';
 import { AdvisorPanel } from './components/AdvisorPanel.js';
 import { BattleReportModal } from './components/BattleModal.js';
@@ -32,6 +33,7 @@ import { StrategyMap, type ActiveMapMarch } from './components/StrategyMap.js';
 import { TacticalBattleModal } from './components/TacticalBattleModal.js';
 import { TechLabPanel } from './components/TechLabPanel.js';
 import { TopBar } from './components/TopBar.js';
+import { SeasonBanner } from './components/ui/SeasonBanner.js';
 import { WarSceneModal, type WarSceneConfig } from './components/WarSceneModal.js';
 import {
   advanceSeason,
@@ -85,11 +87,6 @@ import type {
 import { UI_TEXT, tLoc } from './i18n/translations.js';
 import { fetchProviders, requestAITurnDecision } from './services/aiClient.js';
 import { battleAudio } from './utils/battleAudio.js';
-import {
-  loadSavedVisualTheme,
-  saveVisualTheme,
-  type VisualThemeId,
-} from './utils/visualTheme.js';
 
 type RightTab = 'city' | 'heroes' | 'tech' | 'advisor' | 'diplomacy' | 'chronicle';
 
@@ -292,11 +289,6 @@ export default function App() {
     const p = new URLSearchParams(window.location.search).get('lang');
     return p === 'zh' ? 'zh' : 'en';
   });
-  const [visualTheme, setVisualTheme] = useState<VisualThemeId>(() => loadSavedVisualTheme());
-
-  useEffect(() => {
-    saveVisualTheme(visualTheme);
-  }, [visualTheme]);
   const [gameState, setGameState] = useState<GameState | null>(() => {
     const f = new URLSearchParams(window.location.search).get('faction');
     if (f === 'wei' || f === 'shu' || f === 'wu') {
@@ -325,6 +317,14 @@ export default function App() {
     }
     return 'heroes';
   });
+  // The side sheet is contextual: closed until a city, hero or council is asked for.
+  const [sheetOpen, setSheetOpen] = useState<boolean>(
+    () => new URLSearchParams(window.location.search).get('tab') !== null
+  );
+  const openTab = (tab: RightTab) => {
+    setActiveTab(tab);
+    setSheetOpen(true);
+  };
   const [focusedHeroId, setFocusedHeroId] = useState<string | null>(null);
   const [attackMode, setAttackMode] = useState<boolean>(
     () => new URLSearchParams(window.location.search).get('attackMode') === '1'
@@ -585,7 +585,7 @@ export default function App() {
     );
     setGameState(fresh);
     setSelectedCityId(capital?.id || null);
-    setActiveTab('heroes');
+    openTab('heroes');
     setFocusedHeroId(null);
     setAttackMode(false);
     setWarQueue([]);
@@ -612,12 +612,12 @@ export default function App() {
 
   function handleSelectCity(cityId: string) {
     setSelectedCityId(cityId);
-    setActiveTab('city');
+    openTab('city');
   }
 
   function handleInspectHero(heroId: string) {
     setFocusedHeroId(heroId);
-    setActiveTab('heroes');
+    openTab('heroes');
   }
 
   function handleTacticalBattleCompleted(outcome: TacticalBattleOutcome) {
@@ -1117,8 +1117,6 @@ export default function App() {
       <>
         <FactionSelect
           lang={lang}
-          visualTheme={visualTheme}
-          onChangeVisualTheme={setVisualTheme}
           onToggleLang={() => setLang((l) => (l === 'en' ? 'zh' : 'en'))}
           onSelectFaction={startCampaign}
           onOpenSettings={() => setShowSettings(true)}
@@ -1138,14 +1136,16 @@ export default function App() {
     );
   }
 
-  const tabs: Array<{ id: RightTab; label: string; icon: typeof Castle }> = [
-    { id: 'city', label: lang === 'zh' ? '城池' : 'City', icon: Castle },
-    { id: 'heroes', label: lang === 'zh' ? '名将录' : 'Heroes', icon: Users },
-    { id: 'tech', label: lang === 'zh' ? '科技' : 'Tech', icon: FlaskConical },
-    { id: 'advisor', label: lang === 'zh' ? '军师' : 'Council', icon: Sparkles },
-    { id: 'diplomacy', label: lang === 'zh' ? '外交' : 'Diplo', icon: Handshake },
-    { id: 'chronicle', label: lang === 'zh' ? '史记' : 'Log', icon: ScrollText },
+  const zh = lang === 'zh';
+  const tabs: Array<{ id: RightTab; label: string; title: string; icon: typeof Castle }> = [
+    { id: 'city', label: zh ? '城池' : 'City', title: zh ? '城池' : 'City', icon: Castle },
+    { id: 'heroes', label: zh ? '名将' : 'Heroes', title: zh ? '名将录' : 'Heroes', icon: Users },
+    { id: 'tech', label: zh ? '科技' : 'Tech', title: zh ? '穿越科技' : 'Future Knowledge', icon: FlaskConical },
+    { id: 'advisor', label: zh ? '军师' : 'Council', title: zh ? '军师献策' : 'War Council', icon: Sparkles },
+    { id: 'diplomacy', label: zh ? '外交' : 'Envoys', title: zh ? '外交' : 'Diplomacy', icon: Handshake },
+    { id: 'chronicle', label: zh ? '史记' : 'Annals', title: zh ? '史记' : 'Chronicle', icon: ScrollText },
   ];
+  const activeTabMeta = tabs.find((t) => t.id === activeTab) ?? tabs[0];
 
   const duelAttacker = activeDuel?.payload.generalId
     ? gameState.generals[activeDuel.payload.generalId]
@@ -1164,28 +1164,32 @@ export default function App() {
     !incomingDefensePrompt;
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-screen flex flex-col overflow-hidden">
       <TopBar
         state={gameState}
         lang={lang}
-        visualTheme={visualTheme}
         isEndingTurn={isEndingTurn}
         providerLabel={providerLabel}
         onToggleLang={() => setLang((l) => (l === 'en' ? 'zh' : 'en'))}
-        onChangeVisualTheme={setVisualTheme}
         onTogglePlayerAvatar={handleTogglePlayerAvatar}
         onOpenSettings={() => setShowSettings(true)}
         onEndTurn={handleEndTurn}
         onNewGame={() => setGameState(null)}
       />
 
-      <main className="flex-1 max-w-[1440px] w-full mx-auto px-3 sm:px-5 py-4 grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
-        {/* Left: Realistic Topographic Map + Chronicle Strip */}
-        <div className="xl:col-span-8 space-y-3">
+      <SeasonBanner
+        turn={gameState.turn}
+        year={gameState.year}
+        season={gameState.season}
+        lang={lang}
+      />
+
+      <main className="relative flex-1 min-h-0 flex">
+        {/* The campaign table: the map owns the screen */}
+        <div className="relative z-0 flex-1 min-w-0 min-h-0">
           <StrategyMap
             state={gameState}
             lang={lang}
-            visualTheme={visualTheme}
             selectedCityId={selectedCityId}
             attackMode={attackMode}
             activeMapMarch={
@@ -1203,7 +1207,7 @@ export default function App() {
           />
 
           {gameState.chronicle[0] && (
-            <div className="ink-panel rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
+            <div className="absolute left-3 bottom-3 z-20 max-w-[min(640px,calc(100%-1.5rem))] ink-panel rounded-md px-3.5 py-2 flex items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-2 min-w-0">
                 <ScrollText className="w-4 h-4 text-[#d4a853] shrink-0" />
                 <span className="truncate text-[#e6dfd0]">
@@ -1211,7 +1215,7 @@ export default function App() {
                 </span>
               </div>
               <button
-                onClick={() => setActiveTab('chronicle')}
+                onClick={() => openTab('chronicle')}
                 className="text-[#d4a853] hover:underline shrink-0 font-semibold cursor-pointer"
               >
                 {lang === 'zh' ? '全部战报' : 'All Logs'}
@@ -1220,30 +1224,25 @@ export default function App() {
           )}
         </div>
 
-        {/* Right: 6-Tab Hero-Centric Command Drawer */}
-        <aside className="xl:col-span-4 ink-panel rounded-2xl overflow-hidden flex flex-col">
-          <div className="grid grid-cols-6 border-b border-slate-700/60 bg-slate-950/65">
-            {tabs.map((tab) => {
-              const Icon = tab.icon;
-              const active = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex flex-col items-center justify-center gap-1 py-2.5 px-1 text-[10px] font-semibold border-b-2 transition cursor-pointer ${
-                    active
-                      ? 'border-cyan-400 text-cyan-200 bg-cyan-500/10'
-                      : 'border-transparent text-slate-400 hover:text-slate-100'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span className="truncate max-w-full">{tab.label}</span>
-                </button>
-              );
-            })}
+        {/* Contextual sheet: opens for the selected city, hero or council */}
+        {sheetOpen && (
+        <aside className="anim-sheet-in ink-panel border-y-0 border-r-0 z-20 flex flex-col min-h-0 w-[min(430px,calc(100vw-3.5rem))] max-lg:absolute max-lg:inset-y-0 max-lg:right-14 lg:relative lg:shrink-0">
+          <div className="flex items-center justify-between gap-2 pl-5 pr-2 py-2 border-b border-amber-400/15">
+            <h2 className="brush-heading font-brush text-lg font-bold text-slate-50 leading-none">
+              {activeTabMeta.title}
+            </h2>
+            <button
+              type="button"
+              onClick={() => setSheetOpen(false)}
+              title={zh ? '收起' : 'Close'}
+              className="p-1.5 rounded-md text-slate-400 hover:text-slate-50 hover:bg-white/5 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
-          <div className="flex-1 min-h-[580px]">
+          <div className="relative flex-1 min-h-0">
+          <div key={activeTab} className="anim-rise absolute inset-0 overflow-y-auto">
             {activeTab === 'city' && (
               <CityPanel
                 state={gameState}
@@ -1324,7 +1323,37 @@ export default function App() {
               <ChronicleLog entries={gameState.chronicle} lang={lang} />
             )}
           </div>
+          </div>
         </aside>
+        )}
+
+        {/* Tab rail: always present, so the sheet is one click away */}
+        <nav className="ink-panel border-y-0 border-r-0 z-30 shrink-0 w-14 flex flex-col items-stretch py-2 gap-0.5">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = sheetOpen && activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                title={tab.title}
+                onClick={() => (active ? setSheetOpen(false) : openTab(tab.id))}
+                className={`relative flex flex-col items-center justify-center gap-1 py-2.5 text-[10px] font-semibold cursor-pointer border-l-2 ${
+                  active
+                    ? 'border-amber-300 text-amber-100 bg-amber-400/10'
+                    : 'border-transparent text-slate-400 hover:text-slate-50 hover:bg-white/5'
+                }`}
+              >
+                <Icon
+                  className={`w-[18px] h-[18px] ${
+                    tab.id === 'tech' || tab.id === 'advisor' ? 'text-chrono-300' : ''
+                  }`}
+                />
+                <span className="truncate max-w-full">{tab.label}</span>
+              </button>
+            );
+          })}
+        </nav>
       </main>
 
       {/* Unified War Room Military Operations Modal (5 Operations + Live Odds + Pincer) */}
@@ -1355,7 +1384,6 @@ export default function App() {
           isNight={
             activeDuel.demoNight ?? activeDuel.payload.actionType === 'raid'
           }
-          theme={visualTheme}
           demoAction={activeDuel.demoAction}
           demoTimeSec={activeDuel.demoTimeSec}
           onComplete={(duelResult) =>
@@ -1548,7 +1576,7 @@ export default function App() {
             </p>
             <button
               onClick={() => setGameState(null)}
-              className="w-full py-3 rounded-xl bg-[#d4a853] hover:bg-[#e1b866] text-[#11151d] font-bold text-sm transition cursor-pointer"
+              className="w-full py-3 rounded-xl bg-[#d4a853] hover:bg-[#e1b866] text-[#14110d] font-bold text-sm transition cursor-pointer"
             >
               {tLoc(UI_TEXT.playAgain, lang)}
             </button>

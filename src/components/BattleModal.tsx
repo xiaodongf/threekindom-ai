@@ -103,7 +103,7 @@ export function AttackSetupModal({
         </div>
 
         {/* Route & Enemy Defender Preview */}
-        <div className="flex items-center justify-between rounded-xl bg-[#0d1015]/85 border border-white/10 px-4 py-3 text-sm">
+        <div className="flex items-center justify-between rounded-xl bg-[#12100d]/85 border border-white/10 px-4 py-3 text-sm">
           <div>
             <div className="text-[11px] text-[#9ea3ae]">{lang === 'zh' ? '出发地' : 'Origin'}</div>
             <div className="font-bold text-[#f7efe0]">{tLoc(fromCity.name, lang)}</div>
@@ -154,7 +154,7 @@ export function AttackSetupModal({
             <select
               value={generalId}
               onChange={(e) => setGeneralId(e.target.value)}
-              className="w-full rounded-xl bg-[#0d1015] border border-white/15 px-2.5 py-2 text-xs text-[#f5ecd7]"
+              className="w-full rounded-xl bg-[#12100d] border border-white/15 px-2.5 py-2 text-xs text-[#f5ecd7]"
             >
               <option value="">{tLoc(UI_TEXT.noGeneralOption, lang)}</option>
               {availableHeroes.map((g) => (
@@ -172,7 +172,7 @@ export function AttackSetupModal({
             <select
               value={deputyId}
               onChange={(e) => setDeputyId(e.target.value)}
-              className="w-full rounded-xl bg-[#0d1015] border border-white/15 px-2.5 py-2 text-xs text-[#f5ecd7]"
+              className="w-full rounded-xl bg-[#12100d] border border-white/15 px-2.5 py-2 text-xs text-[#f5ecd7]"
             >
               <option value="">{lang === 'zh' ? '无副将' : 'No Deputy'}</option>
               {availableHeroes
@@ -259,7 +259,7 @@ export function AttackSetupModal({
                   className={`text-left p-2.5 rounded-xl border transition cursor-pointer ${
                     active
                       ? 'bg-[#d4a853]/15 border-[#d4a853] text-[#f7efe0]'
-                      : 'bg-[#0d1015]/70 border-white/10 text-[#b8b2a2] hover:border-white/25'
+                      : 'bg-[#12100d]/70 border-white/10 text-[#b8b2a2] hover:border-white/25'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-1 text-xs font-bold">
@@ -328,7 +328,7 @@ export function AttackSetupModal({
                   defenderHeroId: defenderHero.id,
                 })
               }
-              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#d4a853] to-[#b58732] hover:from-[#e5bc69] hover:to-[#c59640] text-[#11151d] text-xs sm:text-sm font-extrabold flex items-center gap-1.5 shadow-lg cursor-pointer"
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#d4a853] to-[#b58732] hover:from-[#e5bc69] hover:to-[#c59640] text-[#14110d] text-xs sm:text-sm font-extrabold flex items-center gap-1.5 shadow-lg cursor-pointer"
             >
               <Sparkles className="w-4 h-4" />
               <span>
@@ -417,7 +417,7 @@ export function BattleReportModal({
           </p>
         </div>
 
-        <p className="text-sm text-[#e3dccb] leading-relaxed bg-[#0d1015]/80 border border-white/10 rounded-xl p-3.5">
+        <p className="text-sm text-[#e3dccb] leading-relaxed bg-[#12100d]/80 border border-white/10 rounded-xl p-3.5">
           {tLoc(report.narrative, lang)}
         </p>
 
@@ -503,7 +503,7 @@ export function BattleReportModal({
 
         <button
           onClick={onClose}
-          className="w-full py-2.5 rounded-xl bg-[#d4a853] hover:bg-[#e1b866] text-[#11151d] font-bold text-sm transition cursor-pointer"
+          className="w-full py-2.5 rounded-xl bg-[#d4a853] hover:bg-[#e1b866] text-[#14110d] font-bold text-sm transition cursor-pointer"
         >
           {tLoc(UI_TEXT.close, lang)}
         </button>

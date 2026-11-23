@@ -1,10 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { City, MarchEvent, Season } from '../game/types.js';
-import type { VisualThemeId } from '../utils/visualTheme.js';
 
 interface MapAtmosphereCanvasProps {
   season: Season;
-  theme: VisualThemeId;
   cities: City[];
   recentMarches: MarchEvent[];
 }
@@ -42,7 +40,6 @@ interface SmokePuff {
 
 export function MapAtmosphereCanvas({
   season,
-  theme,
   cities,
   recentMarches,
 }: MapAtmosphereCanvasProps) {
@@ -72,7 +69,7 @@ export function MapAtmosphereCanvas({
       rx: 85 + (i % 3) * 34,
       ry: 28 + (i % 2) * 12,
       speed: 7 + (i % 3) * 4.5,
-      alpha: theme === 'ink' ? 0.1 : 0.085,
+      alpha: 0.1,
     }));
 
     // Initialize seasonal particles (Spring blossoms, Summer fireflies, Autumn leaves, Winter snow)
@@ -161,7 +158,7 @@ export function MapAtmosphereCanvas({
 
         // Sunlit Mist Cloud Bank
         const cGrad = ctx.createRadialGradient(cl.x, cl.y, cl.ry * 0.15, cl.x, cl.y, cl.rx);
-        const cloudRgb = theme === 'ink' ? '245, 232, 200' : theme === 'chrono' ? '165, 243, 252' : '226, 240, 255';
+        const cloudRgb = '245, 232, 200';
         cGrad.addColorStop(0, `rgba(${cloudRgb}, ${cl.alpha})`);
         cGrad.addColorStop(0.6, `rgba(${cloudRgb}, ${cl.alpha * 0.45})`);
         cGrad.addColorStop(1, `rgba(${cloudRgb}, 0)`);
@@ -266,10 +263,7 @@ export function MapAtmosphereCanvas({
         } else {
           // Summer Golden Fireflies / Sun Motes
           const glow = 0.45 + 0.55 * Math.sin(elapsed * 4.5 + p.phase);
-          ctx.fillStyle =
-            theme === 'chrono'
-              ? `rgba(34, 211, 238, ${p.alpha * glow})`
-              : `rgba(253, 224, 71, ${p.alpha * glow})`;
+          ctx.fillStyle = `rgba(253, 224, 71, ${p.alpha * glow})`;
           ctx.beginPath();
           ctx.arc(0, 0, p.size * (0.8 + glow * 0.4), 0, Math.PI * 2);
           ctx.fill();
@@ -282,7 +276,7 @@ export function MapAtmosphereCanvas({
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [season, theme]);
+  }, [season]);
 
   return (
     <canvas

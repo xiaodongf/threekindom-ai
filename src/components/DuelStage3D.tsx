@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import { getHeroDuelProfile } from '../game/heroDuelProfiles.js';
 import type { General, Language, TerrainType } from '../game/types.js';
 import { battleAudio } from '../utils/battleAudio.js';
-import type { VisualThemeId } from '../utils/visualTheme.js';
 import { buildDuelArena3D, getArenaLook } from './duel/duelArena3D.js';
 import {
   FINALE_DURATION,
@@ -27,13 +26,14 @@ import type {
   SampledDuelFrame,
 } from './duel/duelTypes.js';
 import { createDuelPostFx, createDuelVfx } from './duel/duelVfx3D.js';
+import { Art } from './ui/Art.js';
+import { bestArt } from '../utils/art.js';
 
 interface DuelStage3DProps {
   attacker: General;
   defender: General;
   terrain: TerrainType;
   isNight?: boolean;
-  theme: VisualThemeId;
   lang: Language;
   atkHp: number;
   defHp: number;
@@ -81,7 +81,6 @@ export function DuelStage3D({
   defender,
   terrain,
   isNight = false,
-  theme,
   lang,
   atkHp,
   defHp,
@@ -751,7 +750,7 @@ export function DuelStage3D({
   if (webglFailed) {
     return (
       <div className="relative w-full aspect-[21/10] rounded-xl overflow-hidden bg-slate-950 border border-amber-500/30 flex items-center justify-center">
-        <img
+        <Art
           src={stillUrl}
           alt="Duel Arena"
           className="absolute inset-0 w-full h-full object-cover opacity-35"
@@ -773,12 +772,11 @@ export function DuelStage3D({
   return (
     <div
       className="relative w-full aspect-[21/10] rounded-xl overflow-hidden bg-[#0b0e14] bg-cover bg-center border border-[#d4a853]/35 shadow-inner select-none cursor-grab active:cursor-grabbing"
-      style={{ backgroundImage: `linear-gradient(rgba(8,10,16,0.45), rgba(8,10,16,0.45)), url(${stillUrl})` }}
+      style={{ backgroundImage: `linear-gradient(rgba(8,10,16,0.45), rgba(8,10,16,0.45)), url(${bestArt(stillUrl)})` }}
     >
       <div
         ref={containerRef}
         className="w-full h-full"
-        style={{ filter: theme === 'ink' ? 'sepia(0.28) contrast(1.08) saturate(0.8)' : undefined }}
       />
 
       {/* Chrono-Insight scan frame */}
@@ -787,7 +785,7 @@ export function DuelStage3D({
           className="pointer-events-none absolute inset-0 border-2 border-cyan-400/70"
           style={{
             opacity: chronoTint * 0.75,
-            background: 'radial-gradient(circle at center, transparent 42%, rgba(8,145,178,0.34) 100%)',
+            background: 'radial-gradient(circle at center, transparent 42%, rgba(74,140,122,0.34) 100%)',
           }}
         />
       )}

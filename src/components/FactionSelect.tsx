@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Clock, Cpu, Languages, Palette, Shield, Sparkles, Swords, User } from 'lucide-react';
+import { Castle, Coins, Cpu, Languages, Shield, Swords } from 'lucide-react';
 import { createInitialCities, createInitialFactions } from '../game/data.js';
 import { createDefaultPlayerProfile } from '../game/engine.js';
 import { createInitialHeroes } from '../game/heroes.js';
@@ -11,13 +11,12 @@ import type {
   TravelerAvatarId,
 } from '../game/types.js';
 import { UI_TEXT, tLoc } from '../i18n/translations.js';
-import { VISUAL_THEMES, VISUAL_THEME_ORDER, type VisualThemeId } from '../utils/visualTheme.js';
 import { HeroAvatar } from './HeroAvatar.js';
+import { Seal } from './ui/Seal.js';
+import { Art } from './ui/Art.js';
 
 interface FactionSelectProps {
   lang: Language;
-  visualTheme: VisualThemeId;
-  onChangeVisualTheme: (theme: VisualThemeId) => void;
   onToggleLang: () => void;
   onSelectFaction: (faction: PlayableFactionId, profile: PlayerProfile) => void;
   onOpenSettings: () => void;
@@ -31,10 +30,14 @@ const FACTION_ART: Record<PlayableFactionId, string> = {
   wu: '/art/bg_wu.jpg',
 };
 
+const RULER_ID: Record<PlayableFactionId, string> = {
+  wei: 'caocao',
+  shu: 'liubei',
+  wu: 'sunquan',
+};
+
 export function FactionSelect({
   lang,
-  visualTheme,
-  onChangeVisualTheme,
   onToggleLang,
   onSelectFaction,
   onOpenSettings,
@@ -43,6 +46,7 @@ export function FactionSelect({
 }: FactionSelectProps) {
   const [avatar, setAvatar] = useState<TravelerAvatarId>('male');
   const [playerName, setPlayerName] = useState('');
+  const zh = lang === 'zh';
 
   const factions = createInitialFactions();
   const cities = Object.values(createInitialCities());
@@ -55,289 +59,226 @@ export function FactionSelect({
   const currentProfile = createDefaultPlayerProfile(avatar, playerName);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-4 py-7 relative overflow-hidden">
-      {/* Full-Bleed Studio-Painted Panoramic 214 AD Title Key Art Backdrop */}
-      <div className="pointer-events-none fixed inset-0 z-0">
-        <img
+    <div className="relative min-h-screen lg:h-screen flex flex-col overflow-hidden">
+      {/* Key art, kept quiet so the three leaders carry the screen */}
+      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <Art
           src="/art/bg_title_hero.jpg"
-          alt="Three Kingdoms Chrono Backdrop"
-          className="w-full h-full object-cover object-center opacity-45 scale-105 theme-art-grade"
+          alt=""
+          className="anim-art-drift w-full h-full object-cover object-center opacity-30 theme-art-grade"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/78 via-slate-950/60 to-slate-950/92" />
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/85 via-slate-950/55 to-slate-950/95" />
       </div>
 
-      {/* Top Bar */}
-      <div className="w-full max-w-6xl flex flex-wrap items-center justify-between gap-2.5 mb-5 z-10">
-        <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-cyan-200 font-semibold drop-shadow">
-          <Clock className="w-4 h-4 text-cyan-400" />
-          <span>
-            {lang === 'zh'
-              ? `时空跃迁：2026 → 214 AD · ${totalHeroes} 位传奇名将（${wanderingCount} 位在野）`
-              : `CHRONO-JUMP: 2026 → 214 AD · ${totalHeroes} LEGENDARY HEROES (${wanderingCount} WANDERING)`}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {/* 3-Way Player-Selectable Visual Art Theme Switcher */}
-          <div className="flex items-center gap-1 px-2 py-1 rounded-xl ink-panel">
-            <Palette className="w-3.5 h-3.5 text-amber-300 mr-0.5" />
-            {VISUAL_THEME_ORDER.map((tid) => {
-              const tMeta = VISUAL_THEMES[tid];
-              const active = visualTheme === tid;
-              return (
-                <button
-                  key={tid}
-                  type="button"
-                  onClick={() => onChangeVisualTheme(tid)}
-                  title={tLoc(tMeta.desc, lang)}
-                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer ${
-                    active
-                      ? 'bg-cyan-500/25 border border-cyan-300/70 text-white shadow'
-                      : 'text-slate-400 hover:text-slate-100 border border-transparent'
-                  }`}
-                >
-                  <span
-                    className="w-2.5 h-2.5 rounded-full border border-white/50"
-                    style={{ background: tMeta.previewGradient }}
-                  />
-                  <span>{tLoc(tMeta.shortName, lang)}</span>
-                </button>
-              );
-            })}
+      {/* Title strip */}
+      <header className="relative z-10 shrink-0 px-5 sm:px-8 pt-5 pb-3 flex flex-wrap items-end justify-between gap-4">
+        <div className="flex items-end gap-4">
+          <Seal char="三国" size={60} stamped className="mb-1" />
+          <div>
+            <h1 className="brush-heading font-brush text-4xl sm:text-5xl font-bold text-slate-50 leading-none">
+              {tLoc(UI_TEXT.appTitle, lang)}
+            </h1>
+            <p className="mt-3 text-[13px] text-slate-300 max-w-2xl leading-relaxed">
+              {zh
+                ? `公元 214 年，汉室倾颓。你自 2026 年而来，携后世之学与 ${totalHeroes} 位名将的史书档案（${wanderingCount} 位尚在野）——择一主而事之，改写天下。`
+                : `214 AD: the Han is falling. You arrive from 2026 with tomorrow's science and the histories of ${totalHeroes} heroes (${wanderingCount} still unsworn). Choose a lord, and rewrite the age.`}
+            </p>
           </div>
+        </div>
 
+        <div className="flex items-center gap-1.5">
           <button
             onClick={onOpenSettings}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl ink-panel hover:border-cyan-400/50 text-xs font-medium text-slate-200 transition cursor-pointer"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-md ink-panel text-xs text-slate-200 hover:border-amber-300/50 cursor-pointer"
           >
-            <Cpu className="w-3.5 h-3.5 text-cyan-400" />
-            <span>{tLoc(UI_TEXT.aiSettings, lang)}:</span>
-            <span className="text-cyan-300 uppercase font-semibold">{selectedProviderMode}</span>
+            <Cpu className="w-3.5 h-3.5 text-chrono-300" />
+            <span>{tLoc(UI_TEXT.aiSettings, lang)}</span>
+            <span className="text-chrono-200 uppercase font-semibold">{selectedProviderMode}</span>
             <span className="text-slate-400 hidden sm:inline">
-              ({configuredCount > 0 ? `${configuredCount} LLM` : 'Offline AI'})
+              ({configuredCount > 0 ? `${configuredCount} LLM` : zh ? '离线' : 'offline'})
             </span>
           </button>
           <button
             onClick={onToggleLang}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl ink-panel hover:border-cyan-400/50 text-xs font-semibold text-cyan-300 transition cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md ink-panel text-xs font-semibold text-slate-200 hover:border-amber-300/50 cursor-pointer"
           >
             <Languages className="w-3.5 h-3.5" />
             <span>{lang === 'en' ? '中文' : 'EN'}</span>
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Hero Title + Player Time-Traveler Identity Card */}
-      <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-12 gap-5 items-center mb-7 z-10">
-        <div className="lg:col-span-7 text-center lg:text-left">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-cyan-500/12 border border-cyan-400/35 text-cyan-200 text-xs tracking-wider uppercase mb-3">
-            <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-            <span>
-              {lang === 'zh'
-                ? '穿越三国 · 3D 沙盘 · 现代科技与群雄博弈'
-                : 'Modern 3D Grand Strategy · Time-Traveler × Hero RPG'}
-            </span>
-          </div>
-          <h1 className="font-display text-4xl sm:text-5xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-cyan-200 to-indigo-300 mb-3">
-            {tLoc(UI_TEXT.appTitle, lang)}
-          </h1>
-          <p className="text-sm text-slate-300 leading-relaxed">
-            {lang === 'zh'
-              ? '时空穿梭机将你送回公元 214 年汉末乱世。你携现代科技与 36 位名将（含吕布、周瑜、典韦、华佗、貂蝉等）的史书软肋档案辅佐明主——但逆天改命将触发硬核【蝴蝶效应】、【朝堂猜忌】、【敌国窃密】与【天下合纵】！'
-              : 'Your time machine drops you into 214 AD armed with 21st-century science and secret dossiers on 36 legendary heroes (including Lü Bu, Zhou Yu, Dian Wei, Hua Tuo & Diaochan). Rewrite history — while surviving Hardcore Butterfly Effect Decay, Court Suspicion, Rival Tech-Copying & Grand Coalitions!'}
-          </p>
-        </div>
-
-        {/* YOUR Player Time-Traveler Avatar Customization Card */}
-        <div className="lg:col-span-5 ink-panel gold-border-glow rounded-2xl p-4 flex items-center gap-4">
-          <div className="relative shrink-0">
-            <img
-              src={currentProfile.portrait}
-              alt="Player Chrono-Strategist"
-              className="w-24 h-24 rounded-2xl object-cover object-top border-2 border-cyan-400 shadow-[0_0_24px_rgba(56,189,248,0.3)]"
-            />
-            <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-cyan-500 text-slate-950 whitespace-nowrap shadow">
-              {lang === 'zh' ? '穿越者本人' : 'YOU · 2026'}
-            </span>
-          </div>
-          <div className="flex-1 min-w-0 space-y-2.5">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-300 uppercase tracking-wider">
-              <User className="w-3.5 h-3.5" />
-              <span>{lang === 'zh' ? '自定义你的穿越者形象' : 'Your Time-Traveler Identity'}</span>
-            </div>
-            <input
-              type="text"
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              placeholder={lang === 'zh' ? '输入你的名字（默认：天命奇士）' : 'Your name (default: Chrono-Strategist)'}
-              className="w-full rounded-xl bg-slate-950/80 border border-slate-700 focus:border-cyan-400 px-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none"
-            />
-            <div className="grid grid-cols-2 gap-2">
-              {(['male', 'female'] as TravelerAvatarId[]).map((av) => (
-                <button
-                  key={av}
-                  type="button"
-                  onClick={() => setAvatar(av)}
-                  className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg border text-xs font-semibold transition cursor-pointer ${
-                    avatar === av
-                      ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
-                      : 'bg-slate-900/70 border-slate-700 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <img
-                    src={av === 'female' ? '/portraits/traveler_female.jpg' : '/portraits/traveler_male.jpg'}
-                    alt={av}
-                    className="w-5 h-5 rounded-full object-cover object-top"
-                  />
-                  <span>
-                    {av === 'male'
-                      ? lang === 'zh'
-                        ? '男奇士'
-                        : 'Male'
-                      : lang === 'zh'
-                        ? '女奇士'
-                        : 'Female'}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Faction Cards with Expanded Hero Portraits */}
-      <div className="w-full max-w-6xl grid grid-cols-1 md:grid-cols-3 gap-5 z-10">
-        {(['wei', 'shu', 'wu'] as PlayableFactionId[]).map((fid) => {
+      {/* Three hanging scrolls: one lord each, painted large */}
+      <main className="relative z-10 flex-1 min-h-0 px-5 sm:px-8 py-3 grid grid-cols-1 md:grid-cols-3 gap-5">
+        {(['wei', 'shu', 'wu'] as PlayableFactionId[]).map((fid, idx) => {
           const faction = factions[fid];
           const ownedCities = cities.filter((c) => c.owner === fid);
           const totalTroops = ownedCities.reduce((sum, c) => sum + c.troops, 0);
           const factionHeroes = heroes.filter((h) => h.faction === fid);
-          const featured = factionHeroes.slice(0, 5);
+          const ruler = factionHeroes.find((h) => h.id === RULER_ID[fid]) ?? factionHeroes[0];
+          const featured = factionHeroes.filter((h) => h.id !== ruler?.id).slice(0, 4);
 
           return (
-            <div
+            <button
               key={fid}
-              className="ink-panel rounded-2xl overflow-hidden flex flex-col justify-between transition-all duration-300 hover:-translate-y-1 hover:border-cyan-400/65 shadow-2xl"
+              type="button"
+              onClick={() => onSelectFaction(fid, currentProfile)}
+              style={{ animationDelay: `${idx * 90}ms` }}
+              className="anim-rise group scroll-mount relative min-h-[540px] md:min-h-0 overflow-hidden text-left cursor-pointer hover:-translate-y-1 hover:border-amber-300/80 focus-visible:-translate-y-1"
             >
-              <div>
-                {/* Studio-Painted Panoramic Kingdom Vista Header */}
-                <div className="relative h-32 w-full overflow-hidden border-b border-slate-700/70">
-                  <img
-                    src={FACTION_ART[fid]}
-                    alt={tLoc(faction.name, lang)}
-                    className="w-full h-full object-cover object-center theme-art-grade transition-transform duration-500 hover:scale-105"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/35 to-transparent" />
-                  <div className="absolute inset-x-4 bottom-2.5 flex items-end justify-between">
-                    <div>
-                      <span
-                        className="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full mb-1 backdrop-blur-md"
-                        style={{
-                          backgroundColor: `${faction.color}38`,
-                          color: faction.accent,
-                          border: `1px solid ${faction.color}88`,
-                        }}
-                      >
-                        {tLoc(UI_TEXT.difficulty[faction.difficulty], lang)}
-                      </span>
-                      <h2 className="font-display text-2xl font-extrabold text-white drop-shadow-md leading-tight">
-                        {tLoc(faction.name, lang)}
-                      </h2>
-                      <p className="text-[11px] text-slate-200 drop-shadow">
-                        {tLoc(faction.rulerName, lang)} · {tLoc(faction.rulerTitle, lang)}
-                      </p>
-                    </div>
-                    <div
-                      className="w-11 h-11 rounded-xl flex items-center justify-center font-seal text-2xl font-black shadow-xl shrink-0"
-                      style={{
-                        background: `linear-gradient(135deg, ${faction.color}, ${faction.color}88)`,
-                        border: `1.5px solid ${faction.accent}`,
-                        color: '#fff',
-                      }}
-                    >
-                      {faction.bannerChar}
-                    </div>
-                  </div>
+              {/* The realm behind its lord */}
+              <Art
+                src={FACTION_ART[fid]}
+                alt=""
+                className="absolute inset-0 w-full h-full object-cover object-center opacity-40 theme-art-grade"
+              />
+
+              {/* The lord: face first, waist-up */}
+              {ruler && (
+                <Art
+                  src={ruler.portrait}
+                  alt={tLoc(ruler.name, lang)}
+                  className="absolute inset-x-0 top-0 w-full h-[66%] object-cover object-top theme-art-grade transition-transform duration-700 ease-out group-hover:scale-[1.035]"
+                  style={{
+                    maskImage: 'linear-gradient(to bottom, #000 58%, transparent 100%)',
+                    WebkitMaskImage: 'linear-gradient(to bottom, #000 58%, transparent 100%)',
+                  }}
+                />
+              )}
+              <div className="absolute inset-0 bg-gradient-to-b from-transparent via-slate-950/20 to-slate-950/95" />
+              <div
+                className="absolute inset-x-0 top-0 h-1.5"
+                style={{ background: faction.color }}
+              />
+
+              <div className="absolute top-4 left-4 flex items-start gap-2">
+                <Seal char={faction.bannerChar} size={50} color={faction.color} />
+              </div>
+              <span
+                className="absolute top-4 right-4 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-sm bg-slate-950/75 border"
+                style={{ color: faction.accent, borderColor: `${faction.color}aa` }}
+              >
+                {tLoc(UI_TEXT.difficulty[faction.difficulty], lang)}
+              </span>
+
+              {/* Name, promise and court */}
+              <div className="absolute inset-x-0 bottom-0 p-5 space-y-3">
+                <div>
+                  <h2 className="font-brush text-3xl font-bold text-slate-50 leading-tight drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]">
+                    {tLoc(faction.name, lang)}
+                  </h2>
+                  <p className="text-[13px] text-amber-200">
+                    {tLoc(faction.rulerName, lang)} · {tLoc(faction.rulerTitle, lang)}
+                  </p>
                 </div>
 
-                <div className="p-4 pb-0">
+                <div className="gold-rule" />
 
-                {/* 5 Iconic Portraits Strip */}
-                <div className="mb-4">
-                  <div className="text-[10px] uppercase tracking-wider text-cyan-300 mb-2 font-semibold">
-                    {lang === 'zh'
-                      ? `核心名将阵容（共 ${factionHeroes.length} 名）`
-                      : `Featured Roster (${factionHeroes.length} Heroes)`}
+                <div>
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-100 mb-0.5">
+                    <Shield className="w-3.5 h-3.5 text-amber-300" />
+                    <span>{tLoc(faction.traitName, lang)}</span>
                   </div>
-                  <div className="grid grid-cols-5 gap-1.5">
+                  <p className="text-xs text-slate-300 leading-relaxed line-clamp-2">
+                    {tLoc(faction.traitDesc, lang)}
+                  </p>
+                </div>
+
+                <div className="flex items-end justify-between gap-3">
+                  <div className="flex items-center gap-2">
                     {featured.map((h) => (
-                      <div key={h.id} className="flex flex-col items-center gap-1">
-                        <HeroAvatar hero={h} size="sm" />
-                        <span className="text-[9.5px] text-slate-300 font-medium truncate max-w-full">
+                      <div key={h.id} className="flex flex-col items-center gap-1 w-14">
+                        <HeroAvatar hero={h} size="sm" className="!w-12 !h-12" />
+                        <span className="text-[10px] text-slate-300 truncate max-w-full">
                           {tLoc(h.name, lang)}
                         </span>
                       </div>
                     ))}
+                    {factionHeroes.length - featured.length - 1 > 0 && (
+                      <span className="text-[11px] text-slate-400 self-center pb-4">
+                        +{factionHeroes.length - featured.length - 1}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-right text-[11px] text-slate-300 space-y-0.5 pb-4 shrink-0">
+                    <div className="flex items-center justify-end gap-1">
+                      <Castle className="w-3 h-3 text-amber-300" />
+                      <span className="font-semibold text-slate-50">{ownedCities.length}</span>
+                      <span>{tLoc(UI_TEXT.cities, lang)}</span>
+                    </div>
+                    <div className="flex items-center justify-end gap-1">
+                      <Swords className="w-3 h-3 text-amber-300" />
+                      <span className="font-semibold text-slate-50">
+                        {totalTroops.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-end gap-1">
+                      <Coins className="w-3 h-3 text-amber-300" />
+                      <span className="font-semibold text-slate-50">
+                        {faction.gold.toLocaleString()}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Starting Stats */}
-                <div className="grid grid-cols-3 gap-2 mb-4 text-center">
-                  <div className="rounded-xl bg-slate-950/75 border border-slate-800 py-1.5 px-1">
-                    <div className="text-[10px] uppercase text-slate-400">
-                      {tLoc(UI_TEXT.cities, lang)}
-                    </div>
-                    <div className="text-sm font-bold text-white">{ownedCities.length}</div>
-                  </div>
-                  <div className="rounded-xl bg-slate-950/75 border border-slate-800 py-1.5 px-1">
-                    <div className="text-[10px] uppercase text-slate-400">
-                      {tLoc(UI_TEXT.troops, lang)}
-                    </div>
-                    <div className="text-sm font-bold text-white">
-                      {(totalTroops / 1000).toFixed(1)}k
-                    </div>
-                  </div>
-                  <div className="rounded-xl bg-slate-950/75 border border-slate-800 py-1.5 px-1">
-                    <div className="text-[10px] uppercase text-slate-400">
-                      {tLoc(UI_TEXT.gold, lang)}
-                    </div>
-                    <div className="text-sm font-bold text-amber-300">{faction.gold}</div>
-                  </div>
-                </div>
-
-                {/* Trait */}
-                <div className="rounded-xl bg-slate-900/65 border border-slate-800 p-3 mb-4">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-cyan-300 mb-1">
-                    <Shield className="w-3.5 h-3.5" />
-                    <span>{tLoc(faction.traitName, lang)}</span>
-                  </div>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    {tLoc(faction.traitDesc, lang)}
-                  </p>
-                </div>
-                </div>
-              </div>
-
-              <div className="px-4 pb-4">
-                <button
-                  onClick={() => onSelectFaction(fid, currentProfile)}
-                  className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition cursor-pointer shadow-lg hover:brightness-110"
+                <div
+                  className="w-full py-2.5 rounded-md text-sm font-bold flex items-center justify-center gap-2 border transition group-hover:brightness-125"
                   style={{
-                    background: `linear-gradient(135deg, ${faction.color}, ${faction.color}bb)`,
-                    color: '#ffffff',
+                    background: `linear-gradient(180deg, ${faction.color}, color-mix(in srgb, ${faction.color} 62%, #000))`,
+                    borderColor: faction.accent,
+                    color: '#f5eddc',
                   }}
                 >
                   <Swords className="w-4 h-4" />
                   <span>
-                    {lang === 'zh'
-                      ? `投效${faction.rulerName.zh} · 穿越启程`
-                      : `Pledge to ${faction.rulerName.en}`}
+                    {zh ? `投效${faction.rulerName.zh}` : `Pledge to ${faction.rulerName.en}`}
                   </span>
-                </button>
+                </div>
               </div>
-            </div>
+            </button>
           );
         })}
-      </div>
+      </main>
+
+      {/* The traveller: the one modern thing on the page */}
+      <footer className="relative z-10 shrink-0 px-5 sm:px-8 pb-5 pt-2 flex flex-wrap items-center justify-center gap-3 text-xs">
+        <Art thumb
+          src={currentProfile.portrait}
+          alt=""
+          className="w-10 h-10 rounded-md object-cover object-top border border-chrono-400/80 shadow-[0_0_14px_rgba(34,211,238,0.3)]"
+        />
+        <span className="text-chrono-200 font-semibold tracking-wide">
+          {zh ? '穿越者 · 2026' : 'The traveller · 2026'}
+        </span>
+        <input
+          type="text"
+          value={playerName}
+          onChange={(e) => setPlayerName(e.target.value)}
+          placeholder={zh ? '你的名字（默认：天命奇士）' : 'Your name (default: Chrono-Strategist)'}
+          className="w-64 rounded-md bg-slate-950/80 border border-slate-600 focus:border-chrono-400 px-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none"
+        />
+        <div className="flex items-center rounded-md border border-slate-600 overflow-hidden">
+          {(['male', 'female'] as TravelerAvatarId[]).map((av) => (
+            <button
+              key={av}
+              type="button"
+              onClick={() => setAvatar(av)}
+              className={`flex items-center gap-1.5 py-1.5 px-2.5 font-semibold cursor-pointer ${
+                avatar === av
+                  ? 'bg-chrono-400/15 text-chrono-100'
+                  : 'bg-slate-950/70 text-slate-400 hover:text-slate-100'
+              }`}
+            >
+              <Art thumb
+                src={av === 'female' ? '/portraits/traveler_female.jpg' : '/portraits/traveler_male.jpg'}
+                alt=""
+                className="w-5 h-5 rounded-full object-cover object-top"
+              />
+              <span>{av === 'male' ? (zh ? '男' : 'Male') : zh ? '女' : 'Female'}</span>
+            </button>
+          ))}
+        </div>
+      </footer>
     </div>
   );
 }

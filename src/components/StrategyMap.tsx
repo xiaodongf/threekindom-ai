@@ -38,7 +38,6 @@ import type {
   PlayableFactionId,
 } from '../game/types.js';
 import { TERRAIN_TEXT, tLoc } from '../i18n/translations.js';
-import type { VisualThemeId } from '../utils/visualTheme.js';
 import { MapAtmosphereCanvas } from './MapAtmosphereCanvas.js';
 import { WebGLStrategyMap } from './WebGLStrategyMap.js';
 
@@ -57,7 +56,6 @@ export interface ActiveMapMarch {
 interface StrategyMapProps {
   state: GameState;
   lang: Language;
-  visualTheme?: VisualThemeId;
   selectedCityId: string | null;
   attackMode: boolean;
   activeMapMarch?: ActiveMapMarch | null;
@@ -78,31 +76,31 @@ const FACTION_PALETTE: Record<
   }
 > = {
   wei: {
-    fill: '#3b82f6',
-    roofLight: '#60a5fa',
-    roofDark: '#1d4ed8',
-    stroke: '#93c5fd',
+    fill: '#4c78a8',
+    roofLight: '#6a94c2',
+    roofDark: '#2d4a6c',
+    stroke: '#b9d0e6',
     badge: '魏',
   },
   shu: {
-    fill: '#10b981',
-    roofLight: '#34d399',
-    roofDark: '#047857',
-    stroke: '#6ee7b7',
+    fill: '#438554',
+    roofLight: '#5c9f6e',
+    roofDark: '#295436',
+    stroke: '#add4b6',
     badge: '蜀',
   },
   wu: {
-    fill: '#f43f5e',
-    roofLight: '#fb7185',
-    roofDark: '#be123c',
-    stroke: '#fda4af',
+    fill: '#c2432f',
+    roofLight: '#d4614c',
+    roofDark: '#84281c',
+    stroke: '#edb3a5',
     badge: '吴',
   },
   neutral: {
-    fill: '#94a3b8',
-    roofLight: '#cbd5e1',
-    roofDark: '#475569',
-    stroke: '#e2e8f0',
+    fill: '#968a73',
+    roofLight: '#c9bda2',
+    roofDark: '#4c4438',
+    stroke: '#d9cdb2',
     badge: '群',
   },
 };
@@ -111,9 +109,9 @@ const ELEVATION_STYLE: Record<
   (typeof ELEVATION_ZONES)[number]['kind'],
   { fill: string; opacity: number }
 > = {
-  alpine: { fill: '#64748b', opacity: 0.52 },
+  alpine: { fill: '#6e6453', opacity: 0.52 },
   plateau: { fill: '#7c6a52', opacity: 0.42 },
-  mountain: { fill: '#4b5563', opacity: 0.5 },
+  mountain: { fill: '#4c4438', opacity: 0.5 },
   basin: { fill: '#155e4b', opacity: 0.52 },
   plain: { fill: '#1e4d40', opacity: 0.48 },
   hills: { fill: '#16423c', opacity: 0.46 },
@@ -157,7 +155,6 @@ function evalQuadBezier(
 export function StrategyMap({
   state,
   lang,
-  visualTheme = 'cinema',
   selectedCityId,
   attackMode,
   activeMapMarch,
@@ -274,10 +271,10 @@ export function StrategyMap({
   const viewTransform = `translate(${MAP_WIDTH / 2 + pan.x}, ${MAP_HEIGHT / 2 + pan.y}) scale(${zoom}) translate(${-MAP_WIDTH / 2}, ${-MAP_HEIGHT / 2})`;
 
   return (
-    <div className="ink-panel rounded-2xl p-2.5 sm:p-3.5 relative overflow-hidden flex flex-col">
-      {/* Modern Glass Map Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2.5 text-xs">
-        <div className="flex flex-wrap items-center gap-3">
+    <div className="absolute inset-0 map-table overflow-hidden">
+      {/* Map tools float over the table; the map itself owns the space */}
+      <div className="absolute top-2.5 inset-x-3 z-30 flex flex-wrap items-start justify-between gap-2 text-xs pointer-events-none">
+        <div className="pointer-events-auto ink-panel rounded-md px-3 py-1.5 flex flex-wrap items-center gap-3">
           {(['wei', 'shu', 'wu', 'neutral'] as FactionId[]).map((fid) => {
             const count = cities.filter((c) => c.owner === fid).length;
             const label =
@@ -300,7 +297,7 @@ export function StrategyMap({
           })}
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-1.5">
           <button
             type="button"
             disabled={state.actionPoints < 1 || strikeableIds.size === 0}
@@ -426,12 +423,25 @@ export function StrategyMap({
       </div>
 
       {/* 3D Perspective Tabletop / Real-Time Three.js WebGL World Stage */}
-      <div className="relative w-full aspect-[1000/660] rounded-xl overflow-hidden border border-cyan-500/25 bg-[radial-gradient(ellipse_at_center,#0f2947_0%,#071526_70%,#040b16_100%)] shadow-[inset_0_0_50px_rgba(2,6,23,0.9)] map-3d-stage">
+      <div
+        className={
+          mapMode === 'webgl'
+            ? 'absolute inset-0'
+            : 'absolute inset-0 flex items-center justify-center px-4 pb-4 pt-14 [container-type:size]'
+        }
+      >
+      <div
+        className="relative map-3d-stage"
+        style={
+          mapMode === 'webgl'
+            ? { width: '100%', height: '100%' }
+            : { width: 'min(100cqw, calc(100cqh * 1000 / 660))', aspectRatio: '1000 / 660' }
+        }
+      >
         {mapMode === 'webgl' ? (
           <WebGLStrategyMap
             state={state}
             lang={lang}
-            theme={visualTheme}
             selectedCityId={selectedCityId}
             attackMode={attackMode}
             activeMapMarch={activeMapMarch}
@@ -442,19 +452,16 @@ export function StrategyMap({
           />
         ) : (
           <div
-            className={`w-full h-full map-3d-surface relative theme-art-grade ${
-              is3D ? 'rounded-xl overflow-hidden ring-1 ring-cyan-400/35 shadow-[0_24px_48px_rgba(2,6,23,0.85)]' : ''
-            }`}
+            className="w-full h-full map-3d-surface relative theme-art-grade scroll-mount overflow-hidden"
             style={{
               transform: is3D
-                ? 'rotateX(20deg) scale(0.95) translateY(-1%)'
+                ? 'rotateX(15deg) scale(0.9) translateY(-2.5%)'
                 : 'rotateX(0deg) scale(1)',
             }}
           >
             {/* 60fps Seasonal Weather, Volumetric Drifting Clouds & Battle Smoke Overlay */}
             <MapAtmosphereCanvas
               season={state.season}
-              theme={visualTheme}
               cities={cities}
               recentMarches={state.recentMarches}
             />
@@ -474,53 +481,53 @@ export function StrategyMap({
             <defs>
               {/* Luminous Modern Sapphire Ocean */}
               <radialGradient id="modernOcean" cx="76%" cy="52%" r="74%">
-                <stop offset="0%" stopColor="#12456e" />
-                <stop offset="45%" stopColor="#0c2f4f" />
-                <stop offset="100%" stopColor="#06172b" />
+                <stop offset="0%" stopColor="#2c5654" />
+                <stop offset="45%" stopColor="#1e3f41" />
+                <stop offset="100%" stopColor="#11282a" />
               </radialGradient>
 
               {/* Modern Physical Relief Land Gradient */}
               <linearGradient id="modernLandBase" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#3c4648" />
-                <stop offset="32%" stopColor="#2f413f" />
-                <stop offset="68%" stopColor="#213d3a" />
-                <stop offset="100%" stopColor="#193335" />
+                <stop offset="0%" stopColor="#6f6649" />
+                <stop offset="32%" stopColor="#5a6149" />
+                <stop offset="68%" stopColor="#485a41" />
+                <stop offset="100%" stopColor="#3c503d" />
               </linearGradient>
 
               {/* Vibrant 3D River Water Gradients */}
               <linearGradient id="yellowRiver3D" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor="#38bdf8" />
+                <stop offset="0%" stopColor="#7fb8b0" />
                 <stop offset="45%" stopColor="#5ec2b7" />
-                <stop offset="100%" stopColor="#38bdf8" />
+                <stop offset="100%" stopColor="#7fb8b0" />
               </linearGradient>
               <linearGradient id="yangtze3D" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor="#0284c7" />
-                <stop offset="50%" stopColor="#38bdf8" />
-                <stop offset="100%" stopColor="#7dd3fc" />
+                <stop offset="0%" stopColor="#3f7f7c" />
+                <stop offset="50%" stopColor="#7fb8b0" />
+                <stop offset="100%" stopColor="#a9d1c8" />
               </linearGradient>
 
               {/* Glossy 3D Lake Basin */}
               <radialGradient id="lake3D" cx="35%" cy="30%" r="70%">
-                <stop offset="0%" stopColor="#7dd3fc" />
-                <stop offset="55%" stopColor="#0ea5e9" />
-                <stop offset="100%" stopColor="#0369a1" />
+                <stop offset="0%" stopColor="#a9d1c8" />
+                <stop offset="55%" stopColor="#4f9791" />
+                <stop offset="100%" stopColor="#2f6562" />
               </radialGradient>
 
               {/* Dynamic Faction Influence Glows */}
               <radialGradient id="wash-wei" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.34" />
-                <stop offset="60%" stopColor="#2563eb" stopOpacity="0.14" />
-                <stop offset="100%" stopColor="#1d4ed8" stopOpacity="0" />
+                <stop offset="0%" stopColor="#4c78a8" stopOpacity="0.34" />
+                <stop offset="60%" stopColor="#3a5f8a" stopOpacity="0.14" />
+                <stop offset="100%" stopColor="#2d4a6c" stopOpacity="0" />
               </radialGradient>
               <radialGradient id="wash-shu" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#10b981" stopOpacity="0.34" />
-                <stop offset="60%" stopColor="#059669" stopOpacity="0.14" />
-                <stop offset="100%" stopColor="#047857" stopOpacity="0" />
+                <stop offset="0%" stopColor="#438554" stopOpacity="0.34" />
+                <stop offset="60%" stopColor="#346a43" stopOpacity="0.14" />
+                <stop offset="100%" stopColor="#295436" stopOpacity="0" />
               </radialGradient>
               <radialGradient id="wash-wu" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#f43f5e" stopOpacity="0.34" />
-                <stop offset="60%" stopColor="#e11d48" stopOpacity="0.14" />
-                <stop offset="100%" stopColor="#be123c" stopOpacity="0" />
+                <stop offset="0%" stopColor="#c2432f" stopOpacity="0.34" />
+                <stop offset="60%" stopColor="#a53323" stopOpacity="0.14" />
+                <stop offset="100%" stopColor="#84281c" stopOpacity="0" />
               </radialGradient>
 
               {/* Crisp 3D Terrain Micro-Hillshade */}
@@ -534,7 +541,7 @@ export function StrategyMap({
                 />
                 <feDiffuseLighting
                   in="noise"
-                  lightingColor="#e2f1ff"
+                  lightingColor="#f3e6c8"
                   surfaceScale="4.2"
                   diffuseConstant="1.15"
                   result="light"
@@ -586,7 +593,7 @@ export function StrategyMap({
                 markerHeight="6.5"
                 orient="auto-start-reverse"
               >
-                <path d="M 0 1 L 10 5 L 0 9 z" fill="#fb923c" />
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#d1864a" />
               </marker>
               <marker
                 id="arrowReinforce3D"
@@ -597,7 +604,7 @@ export function StrategyMap({
                 markerHeight="6.5"
                 orient="auto-start-reverse"
               >
-                <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#7fb8b0" />
               </marker>
             </defs>
 
@@ -615,15 +622,15 @@ export function StrategyMap({
               <g fill="none" strokeLinejoin="round" strokeLinecap="round">
                 {LAND_PATHS.map((d, i) => (
                   <g key={`shelf3d-${i}`}>
-                    <path d={d} stroke="#0ea5e9" strokeWidth="34" strokeOpacity="0.1" />
-                    <path d={d} stroke="#38bdf8" strokeWidth="16" strokeOpacity="0.18" />
-                    <path d={d} stroke="#7dd3fc" strokeWidth="5.5" strokeOpacity="0.26" />
+                    <path d={d} stroke="#4f9791" strokeWidth="34" strokeOpacity="0.1" />
+                    <path d={d} stroke="#7fb8b0" strokeWidth="16" strokeOpacity="0.18" />
+                    <path d={d} stroke="#a9d1c8" strokeWidth="5.5" strokeOpacity="0.26" />
                   </g>
                 ))}
               </g>
 
               {/* Subtle Holographic Lat/Lon Grid over Ocean */}
-              <g stroke="#38bdf8" strokeOpacity="0.09" strokeWidth="0.8" strokeDasharray="3 6">
+              <g stroke="#7fb8b0" strokeOpacity="0.09" strokeWidth="0.8" strokeDasharray="3 6">
                 {GRATICULE_LONS.map((g) => (
                   <line key={g.label} x1={g.x} y1={0} x2={g.x} y2={MAP_HEIGHT} />
                 ))}
@@ -649,7 +656,7 @@ export function StrategyMap({
                 {/* Upper Coastal Cliff Wall */}
                 <g transform="translate(0, 4.5)">
                   {LAND_PATHS.map((d, i) => (
-                    <path key={`cliff1-${i}`} d={d} fill="#1f3142" stroke="#132231" strokeWidth="1" />
+                    <path key={`cliff1-${i}`} d={d} fill="#2b2620" stroke="#231f1a" strokeWidth="1" />
                   ))}
                 </g>
               </g>
@@ -661,7 +668,7 @@ export function StrategyMap({
                     key={`land3d-${i}`}
                     d={d}
                     fill="url(#modernLandBase)"
-                    stroke="#67e8f9"
+                    stroke="#8fc2b0"
                     strokeOpacity="0.32"
                     strokeWidth="1.2"
                   />
@@ -713,7 +720,7 @@ export function StrategyMap({
                 )}
 
                 {/* Topographic Contour Lines */}
-                <g fill="none" stroke="#94a3b8" strokeOpacity="0.16" strokeWidth="0.9" pointerEvents="none">
+                <g fill="none" stroke="#968a73" strokeOpacity="0.16" strokeWidth="0.9" pointerEvents="none">
                   {CONTOUR_PATHS.map((d, idx) => (
                     <path key={`c3d-${idx}`} d={d} />
                   ))}
@@ -731,12 +738,12 @@ export function StrategyMap({
                       <g filter="url(#ridgeBlur3D)">
                         <path
                           d={ridge.litPath}
-                          fill={ridge.alpine ? '#cbd5e1' : '#809190'}
+                          fill={ridge.alpine ? '#c9bda2' : '#809190'}
                           fillOpacity={ridge.alpine ? 0.58 : 0.42}
                         />
                         <path
                           d={ridge.darkPath}
-                          fill={ridge.alpine ? '#1e293b' : '#131d26'}
+                          fill={ridge.alpine ? '#231f1a' : '#1c1813'}
                           fillOpacity={ridge.alpine ? 0.72 : 0.62}
                         />
                       </g>
@@ -749,8 +756,8 @@ export function StrategyMap({
                             stroke={
                               sp.side === 'lit'
                                 ? ridge.alpine
-                                  ? '#f1f5f9'
-                                  : '#94a3b8'
+                                  ? '#f0e8d6'
+                                  : '#968a73'
                                 : '#0b121c'
                             }
                             strokeOpacity={sp.side === 'lit' ? 0.44 : 0.48}
@@ -762,7 +769,7 @@ export function StrategyMap({
                       <path
                         d={ridge.crestPath}
                         fill="none"
-                        stroke={ridge.alpine ? '#f8fafc' : '#cbd5e1'}
+                        stroke={ridge.alpine ? '#f5eddc' : '#c9bda2'}
                         strokeOpacity={ridge.alpine ? 0.78 : 0.42}
                         strokeWidth={ridge.alpine ? 2.1 : 1.3}
                         strokeLinecap="round"
@@ -785,7 +792,7 @@ export function StrategyMap({
                         <path
                           d={river.d}
                           transform="translate(0, -1)"
-                          stroke="#040c18"
+                          stroke="#0d0b09"
                           strokeOpacity="0.72"
                           strokeWidth={river.width + 3.2}
                         />
@@ -793,7 +800,7 @@ export function StrategyMap({
                         <path
                           d={river.d}
                           transform="translate(0, 1.4)"
-                          stroke="#67e8f9"
+                          stroke="#8fc2b0"
                           strokeOpacity="0.22"
                           strokeWidth={river.width + 1.4}
                         />
@@ -807,7 +814,7 @@ export function StrategyMap({
                         {/* Animated Flowing Current Shimmer */}
                         <path
                           d={river.d}
-                          stroke={isYellow ? '#fef3c7' : '#e0f2fe'}
+                          stroke={isYellow ? '#f3e6c3' : '#e6efe6'}
                           strokeOpacity="0.52"
                           strokeWidth={Math.max(0.9, river.width * 0.34)}
                           strokeDasharray="6 12"
@@ -825,14 +832,14 @@ export function StrategyMap({
                       <path
                         d={lake.d}
                         transform="translate(0, -1.2)"
-                        fill="#040c18"
+                        fill="#0d0b09"
                         fillOpacity="0.6"
                       />
                       <path
                         d={lake.d}
                         fill="url(#lake3D)"
                         fillOpacity="0.9"
-                        stroke="#bae6fd"
+                        stroke="#cfe3da"
                         strokeOpacity="0.55"
                         strokeWidth="1.1"
                       />
@@ -847,7 +854,7 @@ export function StrategyMap({
                   <path
                     key={`rim3d-${i}`}
                     d={d}
-                    stroke="#bae6fd"
+                    stroke="#cfe3da"
                     strokeOpacity="0.38"
                     strokeWidth="1.1"
                   />
@@ -859,10 +866,10 @@ export function StrategyMap({
                 <g pointerEvents="none">
                   {GEO_LABELS.map((lbl, i) => {
                     const styleByKind = {
-                      sea: { fill: '#7dd3fc', opacity: 0.48, size: lang === 'zh' ? 13 : 10, ls: '2.5' },
-                      region: { fill: '#e2e8f0', opacity: 0.24, size: lang === 'zh' ? 14 : 11, ls: '2' },
-                      mountain: { fill: '#cbd5e1', opacity: 0.54, size: lang === 'zh' ? 10.5 : 9, ls: '1' },
-                      river: { fill: '#bae6fd', opacity: 0.72, size: lang === 'zh' ? 10 : 8.5, ls: '1' },
+                      sea: { fill: '#a9d1c8', opacity: 0.48, size: lang === 'zh' ? 13 : 10, ls: '2.5' },
+                      region: { fill: '#d9cdb2', opacity: 0.24, size: lang === 'zh' ? 14 : 11, ls: '2' },
+                      mountain: { fill: '#c9bda2', opacity: 0.54, size: lang === 'zh' ? 10.5 : 9, ls: '1' },
+                      river: { fill: '#cfe3da', opacity: 0.72, size: lang === 'zh' ? 10 : 8.5, ls: '1' },
                     }[lbl.kind];
 
                     return (
@@ -893,7 +900,7 @@ export function StrategyMap({
                     <g key={`road3d-${a.id}-${b.id}`}>
                       <path
                         d={d}
-                        stroke="#020617"
+                        stroke="#0a0806"
                         strokeOpacity={isAdjacentToSelected ? 0.75 : 0.45}
                         strokeWidth={isAdjacentToSelected ? 4.6 : 2.8}
                       />
@@ -901,10 +908,10 @@ export function StrategyMap({
                         d={d}
                         stroke={
                           isAdjacentToSelected
-                            ? '#38bdf8'
+                            ? '#7fb8b0'
                             : isRiverRoute
-                              ? '#7dd3fc'
-                              : '#cbd5e1'
+                              ? '#a9d1c8'
+                              : '#c9bda2'
                         }
                         strokeOpacity={isAdjacentToSelected ? 0.95 : 0.36}
                         strokeWidth={isAdjacentToSelected ? 2.2 : 1.25}
@@ -934,16 +941,16 @@ export function StrategyMap({
 
                   const strokeColor =
                     march.type === 'reinforce'
-                      ? '#38bdf8'
+                      ? '#7fb8b0'
                       : march.type === 'river_strike'
-                        ? '#22d3ee'
+                        ? '#68a895'
                         : march.type === 'raid'
-                          ? '#facc15'
+                          ? '#e0b53a'
                           : march.type === 'bombard'
-                            ? '#f43f5e'
+                            ? '#c2432f'
                             : march.type === 'discord'
-                              ? '#e879f9'
-                              : '#fb923c';
+                              ? '#c49bc8'
+                              : '#d1864a';
 
                   const showLine = from.id !== to.id;
                   return (
@@ -1013,15 +1020,15 @@ export function StrategyMap({
                           cy="5"
                           rx="34"
                           ry="21"
-                          fill="#f43f5e"
+                          fill="#c2432f"
                           fillOpacity="0.16"
-                          stroke="#fb7185"
+                          stroke="#d4614c"
                           strokeWidth="2.5"
                           className="animate-city-ring"
                         />
-                        <line x1="-38" y1="5" x2="-24" y2="5" stroke="#fb7185" strokeWidth="2" />
-                        <line x1="24" y1="5" x2="38" y2="5" stroke="#fb7185" strokeWidth="2" />
-                        <line x1="0" y1="-22" x2="0" y2="-13" stroke="#fb7185" strokeWidth="2" />
+                        <line x1="-38" y1="5" x2="-24" y2="5" stroke="#d4614c" strokeWidth="2" />
+                        <line x1="24" y1="5" x2="38" y2="5" stroke="#d4614c" strokeWidth="2" />
+                        <line x1="0" y1="-22" x2="0" y2="-13" stroke="#d4614c" strokeWidth="2" />
                       </g>
                     )}
 
@@ -1033,7 +1040,7 @@ export function StrategyMap({
                         rx="30"
                         ry="17"
                         fill="none"
-                        stroke="#38bdf8"
+                        stroke="#7fb8b0"
                         strokeWidth="2.4"
                         className="animate-city-ring"
                       />
@@ -1045,7 +1052,7 @@ export function StrategyMap({
                         rx="26"
                         ry="15"
                         fill="none"
-                        stroke={city.owner === state.playerFaction ? '#38bdf8' : '#fb923c'}
+                        stroke={city.owner === state.playerFaction ? '#7fb8b0' : '#d1864a'}
                         strokeWidth="2"
                         strokeDasharray="5 3"
                         strokeOpacity="0.9"
@@ -1053,7 +1060,7 @@ export function StrategyMap({
                     )}
 
                     {/* Ambient Cast Ground Shadow */}
-                    <ellipse cx="4" cy="9" rx={city.isCapital ? 24 : 20} ry={city.isCapital ? 12 : 10} fill="#020617" fillOpacity="0.68" />
+                    <ellipse cx="4" cy="9" rx={city.isCapital ? 24 : 20} ry={city.isCapital ? 12 : 10} fill="#0a0806" fillOpacity="0.68" />
 
                     {/* 3D Isometric Fortress / Palace Model */}
                     <g
@@ -1064,34 +1071,34 @@ export function StrategyMap({
                       {/* 3D Stepped Isometric Stone Plinth */}
                       <polygon
                         points="-18,4 0,13 18,4 0,-5"
-                        fill="#334155"
+                        fill="#352f27"
                         stroke={palette.stroke}
                         strokeOpacity="0.55"
                         strokeWidth="0.9"
                       />
                       {/* Left Sunlit Plinth Wall */}
-                      <polygon points="-18,4 0,13 0,18 -18,9" fill="#64748b" />
+                      <polygon points="-18,4 0,13 0,18 -18,9" fill="#6e6453" />
                       {/* Right Shadowed Plinth Wall */}
-                      <polygon points="0,13 18,4 18,9 0,18" fill="#1e293b" />
+                      <polygon points="0,13 18,4 18,9 0,18" fill="#231f1a" />
 
                       {/* Main Fortress Inner Wall Box (3D Extruded) */}
                       {/* Left sunlit wall */}
-                      <polygon points="-13,1 0,8 0,-2 -13,-9" fill="#cbd5e1" />
+                      <polygon points="-13,1 0,8 0,-2 -13,-9" fill="#c9bda2" />
                       {/* Right shadowed wall */}
-                      <polygon points="0,8 13,1 13,-9 0,-2" fill="#475569" />
+                      <polygon points="0,8 13,1 13,-9 0,-2" fill="#4c4438" />
                       {/* Top courtyard floor */}
-                      <polygon points="-13,-9 0,-2 13,-9 0,-16" fill="#94a3b8" />
+                      <polygon points="-13,-9 0,-2 13,-9 0,-16" fill="#968a73" />
                       {/* Arched dark city gate on left sunlit face */}
-                      <path d="M -8.5 3.2 L -8.5 -0.8 Q -6.2 -2.2 -4 0.5 L -4 5.5 Z" fill="#0f172a" />
+                      <path d="M -8.5 3.2 L -8.5 -0.8 Q -6.2 -2.2 -4 0.5 L -4 5.5 Z" fill="#171411" />
 
                       {/* Extra 3D Corner Watchtowers for High-Defense Fortresses (Def >= 4) */}
                       {city.defense >= 4 && (
                         <g>
-                          <polygon points="-17,-4 -13,-2 -13,-11 -17,-13" fill="#e2e8f0" />
-                          <polygon points="-13,-2 -10,-4 -10,-13 -13,-11" fill="#475569" />
+                          <polygon points="-17,-4 -13,-2 -13,-11 -17,-13" fill="#d9cdb2" />
+                          <polygon points="-13,-2 -10,-4 -10,-13 -13,-11" fill="#4c4438" />
                           <polygon points="-18,-12 -13.5,-16.5 -9,-12 -13.5,-10" fill={palette.roofLight} />
-                          <polygon points="10,-4 13,-2 13,-11 10,-13" fill="#cbd5e1" />
-                          <polygon points="13,-2 17,-4 17,-13 13,-11" fill="#334155" />
+                          <polygon points="10,-4 13,-2 13,-11 10,-13" fill="#c9bda2" />
+                          <polygon points="13,-2 17,-4 17,-13 13,-11" fill="#352f27" />
                           <polygon points="9,-12 13.5,-16.5 18,-12 13.5,-10" fill={palette.roofDark} />
                         </g>
                       )}
@@ -1100,29 +1107,29 @@ export function StrategyMap({
                       {city.isCapital ? (
                         <g>
                           {/* Lower Palace Tier Roof */}
-                          <polygon points="-16,-8 0,0 0,-12 -15,-14" fill={palette.roofLight} stroke="#f8fafc" strokeOpacity="0.35" strokeWidth="0.5" />
+                          <polygon points="-16,-8 0,0 0,-12 -15,-14" fill={palette.roofLight} stroke="#f5eddc" strokeOpacity="0.35" strokeWidth="0.5" />
                           <polygon points="0,0 16,-8 15,-14 0,-12" fill={palette.roofDark} />
                           {/* Upper Imperial Pagoda Body */}
-                          <polygon points="-8,-13 0,-9 0,-17 -8,-21" fill="#f1f5f9" />
-                          <polygon points="0,-9 8,-13 8,-21 0,-17" fill="#64748b" />
+                          <polygon points="-8,-13 0,-9 0,-17 -8,-21" fill="#f0e8d6" />
+                          <polygon points="0,-9 8,-13 8,-21 0,-17" fill="#6e6453" />
                           {/* Upper Swept Golden-Trimmed Eaves */}
-                          <polygon points="-12,-19 0,-13 0,-26" fill={palette.roofLight} stroke="#fef08a" strokeWidth="0.7" />
-                          <polygon points="0,-13 12,-19 0,-26" fill={palette.roofDark} stroke="#fef08a" strokeOpacity="0.6" strokeWidth="0.6" />
+                          <polygon points="-12,-19 0,-13 0,-26" fill={palette.roofLight} stroke="#f2dc8c" strokeWidth="0.7" />
+                          <polygon points="0,-13 12,-19 0,-26" fill={palette.roofDark} stroke="#f2dc8c" strokeOpacity="0.6" strokeWidth="0.6" />
                           {/* Golden Imperial Spire */}
-                          <circle cx="0" cy="-27" r="2.2" fill="#facc15" />
+                          <circle cx="0" cy="-27" r="2.2" fill="#e0b53a" />
                         </g>
                       ) : (
                         <g>
                           {/* Citadel Gatehouse Swept Roof */}
-                          <polygon points="-15,-9 0,-2 0,-17" fill={palette.roofLight} stroke="#f8fafc" strokeOpacity="0.4" strokeWidth="0.6" />
+                          <polygon points="-15,-9 0,-2 0,-17" fill={palette.roofLight} stroke="#f5eddc" strokeOpacity="0.4" strokeWidth="0.6" />
                           <polygon points="0,-2 15,-9 0,-17" fill={palette.roofDark} />
-                          <line x1="-5" y1="-13.5" x2="5" y2="-13.5" stroke="#fef08a" strokeWidth="1.2" strokeLinecap="round" />
+                          <line x1="-5" y1="-13.5" x2="5" y2="-13.5" stroke="#f2dc8c" strokeWidth="1.2" strokeLinecap="round" />
                         </g>
                       )}
 
                       {/* Fluttering Faction Pennant */}
                       <g transform={`translate(${city.isCapital ? 14 : 13}, ${city.isCapital ? -24 : -18})`}>
-                        <line x1="0" y1="0" x2="0" y2="16" stroke="#e2e8f0" strokeWidth="1.2" />
+                        <line x1="0" y1="0" x2="0" y2="16" stroke="#d9cdb2" strokeWidth="1.2" />
                         <path
                           d="M 0 0 L 13 2.5 L 10.5 5.8 L 13 9 L 0 10 Z"
                           fill={palette.fill}
@@ -1158,7 +1165,7 @@ export function StrategyMap({
                             }}
                             className="cursor-pointer"
                           >
-                            <circle r="11" fill="#090d16" stroke="#38bdf8" strokeWidth="1.4" />
+                            <circle r="11" fill="#090d16" stroke="#7fb8b0" strokeWidth="1.4" />
                             <image
                               href={gen.portrait}
                               x="-10"
@@ -1187,12 +1194,12 @@ export function StrategyMap({
                           <circle
                             r="12.5"
                             fill="none"
-                            stroke="#facc15"
+                            stroke="#e0b53a"
                             strokeWidth="1.5"
                             strokeOpacity="0.9"
                             className="animate-city-ring"
                           />
-                          <circle r="10" fill="#171207" stroke="#facc15" strokeWidth="1.5" />
+                          <circle r="10" fill="#171207" stroke="#e0b53a" strokeWidth="1.5" />
                           <image
                             href={wanderingHere[0].portrait}
                             x="-9"
@@ -1216,14 +1223,14 @@ export function StrategyMap({
                         rx="5"
                         fill="#090f1d"
                         fillOpacity="0.9"
-                        stroke={isSelected ? '#38bdf8' : palette.stroke}
+                        stroke={isSelected ? '#7fb8b0' : palette.stroke}
                         strokeOpacity={isSelected ? 0.95 : 0.45}
                         strokeWidth="1"
                       />
                       <text
                         y="2.4"
                         textAnchor="middle"
-                        fill="#f8fafc"
+                        fill="#f5eddc"
                         fontSize="10.2"
                         fontWeight="700"
                         className="pointer-events-none"
@@ -1241,7 +1248,7 @@ export function StrategyMap({
                         rx="6.2"
                         fill={palette.fill}
                         fillOpacity="0.95"
-                        stroke="#020617"
+                        stroke="#0a0806"
                         strokeWidth="0.7"
                       />
                       <text
@@ -1271,13 +1278,13 @@ export function StrategyMap({
                 const pal = FACTION_PALETTE[activeMapMarch.faction];
                 const accentColor =
                   activeMapMarch.mode === 'river_strike'
-                    ? '#22d3ee'
+                    ? '#68a895'
                     : activeMapMarch.mode === 'raid'
-                      ? '#facc15'
+                      ? '#e0b53a'
                       : activeMapMarch.mode === 'bombard'
-                        ? '#f97316'
+                        ? '#b96c32'
                         : activeMapMarch.mode === 'discord'
-                          ? '#e879f9'
+                          ? '#c49bc8'
                           : pal.fill;
 
                 // Ease-in-out curve for crisp marching momentum
@@ -1334,15 +1341,15 @@ export function StrategyMap({
                           {isRiverStrike ? (
                             <polygon
                               points="17,0 -9,-8 -5,0 -9,8"
-                              fill="#22d3ee"
+                              fill="#68a895"
                               stroke="#ffffff"
                               strokeWidth="1.2"
                             />
                           ) : (
                             <polygon
                               points="18,0 4,-7 7,0 4,7"
-                              fill="#fde047"
-                              stroke="#0f172a"
+                              fill="#ebc95c"
+                              stroke="#171411"
                               strokeWidth="0.9"
                             />
                           )}
@@ -1351,7 +1358,7 @@ export function StrategyMap({
                         <circle
                           r={isFlank ? 10 : 12.5}
                           fill={pal.fill}
-                          stroke="#fef08a"
+                          stroke="#f2dc8c"
                           strokeWidth="2"
                         />
                         {!isFlank && activeMapMarch.heroPortrait ? (
@@ -1392,16 +1399,16 @@ export function StrategyMap({
                         <circle
                           r={Math.max(8, 52 * (1 - moveT))}
                           fill="none"
-                          stroke="#e879f9"
+                          stroke="#c49bc8"
                           strokeWidth="3"
                           strokeDasharray="6 4"
                           strokeOpacity={0.9 - moveT * 0.3}
                         />
                         <circle
                           r={Math.max(4, 32 * (1 - moveT))}
-                          fill="#a855f7"
+                          fill="#8d5a94"
                           fillOpacity="0.22"
-                          stroke="#f0abfc"
+                          stroke="#dcc3de"
                           strokeWidth="2"
                         />
                       </g>
@@ -1414,7 +1421,7 @@ export function StrategyMap({
                           r={12 + impactT * 42}
                           fill={accentColor}
                           fillOpacity={(1 - impactT) * 0.32}
-                          stroke="#fef08a"
+                          stroke="#f2dc8c"
                           strokeWidth={3.5 * (1 - impactT) + 0.8}
                           strokeOpacity={1 - impactT}
                         />
@@ -1440,7 +1447,7 @@ export function StrategyMap({
                   x={g.x}
                   y={14}
                   textAnchor="middle"
-                  fill="#38bdf8"
+                  fill="#7fb8b0"
                   fillOpacity="0.45"
                   fontSize="8.5"
                   fontFamily="monospace"
@@ -1454,7 +1461,7 @@ export function StrategyMap({
                   x={18}
                   y={g.y + 3}
                   textAnchor="start"
-                  fill="#38bdf8"
+                  fill="#7fb8b0"
                   fillOpacity="0.45"
                   fontSize="8.5"
                   fontFamily="monospace"
@@ -1465,24 +1472,24 @@ export function StrategyMap({
 
               {/* Modern Cyan Compass Rose (tucked cleanly inside frame) */}
               <g transform="translate(88, 592)" opacity="0.86">
-                <circle r="20" fill="#09111f" fillOpacity="0.85" stroke="#38bdf8" strokeOpacity="0.5" strokeWidth="1.1" />
-                <polygon points="0,-14 3.8,-2 0,-4.5 -3.8,-2" fill="#38bdf8" />
-                <polygon points="0,14 3.8,2 0,4.5 -3.8,2" fill="#64748b" />
-                <polygon points="14,0 2,3.8 4.5,0 2,-3.8" fill="#64748b" />
-                <polygon points="-14,0 -2,3.8 -4.5,0 -2,-3.8" fill="#64748b" />
-                <text y="-23" textAnchor="middle" fill="#bae6fd" fontSize="8.5" fontWeight="700">
+                <circle r="20" fill="#14110d" fillOpacity="0.85" stroke="#7fb8b0" strokeOpacity="0.5" strokeWidth="1.1" />
+                <polygon points="0,-14 3.8,-2 0,-4.5 -3.8,-2" fill="#7fb8b0" />
+                <polygon points="0,14 3.8,2 0,4.5 -3.8,2" fill="#6e6453" />
+                <polygon points="14,0 2,3.8 4.5,0 2,-3.8" fill="#6e6453" />
+                <polygon points="-14,0 -2,3.8 -4.5,0 -2,-3.8" fill="#6e6453" />
+                <text y="-23" textAnchor="middle" fill="#cfe3da" fontSize="8.5" fontWeight="700">
                   {lang === 'zh' ? '北' : 'N'}
                 </text>
               </g>
 
               {/* Scale Bar */}
               <g transform="translate(124, 604)" opacity="0.86">
-                <rect x="0" y="-12" width="112" height="20" rx="5" fill="#09111f" fillOpacity="0.82" />
-                <line x1="10" y1="0" x2="98" y2="0" stroke="#7dd3fc" strokeWidth="1.5" />
-                <line x1="10" y1="-4" x2="10" y2="3" stroke="#7dd3fc" strokeWidth="1.2" />
-                <line x1="54" y1="-3" x2="54" y2="3" stroke="#7dd3fc" strokeWidth="1" />
-                <line x1="98" y1="-4" x2="98" y2="3" stroke="#7dd3fc" strokeWidth="1.2" />
-                <text x="54" y="-4" textAnchor="middle" fill="#e0f2fe" fontSize="8" fontFamily="monospace">
+                <rect x="0" y="-12" width="112" height="20" rx="5" fill="#14110d" fillOpacity="0.82" />
+                <line x1="10" y1="0" x2="98" y2="0" stroke="#a9d1c8" strokeWidth="1.5" />
+                <line x1="10" y1="-4" x2="10" y2="3" stroke="#a9d1c8" strokeWidth="1.2" />
+                <line x1="54" y1="-3" x2="54" y2="3" stroke="#a9d1c8" strokeWidth="1" />
+                <line x1="98" y1="-4" x2="98" y2="3" stroke="#a9d1c8" strokeWidth="1.2" />
+                <text x="54" y="-4" textAnchor="middle" fill="#e6efe6" fontSize="8" fontFamily="monospace">
                   {lang === 'zh' ? '500 里 · 250 km' : '250 km · 500 Li'}
                 </text>
               </g>
@@ -1497,7 +1504,7 @@ export function StrategyMap({
             className={`pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 rounded-full px-4 py-1.5 border shadow-2xl backdrop-blur-md flex items-center gap-2 text-xs font-bold tracking-wide ${
               activeMapMarch.isPlayerDefending
                 ? 'bg-rose-950/92 border-rose-400/75 text-rose-100 shadow-[0_0_24px_rgba(244,63,94,0.45)]'
-                : 'bg-slate-950/92 border-cyan-400/70 text-cyan-100 shadow-[0_0_24px_rgba(56,189,248,0.4)]'
+                : 'bg-slate-950/92 border-cyan-400/70 text-cyan-100 shadow-[0_0_24px_rgba(208,167,79,0.4)]'
             }`}
           >
             <Swords className={`w-3.5 h-3.5 ${activeMapMarch.isPlayerDefending ? 'text-rose-400' : 'text-amber-300'} animate-pulse`} />
@@ -1545,7 +1552,7 @@ export function StrategyMap({
 
         {/* Zoom / 3D Hint */}
         {mapMode !== 'webgl' && zoom === 1 && (
-          <div className="pointer-events-none absolute bottom-2.5 left-1/2 -translate-x-1/2 text-[10px] text-slate-200/80 bg-slate-950/75 px-3 py-1 rounded-full border border-cyan-400/25 flex items-center gap-1.5 backdrop-blur-md">
+          <div className="pointer-events-none absolute bottom-2.5 right-3 text-[10px] text-slate-200/80 bg-slate-950/75 px-3 py-1 rounded-full border border-amber-400/25 flex items-center gap-1.5">
             <Compass className="w-3 h-3 text-cyan-400" />
             <span>
               {lang === 'zh'
@@ -1554,6 +1561,7 @@ export function StrategyMap({
             </span>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

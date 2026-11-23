@@ -3,6 +3,7 @@ import { Loader2, ScrollText, Send, Sparkles } from 'lucide-react';
 import type { AIRequestConfig, GameState, Language } from '../game/types.js';
 import { UI_TEXT, tLoc } from '../i18n/translations.js';
 import { requestAdvisorCounsel } from '../services/aiClient.js';
+import { Art } from './ui/Art.js';
 
 interface AdvisorMessage {
   id: string;
@@ -85,7 +86,7 @@ export function AdvisorPanel({ state, lang, aiConfig }: AdvisorPanelProps) {
   ];
 
   return (
-    <div className="flex flex-col h-[580px] p-4 gap-3">
+    <div className="flex flex-col h-full p-4 gap-3">
       {/* Advisor Header */}
       <div className="flex items-center gap-3 pb-3 border-b border-white/10">
         <div
@@ -129,7 +130,7 @@ export function AdvisorPanel({ state, lang, aiConfig }: AdvisorPanelProps) {
           >
             <div className={`flex items-end gap-2 max-w-[94%] ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
               {m.role === 'user' && (
-                <img
+                <Art thumb
                   src={state.playerProfile.portrait}
                   alt="You"
                   className="w-7 h-7 rounded-lg object-cover object-top border border-cyan-400 shrink-0"
@@ -174,12 +175,12 @@ export function AdvisorPanel({ state, lang, aiConfig }: AdvisorPanelProps) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={tLoc(UI_TEXT.advisorPlaceholder, lang)}
-          className="flex-1 rounded-xl bg-[#0d1015] border border-white/15 px-3 py-2 text-xs sm:text-sm text-[#f5ecd7] placeholder:text-[#6f7787] focus:outline-none focus:border-[#d4a853]"
+          className="flex-1 rounded-xl bg-[#12100d] border border-white/15 px-3 py-2 text-xs sm:text-sm text-[#f5ecd7] placeholder:text-[#6f7787] focus:outline-none focus:border-[#d4a853]"
         />
         <button
           type="submit"
           disabled={loading || !input.trim()}
-          className="px-3.5 py-2 rounded-xl bg-[#d4a853] hover:bg-[#e1b866] disabled:opacity-40 text-[#11151d] font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer"
+          className="px-3.5 py-2 rounded-xl bg-[#d4a853] hover:bg-[#e1b866] disabled:opacity-40 text-[#14110d] font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer"
         >
           <Send className="w-3.5 h-3.5" />
           <span>{tLoc(UI_TEXT.send, lang)}</span>

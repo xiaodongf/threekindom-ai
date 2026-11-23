@@ -116,7 +116,7 @@ export function CityPanel({
     city.owner === 'neutral' ? '#a8a29e' : state.factions[city.owner].color;
 
   return (
-    <div className="p-4 space-y-4 overflow-y-auto h-[580px]">
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
       {/* City Header */}
       <div className="flex items-start justify-between gap-2 pb-3 border-b border-white/10">
         <div>
@@ -147,7 +147,7 @@ export function CityPanel({
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-2 gap-2.5">
-        <div className="rounded-xl bg-[#0d1015]/80 border border-white/5 p-2.5">
+        <div className="rounded-xl bg-[#12100d]/80 border border-white/5 p-2.5">
           <div className="flex items-center justify-between text-xs text-[#9ea3ae] mb-1.5">
             <span>{tLoc(UI_TEXT.prosperity, lang)}</span>
             <span className="text-[#d4a853] font-semibold">Lv.{city.development}/5</span>
@@ -164,7 +164,7 @@ export function CityPanel({
           </div>
         </div>
 
-        <div className="rounded-xl bg-[#0d1015]/80 border border-white/5 p-2.5">
+        <div className="rounded-xl bg-[#12100d]/80 border border-white/5 p-2.5">
           <div className="flex items-center justify-between text-xs text-[#9ea3ae] mb-1.5">
             <span>{tLoc(UI_TEXT.defense, lang)}</span>
             <span className="text-sky-400 font-semibold">Lv.{city.defense}/5</span>
@@ -209,7 +209,7 @@ export function CityPanel({
               <button
                 disabled={state.actionPoints < 1}
                 onClick={() => onRecruitWanderingHero(wh.id)}
-                className="px-2.5 py-1.5 rounded-lg bg-[#d4a853] hover:bg-[#e5bc69] disabled:opacity-40 text-[#11151d] font-bold text-[11px] flex items-center gap-1 cursor-pointer shrink-0"
+                className="px-2.5 py-1.5 rounded-lg bg-[#d4a853] hover:bg-[#e5bc69] disabled:opacity-40 text-[#14110d] font-bold text-[11px] flex items-center gap-1 cursor-pointer shrink-0"
               >
                 <UserPlus className="w-3 h-3" />
                 <span>{lang === 'zh' ? '招贤 (1 AP)' : 'Recruit'}</span>
@@ -424,7 +424,7 @@ export function CityPanel({
             return (
               <div
                 key={nid}
-                className="flex items-center justify-between gap-2 rounded-xl bg-[#0d1015]/80 border border-white/8 px-3 py-2"
+                className="flex items-center justify-between gap-2 rounded-xl bg-[#12100d]/80 border border-white/8 px-3 py-2"
               >
                 <button
                   onClick={() => onSelectCity(nid)}

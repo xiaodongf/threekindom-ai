@@ -14,6 +14,7 @@ import type {
 import { TERRAIN_TEXT, tLoc } from '../i18n/translations.js';
 import { battleAudio } from '../utils/battleAudio.js';
 import { HeroAvatar } from './HeroAvatar.js';
+import { Art } from './ui/Art.js';
 
 export interface WarSceneConfig {
   id: string;
@@ -52,8 +53,8 @@ interface WarSceneModalProps {
 }
 
 const FACTION_COLOR: Record<FactionId, { main: string; light: string; dark: string }> = {
-  wei: { main: '#3b82f6', light: '#93c5fd', dark: '#1d4ed8' },
-  shu: { main: '#10b981', light: '#6ee7b7', dark: '#047857' },
+  wei: { main: '#4c78a8', light: '#b9d0e6', dark: '#1d4ed8' },
+  shu: { main: '#438554', light: '#add4b6', dark: '#047857' },
   wu: { main: '#f43f5e', light: '#fda4af', dark: '#be123c' },
   neutral: { main: '#a8a29e', light: '#e7e5e4', dark: '#57534e' },
 };
@@ -584,7 +585,7 @@ export function WarSceneModal({
       } else {
         const dir = u.side === 'atk' ? 1 : -1;
         // Ground Shadow
-        ctx.fillStyle = 'rgba(2,6,23,0.58)';
+        ctx.fillStyle = 'rgba(6,4,2,0.58)';
         ctx.beginPath();
         ctx.ellipse(0, 9, u.isCav ? 10 : 6.5, 3.4, 0, 0, Math.PI * 2);
         ctx.fill();
@@ -702,7 +703,7 @@ export function WarSceneModal({
         spawnBurst(660, 235, '#fbbf24', 24, 1.0);
         if (scene.hasGunpowder || scene.mode === 'bombard') {
           battleAudio.playExplosion(0.26);
-          spawnBurst(680, 220, '#ef4444', 44, 1.5);
+          spawnBurst(680, 220, '#c2432f', 44, 1.5);
         }
       }
       if (!firedOutcome && elapsed >= 4.4) {
@@ -830,7 +831,7 @@ export function WarSceneModal({
       if (chargeT > 0.4) {
         const vig = ctx.createRadialGradient(W / 2, H / 2, W * 0.25, W / 2, H / 2, W * 0.65);
         vig.addColorStop(0, 'rgba(0,0,0,0)');
-        vig.addColorStop(1, 'rgba(2,6,23,0.45)');
+        vig.addColorStop(1, 'rgba(6,4,2,0.45)');
         ctx.fillStyle = vig;
         ctx.fillRect(0, 0, W, H);
       }
@@ -857,7 +858,7 @@ export function WarSceneModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-5">
-      <div className="ink-panel gold-border-glow rounded-2xl max-w-4xl w-full overflow-hidden shadow-[0_24px_80px_rgba(2,6,23,0.9)]">
+      <div className="ink-panel gold-border-glow rounded-2xl max-w-4xl w-full overflow-hidden shadow-[0_24px_80px_rgba(6,4,2,0.9)]">
         {/* Top Live Battlefield HUD */}
         <div className="px-4 py-3 bg-slate-950/85 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -942,7 +943,7 @@ export function WarSceneModal({
 
         {/* 60fps HTML5 2.5D Canvas War Theater with Studio-Painted Panoramic Backdrop */}
         <div className="relative bg-slate-950 overflow-hidden">
-          <img
+          <Art
             src={
               scene.mode === 'raid' || scene.mode === 'discord'
                 ? '/art/bg_night_raid.jpg'
@@ -1050,7 +1051,7 @@ export function WarSceneModal({
               </p>
               <button
                 onClick={onFinish}
-                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-sm shadow-lg cursor-pointer"
+                className="px-6 py-2.5 rounded-xl btn-gold font-bold text-sm shadow-lg cursor-pointer"
               >
                 {lang === 'zh' ? '查看详细战报' : 'Continue to Report'}
               </button>

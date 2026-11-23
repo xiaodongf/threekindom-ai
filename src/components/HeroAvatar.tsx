@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { FactionId, General } from '../game/types.js';
+import { Art } from './ui/Art.js';
 
 interface HeroAvatarProps {
   hero: General;
@@ -9,9 +10,9 @@ interface HeroAvatarProps {
 }
 
 const FACTION_RING: Record<FactionId, string> = {
-  wei: 'border-[#3b82f6] ring-[#3b82f6]/30',
-  shu: 'border-[#10b981] ring-[#10b981]/30',
-  wu: 'border-[#ef4444] ring-[#ef4444]/30',
+  wei: 'border-[#4c78a8] ring-[#4c78a8]/30',
+  shu: 'border-[#438554] ring-[#438554]/30',
+  wu: 'border-[#c2432f] ring-[#c2432f]/30',
   neutral: 'border-[#d4a853] ring-[#d4a853]/30',
 };
 
@@ -46,10 +47,10 @@ export function HeroAvatar({
 
   return (
     <div
-      className={`relative rounded-xl overflow-hidden border-2 ring-2 shrink-0 bg-[#121720] flex items-center justify-center ${SIZE_CLASSES[size]} ${ringClass} ${className}`}
+      className={`relative rounded-xl overflow-hidden border-2 ring-2 shrink-0 bg-[#171310] flex items-center justify-center ${SIZE_CLASSES[size]} ${ringClass} ${className}`}
     >
       {!imgError ? (
-        <img
+        <Art thumb
           src={hero.portrait}
           alt={hero.name.en}
           onError={() => setImgError(true)}

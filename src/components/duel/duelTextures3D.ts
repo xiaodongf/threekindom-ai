@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { HorseCoatId } from '../../game/heroDuelProfiles.js';
 import { HORSE_COAT_PALETTES } from '../../game/heroDuelProfiles.js';
 import type { DisposeBag } from './duelGeometry3D.js';
+import { bestArt } from '../../utils/art.js';
 
 function makeCanvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement('canvas');
@@ -360,7 +361,7 @@ export function createPaintedPanoramaTexture(
   arcFraction: number,
   bag: DisposeBag
 ): THREE.Texture {
-  const tex = new THREE.TextureLoader().load(url);
+  const tex = new THREE.TextureLoader().load(bestArt(url));
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.MirroredRepeatWrapping;
   tex.wrapT = THREE.ClampToEdgeWrapping;

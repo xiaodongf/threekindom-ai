@@ -19,7 +19,7 @@ const CATEGORY_STYLES: Record<ChronicleEntry['category'], string> = {
 
 export function ChronicleLog({ entries, lang }: ChronicleLogProps) {
   return (
-    <div className="p-4 space-y-2.5 overflow-y-auto max-h-[580px]">
+    <div className="p-4 space-y-2.5 overflow-y-auto h-full">
       {entries.length === 0 ? (
         <div className="text-center text-xs text-[#9ea3ae] py-8">
           <ScrollText className="w-6 h-6 mx-auto mb-2 opacity-50" />

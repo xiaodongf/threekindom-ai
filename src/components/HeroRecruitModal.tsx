@@ -22,6 +22,7 @@ import type {
 import { tLoc } from '../i18n/translations.js';
 import { requestHeroEncounter } from '../services/aiClient.js';
 import { HeroAvatar } from './HeroAvatar.js';
+import { Art } from './ui/Art.js';
 
 interface HeroRecruitModalProps {
   state: GameState;
@@ -151,10 +152,10 @@ export function HeroRecruitModal({
         <div className="rounded-xl bg-slate-950/80 border border-cyan-500/25 p-3.5 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
-              <img
+              <Art thumb
                 src={state.playerProfile.portrait}
                 alt="Player"
-                className="w-14 h-14 rounded-xl object-cover object-top border-2 border-cyan-400 shadow-[0_0_16px_rgba(56,189,248,0.3)]"
+                className="w-14 h-14 rounded-xl object-cover object-top border-2 border-cyan-400 shadow-[0_0_16px_rgba(208,167,79,0.3)]"
               />
               <div>
                 <div className="text-[10px] font-bold uppercase text-cyan-400">
@@ -202,7 +203,7 @@ export function HeroRecruitModal({
                   <select
                     value={envoyId}
                     onChange={(e) => setEnvoyId(e.target.value)}
-                    className="w-full rounded-xl bg-[#0d1015] border border-white/15 px-3 py-2 text-xs text-[#f5ecd7]"
+                    className="w-full rounded-xl bg-[#12100d] border border-white/15 px-3 py-2 text-xs text-[#f5ecd7]"
                   >
                     {myEnvoys.map((e) => (
                       <option key={e.id} value={e.id}>
@@ -225,7 +226,7 @@ export function HeroRecruitModal({
                         className={`text-left p-2.5 rounded-xl border transition cursor-pointer ${
                           approach === a.id
                             ? 'bg-[#d4a853]/18 border-[#d4a853] text-[#f7efe0]'
-                            : 'bg-[#0d1015]/70 border-white/10 text-[#b8b2a2] hover:border-white/25'
+                            : 'bg-[#12100d]/70 border-white/10 text-[#b8b2a2] hover:border-white/25'
                         }`}
                       >
                         <div className="text-xs font-bold flex items-center gap-1">
@@ -264,7 +265,7 @@ export function HeroRecruitModal({
                       ? '例如：先生切莫轻赴落凤坡，唯有投效我主方可一展凤雏宏图！'
                       : 'e.g., Beware Fallen Phoenix Slope! Serve my King and your genius will reshape China!'
                 }
-                className="w-full rounded-xl bg-[#0d1015] border border-white/15 px-3 py-2 text-xs sm:text-sm text-[#f5ecd7] placeholder:text-[#667085] focus:outline-none focus:border-[#d4a853]"
+                className="w-full rounded-xl bg-[#12100d] border border-white/15 px-3 py-2 text-xs sm:text-sm text-[#f5ecd7] placeholder:text-[#667085] focus:outline-none focus:border-[#d4a853]"
               />
             </div>
 
@@ -278,7 +279,7 @@ export function HeroRecruitModal({
               <button
                 disabled={loading || cannotAffordGift || (mode === 'chat' && !message.trim())}
                 onClick={submitEncounter}
-                className="px-5 py-2 rounded-xl bg-[#d4a853] hover:bg-[#e4ba67] disabled:opacity-40 text-[#11151d] font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-[#d4a853] hover:bg-[#e4ba67] disabled:opacity-40 text-[#14110d] font-bold text-xs flex items-center gap-1.5 cursor-pointer"
               >
                 {loading ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -339,7 +340,7 @@ export function HeroRecruitModal({
               {mode !== 'chat' && (
                 <button
                   onClick={onClose}
-                  className="px-3 py-1 rounded-lg bg-[#d4a853] text-[#11151d] font-bold cursor-pointer"
+                  className="px-3 py-1 rounded-lg bg-[#d4a853] text-[#14110d] font-bold cursor-pointer"
                 >
                   {lang === 'zh' ? '返回战局' : 'Continue'}
                 </button>

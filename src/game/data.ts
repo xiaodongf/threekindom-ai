@@ -93,8 +93,8 @@ export function createInitialFactions(): Record<PlayableFactionId, FactionState>
       rulerTitle: { en: 'Chancellor of the Han', zh: '汉丞相 · 魏王' },
       advisorName: { en: 'Sima Yi', zh: '司马懿' },
       advisorTitle: { en: 'Grand Strategist', zh: '大军师' },
-      color: '#3b82f6',
-      accent: '#93c5fd',
+      color: '#4c78a8',
+      accent: '#b9d0e6',
       bannerChar: '魏',
       traitName: { en: 'Tuntian Agronomy', zh: '屯田强兵' },
       traitDesc: {
@@ -114,8 +114,8 @@ export function createInitialFactions(): Record<PlayableFactionId, FactionState>
       rulerTitle: { en: 'Prince of Hanzhong', zh: '汉中王 · 昭烈帝' },
       advisorName: { en: 'Zhuge Liang', zh: '诸葛亮' },
       advisorTitle: { en: 'Sleeping Dragon', zh: '卧龙军师' },
-      color: '#10b981',
-      accent: '#6ee7b7',
+      color: '#438554',
+      accent: '#add4b6',
       bannerChar: '蜀',
       traitName: { en: 'Benevolent Valor', zh: '仁德精兵' },
       traitDesc: {
@@ -135,8 +135,8 @@ export function createInitialFactions(): Record<PlayableFactionId, FactionState>
       rulerTitle: { en: 'Lord of Jiangdong', zh: '江东之主 · 吴王' },
       advisorName: { en: 'Lu Xun', zh: '陆逊' },
       advisorTitle: { en: 'Grand Commander', zh: '大都督' },
-      color: '#ef4444',
-      accent: '#fca5a5',
+      color: '#c2432f',
+      accent: '#edb3a5',
       bannerChar: '吴',
       traitName: { en: 'Yangtze Fleet', zh: '长江水师' },
       traitDesc: {

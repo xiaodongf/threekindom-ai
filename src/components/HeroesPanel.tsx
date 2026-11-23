@@ -24,8 +24,26 @@ import { HERO_BONDS } from '../game/heroes.js';
 import type { GameState, General, HeroEncounterMode, Language } from '../game/types.js';
 import { tLoc } from '../i18n/translations.js';
 import { HeroAvatar } from './HeroAvatar.js';
+import { Seal } from './ui/Seal.js';
+import { Art } from './ui/Art.js';
 
 type HeroFilter = 'mine' | 'wandering' | 'prisoners' | 'rivals' | 'fallen';
+
+/** The five attributes, each with its pigment: one colour always means one thing. */
+const HERO_STATS: Array<{
+  key: 'war' | 'intellect' | 'command' | 'politics' | 'charisma';
+  zh: string;
+  en: string;
+  short: string;
+  text: string;
+  bar: string;
+}> = [
+  { key: 'war', zh: '武', en: 'War', short: 'W', text: 'text-rose-400', bar: 'bg-rose-400' },
+  { key: 'intellect', zh: '智', en: 'Int', short: 'I', text: 'text-sky-400', bar: 'bg-sky-400' },
+  { key: 'command', zh: '统', en: 'Cmd', short: 'C', text: 'text-amber-300', bar: 'bg-amber-300' },
+  { key: 'politics', zh: '政', en: 'Pol', short: 'P', text: 'text-emerald-400', bar: 'bg-emerald-400' },
+  { key: 'charisma', zh: '魅', en: 'Cha', short: 'Ch', text: 'text-fuchsia-300', bar: 'bg-fuchsia-300' },
+];
 
 interface HeroesPanelProps {
   state: GameState;
@@ -100,47 +118,113 @@ export function HeroesPanel({
     const otherCities = ownedCities.filter((c) => c.id !== hero.cityId);
     const chosenDest = relocateTarget[hero.id] || otherCities[0]?.id || '';
     const bonds = hero.bondIds.map((id) => HERO_BONDS[id]).filter(Boolean);
+    const heroFaction = hero.faction === 'neutral' ? undefined : state.factions[hero.faction];
 
     return (
       <div
         key={hero.id}
         className={`rounded-xl border transition p-3 space-y-2.5 ${
           expanded
-            ? 'bg-[#121824] border-[#d4a853]/65 shadow-lg'
-            : 'bg-[#0d1015]/85 border-white/10 hover:border-white/25'
+            ? 'bg-[#1c1813] border-[#d4a853]/65 shadow-lg'
+            : 'bg-[#12100d]/85 border-white/10 hover:border-white/25'
         }`}
       >
-        {/* Top Row */}
-        <div
-          onClick={() => onSelectFocusHero(expanded ? null : hero.id)}
-          className="flex items-center gap-3 cursor-pointer"
-        >
-          <HeroAvatar hero={hero} size="md" showLevel />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-2">
-              <div className="font-display font-bold text-sm text-[#f7efe0] truncate">
-                {tLoc(hero.name, lang)}
-              </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/8 text-[#d4a853] shrink-0">
-                {city ? tLoc(city.name, lang) : '-'}
+        {expanded ? (
+          <>
+            {/* The hero, painted large: face first, name in brush lettering */}
+            <div
+              onClick={() => onSelectFocusHero(null)}
+              className="anim-rise relative -mx-3 -mt-3 h-72 overflow-hidden cursor-pointer group"
+              title={lang === 'zh' ? '收起' : 'Collapse'}
+            >
+              <Art
+                src={hero.portrait}
+                alt={tLoc(hero.name, lang)}
+                className={`absolute inset-0 w-full h-full object-cover object-top theme-art-grade transition-transform duration-700 ease-out group-hover:scale-[1.03] ${
+                  hero.status === 'executed' ? 'grayscale opacity-70' : ''
+                }`}
+                style={{
+                  maskImage: 'linear-gradient(to bottom, #000 60%, transparent 100%)',
+                  WebkitMaskImage: 'linear-gradient(to bottom, #000 60%, transparent 100%)',
+                }}
+              />
+              <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[#1c1813]" />
+              <Seal
+                char={heroFaction?.bannerChar ?? (lang === 'zh' ? '野' : '野')}
+                size={34}
+                color={heroFaction?.color}
+                className="absolute top-3 left-3"
+              />
+              <span className="absolute top-3 right-3 text-[10px] font-bold px-1.5 py-0.5 rounded-sm bg-black/70 text-amber-100 border border-amber-300/40">
+                Lv.{hero.level}
               </span>
+              <div className="absolute inset-x-3 bottom-1.5">
+                <div className="flex items-end justify-between gap-2">
+                  <div className="font-brush text-[28px] font-bold text-slate-50 leading-none drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)]">
+                    {tLoc(hero.name, lang)}
+                  </div>
+                  <span className="text-[11px] px-1.5 py-0.5 rounded-sm bg-black/60 text-amber-200 shrink-0 flex items-center gap-1">
+                    <MapPin className="w-3 h-3" />
+                    {city ? tLoc(city.name, lang) : '-'}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-amber-200/90">{tLoc(hero.title, lang)}</div>
+              </div>
             </div>
-            <div className="text-[11px] text-[#9ea3ae] truncate">{tLoc(hero.title, lang)}</div>
-            <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] font-mono">
-              <span className="text-rose-400">{lang === 'zh' ? '武' : 'W'}{hero.war}</span>
-              <span className="text-sky-400">{lang === 'zh' ? '智' : 'I'}{hero.intellect}</span>
-              <span className="text-amber-300">{lang === 'zh' ? '统' : 'C'}{hero.command}</span>
-              <span className="text-emerald-400">{lang === 'zh' ? '政' : 'P'}{hero.politics}</span>
-              <span className="text-fuchsia-300">{lang === 'zh' ? '魅' : 'Ch'}{hero.charisma}</span>
-              {isMine && (
-                <span className="ml-auto flex items-center gap-0.5 text-rose-300">
-                  <Heart className="w-2.5 h-2.5" />
-                  {hero.loyalty}
+
+            {/* Five attributes as bars: comparable at a glance */}
+            <div className="grid grid-cols-5 gap-2 pt-1">
+              {HERO_STATS.map((stat) => {
+                const value = hero[stat.key];
+                return (
+                  <div key={stat.key}>
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[10px] text-slate-400">
+                        {lang === 'zh' ? stat.zh : stat.en}
+                      </span>
+                      <span className="text-sm font-bold text-slate-50">{value}</span>
+                    </div>
+                    <div className="mt-0.5 h-1 bg-white/10 overflow-hidden">
+                      <div className={`h-full ${stat.bar}`} style={{ width: `${Math.min(100, value)}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <div
+            onClick={() => onSelectFocusHero(hero.id)}
+            className="flex items-center gap-3 cursor-pointer"
+          >
+            <HeroAvatar hero={hero} size="md" showLevel />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-display font-bold text-[15px] text-[#f7efe0] truncate">
+                  {tLoc(hero.name, lang)}
+                </div>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/8 text-[#d4a853] shrink-0">
+                  {city ? tLoc(city.name, lang) : '-'}
                 </span>
-              )}
+              </div>
+              <div className="text-[11px] text-slate-400 truncate">{tLoc(hero.title, lang)}</div>
+              <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] font-mono">
+                {HERO_STATS.map((stat) => (
+                  <span key={stat.key} className={stat.text}>
+                    {lang === 'zh' ? stat.zh : stat.short}
+                    {hero[stat.key]}
+                  </span>
+                ))}
+                {isMine && (
+                  <span className="ml-auto flex items-center gap-0.5 text-rose-300">
+                    <Heart className="w-2.5 h-2.5" />
+                    {hero.loyalty}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Vendetta Alert */}
         {hasVendetta && (
@@ -272,7 +356,7 @@ export function HeroesPanel({
                       onChange={(e) =>
                         setRelocateTarget((prev) => ({ ...prev, [hero.id]: e.target.value }))
                       }
-                      className="flex-1 rounded-lg bg-[#0d1015] border border-white/15 px-2 py-1.5 text-[11px] text-[#f5ecd7]"
+                      className="flex-1 rounded-lg bg-[#12100d] border border-white/15 px-2 py-1.5 text-[11px] text-[#f5ecd7]"
                     >
                       {otherCities.map((c) => (
                         <option key={c.id} value={c.id}>
@@ -322,7 +406,7 @@ export function HeroesPanel({
               <button
                 disabled={state.actionPoints < 1}
                 onClick={() => onOpenEncounter(hero.id, 'recruit')}
-                className="w-full py-2 rounded-xl bg-gradient-to-r from-[#d4a853] to-[#b58732] hover:from-[#e4ba67] hover:to-[#c59640] disabled:opacity-40 text-[#11151d] font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                className="w-full py-2 rounded-xl bg-gradient-to-r from-[#d4a853] to-[#b58732] hover:from-[#e4ba67] hover:to-[#c59640] disabled:opacity-40 text-[#14110d] font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <UserPlus className="w-3.5 h-3.5" />
                 <span>
@@ -374,7 +458,7 @@ export function HeroesPanel({
   };
 
   return (
-    <div className="p-3.5 space-y-3 flex flex-col h-[580px]">
+    <div className="p-3.5 space-y-3 flex flex-col h-full">
       {/* Filter Pills */}
       <div className="flex flex-wrap gap-1">
         {filterTabs.map((tab) => (
@@ -383,7 +467,7 @@ export function HeroesPanel({
             onClick={() => setFilter(tab.id)}
             className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
               filter === tab.id
-                ? 'bg-gradient-to-r from-cyan-500 to-indigo-500 text-white shadow'
+                ? 'btn-gold shadow'
                 : 'bg-slate-800/70 text-slate-300 hover:bg-slate-700/80'
             }`}
           >

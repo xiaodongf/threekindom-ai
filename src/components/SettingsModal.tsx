@@ -7,6 +7,17 @@ import type {
   Language,
 } from '../game/types.js';
 import { UI_TEXT, tLoc } from '../i18n/translations.js';
+import {
+  applyMotionPreference,
+  loadMotionPreference,
+  type MotionPreference,
+} from '../utils/motion.js';
+
+const MOTION_OPTIONS: Array<{ id: MotionPreference; en: string; zh: string }> = [
+  { id: 'system', en: 'Follow system', zh: '跟随系统' },
+  { id: 'reduced', en: 'Reduced', zh: '减弱' },
+  { id: 'full', en: 'Full', zh: '完整' },
+];
 
 interface SettingsModalProps {
   lang: Language;
@@ -27,6 +38,7 @@ export function SettingsModal({
   const [model, setModel] = useState(currentConfig.model || '');
   const [apiKey, setApiKey] = useState(currentConfig.apiKey || '');
   const [baseUrl, setBaseUrl] = useState(currentConfig.baseUrl || '');
+  const [motion, setMotion] = useState<MotionPreference>(() => loadMotionPreference());
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
@@ -52,7 +64,7 @@ export function SettingsModal({
           {providers.map((p) => (
             <div
               key={p.id}
-              className="rounded-xl bg-[#0d1015]/85 border border-white/10 px-3 py-2 flex items-center justify-between gap-2"
+              className="rounded-xl bg-[#12100d]/85 border border-white/10 px-3 py-2 flex items-center justify-between gap-2"
             >
               <div className="min-w-0">
                 <div className="text-xs font-semibold text-[#f5ecd7] truncate">{p.name}</div>
@@ -76,7 +88,7 @@ export function SettingsModal({
             <select
               value={provider}
               onChange={(e) => setProvider(e.target.value as AIProviderId)}
-              className="w-full rounded-xl bg-[#0d1015] border border-white/15 px-3 py-2 text-sm text-[#f5ecd7] focus:outline-none focus:border-[#d4a853]"
+              className="w-full rounded-xl bg-[#12100d] border border-white/15 px-3 py-2 text-sm text-[#f5ecd7] focus:outline-none focus:border-[#d4a853]"
             >
               <option value="auto">
                 {lang === 'zh' ? 'Auto（自动检测已配置 LLM，无密钥时自动回退）' : 'Auto (First configured LLM → Heuristic fallback)'}
@@ -107,7 +119,7 @@ export function SettingsModal({
                         ? 'claude-sonnet-4-20250514'
                         : 'gpt-4o-mini'
                   }
-                  className="w-full rounded-xl bg-[#0d1015] border border-white/15 px-3 py-2 text-xs text-[#f5ecd7] placeholder:text-[#667085] focus:outline-none focus:border-[#d4a853]"
+                  className="w-full rounded-xl bg-[#12100d] border border-white/15 px-3 py-2 text-xs text-[#f5ecd7] placeholder:text-[#667085] focus:outline-none focus:border-[#d4a853]"
                 />
               </div>
 
@@ -121,7 +133,7 @@ export function SettingsModal({
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder="sk-... / AIza..."
-                  className="w-full rounded-xl bg-[#0d1015] border border-white/15 px-3 py-2 text-xs text-[#f5ecd7] placeholder:text-[#667085] focus:outline-none focus:border-[#d4a853]"
+                  className="w-full rounded-xl bg-[#12100d] border border-white/15 px-3 py-2 text-xs text-[#f5ecd7] placeholder:text-[#667085] focus:outline-none focus:border-[#d4a853]"
                 />
               </div>
 
@@ -135,12 +147,43 @@ export function SettingsModal({
                     value={baseUrl}
                     onChange={(e) => setBaseUrl(e.target.value)}
                     placeholder="https://api.openai.com/v1 or http://localhost:11434/v1"
-                    className="w-full rounded-xl bg-[#0d1015] border border-white/15 px-3 py-2 text-xs text-[#f5ecd7] placeholder:text-[#667085] focus:outline-none focus:border-[#d4a853]"
+                    className="w-full rounded-xl bg-[#12100d] border border-white/15 px-3 py-2 text-xs text-[#f5ecd7] placeholder:text-[#667085] focus:outline-none focus:border-[#d4a853]"
                   />
                 </div>
               )}
             </>
           )}
+        </div>
+
+        {/* Motion: quick by default, and always possible to turn down */}
+        <div className="border-t border-white/10 pt-4">
+          <div className="text-xs font-semibold text-[#f5ecd7] mb-1">
+            {lang === 'zh' ? '界面动效' : 'Interface motion'}
+          </div>
+          <p className="text-[11px] text-[#b8b2a2] mb-2">
+            {lang === 'zh'
+              ? '减弱后将关闭过场、印章与数字滚动等装饰性动画。'
+              : 'Reduced turns off banners, stamps, count-ups and other decorative animation.'}
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {MOTION_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => {
+                  setMotion(opt.id);
+                  applyMotionPreference(opt.id);
+                }}
+                className={`py-1.5 rounded-md border text-xs font-semibold cursor-pointer ${
+                  motion === opt.id
+                    ? 'border-amber-300 bg-amber-400/15 text-amber-100'
+                    : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                }`}
+              >
+                {lang === 'zh' ? opt.zh : opt.en}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
@@ -160,7 +203,7 @@ export function SettingsModal({
               });
               onClose();
             }}
-            className="px-5 py-2 rounded-xl bg-[#d4a853] hover:bg-[#e1b866] text-[#11151d] font-bold text-xs cursor-pointer"
+            className="px-5 py-2 rounded-xl bg-[#d4a853] hover:bg-[#e1b866] text-[#14110d] font-bold text-xs cursor-pointer"
           >
             {tLoc(UI_TEXT.saveSettings, lang)}
           </button>

@@ -148,7 +148,7 @@ export function TacticalVfxCanvas({ grid, wind, vfxEvent }: TacticalVfxCanvasPro
       const cy = (vfxEvent.toRow + 1.0) * CELL;
       ringsRef.current.push(
         { x: cx, y: cy, maxR: CELL * 1.65, color: '#fbbf24', life: 0, maxLife: 0.65 },
-        { x: cx, y: cy, maxR: CELL * 1.15, color: '#ef4444', life: 0, maxLife: 0.5 }
+        { x: cx, y: cy, maxR: CELL * 1.15, color: '#c2432f', life: 0, maxLife: 0.5 }
       );
       addBurst(cx, cy, '#f97316', 54, 1.55);
       addBurst(cx, cy, '#fef08a', 26, 1.1);
