@@ -12,7 +12,8 @@
     "start": "node dist-server/server/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "optimize:art": "node scripts/optimize-art.mjs"
+    "optimize:art": "node scripts/optimize-art.mjs",
+    "build:terrain": "node scripts/build-terrain.mjs"
   },
   "dependencies": {
     "@google/genai": "^3.6.1",

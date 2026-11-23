@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Box,
   Compass,
   Crosshair,
   Globe,
@@ -39,7 +38,7 @@ import type {
 } from '../game/types.js';
 import { TERRAIN_TEXT, tLoc } from '../i18n/translations.js';
 import { MapAtmosphereCanvas } from './MapAtmosphereCanvas.js';
-import { WebGLStrategyMap } from './WebGLStrategyMap.js';
+import { WebGLStrategyMap, type MapViewMode } from './WebGLStrategyMap.js';
 
 export interface ActiveMapMarch {
   id: string;
@@ -63,6 +62,8 @@ interface StrategyMapProps {
   onSelectCity: (cityId: string) => void;
   onQuickTargetEnemy: (targetCityId: string) => void;
   onInspectHero?: (heroId: string) => void;
+  /** True while a battle or duel covers the map, so the 3D view can stop drawing. */
+  paused?: boolean;
 }
 
 const FACTION_PALETTE: Record<
@@ -162,17 +163,21 @@ export function StrategyMap({
   onSelectCity,
   onQuickTargetEnemy,
   onInspectHero,
+  paused = false,
 }: StrategyMapProps) {
   const cities = Object.values(state.cities);
   const selectedCity = selectedCityId ? state.cities[selectedCityId] : null;
   const strikeableIds = new Set(getStrikeableEnemyCityIds(state, state.playerFaction));
 
-  const [mapMode, setMapMode] = useState<'webgl' | '3d' | '2d'>(() => {
+  // The living 3D map is the map; the flat drawing stays as the fallback for machines without WebGL.
+  const [mapMode, setMapMode] = useState<'webgl' | '2d'>(() => {
     const p = new URLSearchParams(window.location.search).get('mapMode');
-    if (p === 'webgl' || p === '3d' || p === '2d') return p;
-    return '3d';
+    return p === '2d' ? '2d' : 'webgl';
   });
-  const is3D = mapMode === '3d';
+  const [viewMode, setViewMode] = useState<MapViewMode>(() => {
+    const p = new URLSearchParams(window.location.search).get('mapView');
+    return p === 'paper' || p === 'terrain' ? p : 'auto';
+  });
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -320,60 +325,67 @@ export function StrategyMap({
             </span>
           </button>
 
-          {/* 3-Mode Map Engine Switcher: WebGL 3D World | 3D Relief | 2D */}
-          <div className="flex items-center rounded-lg border border-slate-700/80 bg-slate-900/85 overflow-hidden text-[11px] font-semibold">
-            <button
-              type="button"
-              onClick={() => setMapMode('webgl')}
-              className={`flex items-center gap-1 px-2 py-1 transition cursor-pointer ${
-                mapMode === 'webgl'
-                  ? 'bg-gradient-to-r from-cyan-500/35 to-indigo-500/35 text-cyan-100'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Globe className="w-3.5 h-3.5 text-cyan-300" />
-              <span>{lang === 'zh' ? 'WebGL 3D' : 'WebGL 3D'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setMapMode('3d')}
-              className={`flex items-center gap-1 px-2 py-1 border-l border-slate-700/80 transition cursor-pointer ${
-                mapMode === '3d'
-                  ? 'bg-cyan-500/25 text-cyan-100'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Box className="w-3.5 h-3.5" />
-              <span>{lang === 'zh' ? '立体沙盘' : '3D Relief'}</span>
-            </button>
+          {/* Map view: living 3D map (terrain or paper sheet) or the flat drawing */}
+          <div className="flex items-center rounded-md border border-slate-700/80 bg-slate-900/85 overflow-hidden text-[11px] font-semibold">
+            {(
+              [
+                { id: 'auto', en: 'Auto', zh: '自动' },
+                { id: 'terrain', en: 'Terrain', zh: '山河' },
+                { id: 'paper', en: 'Paper map', zh: '舆图' },
+              ] as Array<{ id: MapViewMode; en: string; zh: string }>
+            ).map((opt, idx) => {
+              const active = mapMode === 'webgl' && viewMode === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => {
+                    setMapMode('webgl');
+                    setViewMode(opt.id);
+                  }}
+                  title={
+                    opt.id === 'auto'
+                      ? lang === 'zh'
+                        ? '近看山河，拉远自动变为舆图'
+                        : 'Terrain up close, paper map when zoomed out'
+                      : undefined
+                  }
+                  className={`flex items-center gap-1 px-2 py-1 cursor-pointer ${
+                    idx > 0 ? 'border-l border-slate-700/80' : ''
+                  } ${active ? 'bg-amber-400/20 text-amber-100' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  {idx === 0 && <Globe className="w-3.5 h-3.5" />}
+                  <span>{lang === 'zh' ? opt.zh : opt.en}</span>
+                </button>
+              );
+            })}
             <button
               type="button"
               onClick={() => setMapMode('2d')}
-              className={`px-2 py-1 border-l border-slate-700/80 transition cursor-pointer ${
-                mapMode === '2d'
-                  ? 'bg-cyan-500/25 text-cyan-100'
-                  : 'text-slate-400 hover:text-slate-200'
+              title={lang === 'zh' ? '平面地图（无需 WebGL）' : 'Flat drawing (no WebGL needed)'}
+              className={`px-2 py-1 border-l border-slate-700/80 cursor-pointer ${
+                mapMode === '2d' ? 'bg-amber-400/20 text-amber-100' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              2D
+              {lang === 'zh' ? '平面' : 'Flat'}
             </button>
           </div>
 
+          <button
+            type="button"
+            onClick={() => setShowTerritory((v) => !v)}
+            className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium cursor-pointer ${
+              showTerritory
+                ? 'bg-indigo-500/20 border-indigo-400/45 text-indigo-200'
+                : 'bg-slate-800/60 border-slate-700 text-slate-400'
+            }`}
+          >
+            <Layers className="w-3 h-3" />
+            <span>{lang === 'zh' ? '势力版图' : 'Realms'}</span>
+          </button>
+
           {mapMode !== 'webgl' && (
             <>
-              <button
-                type="button"
-                onClick={() => setShowTerritory((v) => !v)}
-                className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
-                  showTerritory
-                    ? 'bg-indigo-500/20 border-indigo-400/45 text-indigo-200'
-                    : 'bg-slate-800/60 border-slate-700 text-slate-400'
-                }`}
-              >
-                <Layers className="w-3 h-3" />
-                <span>{lang === 'zh' ? '势力版图' : 'Realms'}</span>
-              </button>
-
               <button
                 type="button"
                 onClick={() => setShowGeoLabels((v) => !v)}
@@ -448,16 +460,14 @@ export function StrategyMap({
             onSelectCity={onSelectCity}
             onQuickTargetEnemy={onQuickTargetEnemy}
             onInspectHero={onInspectHero}
-            onWebGLFallback={() => setMapMode('3d')}
+            viewMode={viewMode}
+            showRealms={showTerritory}
+            paused={paused}
+            onWebGLFallback={() => setMapMode('2d')}
           />
         ) : (
           <div
             className="w-full h-full map-3d-surface relative theme-art-grade scroll-mount overflow-hidden"
-            style={{
-              transform: is3D
-                ? 'rotateX(15deg) scale(0.9) translateY(-2.5%)'
-                : 'rotateX(0deg) scale(1)',
-            }}
           >
             {/* 60fps Seasonal Weather, Volumetric Drifting Clouds & Battle Smoke Overlay */}
             <MapAtmosphereCanvas
@@ -1556,8 +1566,8 @@ export function StrategyMap({
             <Compass className="w-3 h-3 text-cyan-400" />
             <span>
               {lang === 'zh'
-                ? '3D 沙盘视图 · 滚轮缩放 · 点击头像查看名将档案'
-                : '3D Tabletop View · Scroll to zoom · Click portraits to inspect heroes'}
+                ? '平面地图 · 滚轮缩放 · 点击头像查看名将档案'
+                : 'Flat map · Scroll to zoom · Click portraits to inspect heroes'}
             </span>
           </div>
         )}

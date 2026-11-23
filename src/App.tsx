@@ -90,6 +90,9 @@ import { battleAudio } from './utils/battleAudio.js';
 
 type RightTab = 'city' | 'heroes' | 'tech' | 'advisor' | 'diplomacy' | 'chronicle';
 
+/** How long an army is shown riding across the map before its battle opens. */
+const MAP_MARCH_MS = 1500;
+
 interface WarTheaterQueueItem {
   scene: WarSceneConfig;
   march: ActiveMapMarch;
@@ -531,7 +534,7 @@ export default function App() {
         onAfterTactical: tacticalMarch.onAfterTactical,
       });
       setTacticalMarch(null);
-    }, 900);
+    }, MAP_MARCH_MS);
     return () => window.clearTimeout(timer);
   }, [tacticalMarch]);
 
@@ -541,7 +544,7 @@ export default function App() {
     battleAudio.playWarDrum(0.26);
     const timer = window.setTimeout(() => {
       setWarStage('theater');
-    }, 920);
+    }, MAP_MARCH_MS);
     return () => window.clearTimeout(timer);
   }, [warStage, warQueue]);
 
@@ -1204,6 +1207,11 @@ export default function App() {
               setAttackMode(false);
             }}
             onInspectHero={handleInspectHero}
+            paused={
+              Boolean(activeDuel) ||
+              Boolean(activeTactical) ||
+              (warStage !== 'idle' && warStage !== 'march')
+            }
           />
 
           {gameState.chronicle[0] && (
