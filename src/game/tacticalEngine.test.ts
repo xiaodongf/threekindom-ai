@@ -1,17 +1,69 @@
 import { describe, expect, it } from 'vitest';
-import { applyTacticalBattleOutcome, createNewGame } from './engine.js';
 import {
+  applyTacticalBattleOutcome,
+  buildAssaultConfig,
+  createNewGame,
+  estimateBattlePreview,
+  performAttackCity,
+} from './engine.js';
+import {
+  GATE_BASE_HP,
+  GATE_HP_PER_DEFENSE,
   calculateStratagemSuccess,
   createTacticalBattle,
   endTacticalSideTurn,
   executeArtOfWarStratagem,
+  executeGateAttack,
   executeGunpowderBomb,
+  executeHeroSignatureSkill,
+  executeTacticalAttack,
   extractTacticalBattleOutcome,
   generateCityTacticalGrid,
+  getGateAttackTargets,
+  getHeroSkillTargetCoords,
+  getRampartDefBonus,
   getReachableTiles,
+  moveTacticalUnit,
   previewAttack,
   resolveTacticalBattleByAI,
 } from './tacticalEngine.js';
+import type { TacticalBattleState, TacticalUnit } from './tacticalTypes.js';
+import type { GameState } from './types.js';
+
+/** Shu marches from Jiangling on neutral Xiangyang (river map, walls Lv.3). */
+function xiangyangBattle(
+  game: GameState = createNewGame('shu'),
+  troops = 9000,
+  overrides: Partial<Parameters<typeof createTacticalBattle>[1]> = {}
+): TacticalBattleState {
+  return createTacticalBattle(
+    game,
+    {
+      id: 't-helper',
+      fromCityId: 'jiangling',
+      toCityId: 'xiangyang',
+      attackerFaction: 'shu',
+      defenderFaction: 'neutral',
+      playerSide: 'attacker',
+      primaryTroops: troops,
+      tactic: 'assault',
+      attackerGeneralId: 'guanyu',
+      consumeAP: true,
+      ...overrides,
+    },
+    () => 0.1
+  );
+}
+
+function place(
+  battle: TacticalBattleState,
+  placements: Record<string, Partial<TacticalUnit>>
+): TacticalBattleState {
+  return {
+    ...battle,
+    units: battle.units.map((u) => (placements[u.id] ? { ...u, ...placements[u.id] } : u)),
+  };
+}
 
 describe('8x8 Direct Tactical Grid Battle Engine — The Art of War Edition', () => {
   it('generates city-matched 8x8 maps with water/bridges/fords near rivers & lakes, forests, walls, gates, and citadel', () => {
@@ -304,3 +356,257 @@ describe('8x8 Direct Tactical Grid Battle Engine — The Art of War Edition', ()
     }
   });
 });
+
+describe('8x8 Tactical Grid — balance rules that tie the grid to the campaign', () => {
+  it('deploys exactly the troops committed and never returns more than marched out', () => {
+    const game = createNewGame('shu');
+    const battle = xiangyangBattle(game, 1000);
+    const attackers = battle.units.filter((u) => u.side === 'attacker');
+    const defenders = battle.units.filter((u) => u.side === 'defender');
+    expect(attackers.reduce((sum, u) => sum + u.troops, 0)).toBe(1000);
+    expect(defenders.reduce((sum, u) => sum + u.troops, 0)).toBe(game.cities.xiangyang.troops);
+    expect(battle.attackerStartTroops).toBe(1000);
+
+    // Even if the attackers somehow "healed" beyond what they brought, the campaign caps the survivors.
+    const inflated: TacticalBattleState = {
+      ...battle,
+      winner: 'defender',
+      units: battle.units.map((u) => (u.side === 'attacker' ? { ...u, troops: 5000 } : u)),
+    };
+    const after = applyTacticalBattleOutcome(game, extractTacticalBattleOutcome(inflated), () => 0.5);
+    expect(after.cities.jiangling.troops).toBe(game.cities.jiangling.troops);
+  });
+
+  it('scales morale loss by the share of the squad that falls, not by the number of hits', () => {
+    const base = xiangyangBattle(createNewGame('shu'), 9000);
+    const striker = base.units.find((u) => u.id === 'def-0')!;
+    const small = place(base, {
+      'def-0': { row: 3, col: 3 },
+      'atk-lead': { row: 3, col: 2, troops: 3000, maxTroops: 3000 },
+    });
+    const large = place(base, {
+      'def-0': { row: 3, col: 3 },
+      'atk-lead': { row: 3, col: 2, troops: 12000, maxTroops: 12000 },
+    });
+    const dropSmall = previewAttack(small, { ...striker, row: 3, col: 3 }, small.units.find((u) => u.id === 'atk-lead')!);
+    const dropLarge = previewAttack(large, { ...striker, row: 3, col: 3 }, large.units.find((u) => u.id === 'atk-lead')!);
+    // Same blow, same casualties: the 12,000-man squad barely notices, the 3,000-man squad is shaken.
+    expect(dropLarge.estimatedDamage).toBe(dropSmall.estimatedDamage);
+    expect(dropLarge.moraleDrop).toBeLessThan(dropSmall.moraleDrop / 3);
+    expect(dropLarge.moraleDrop).toBeLessThan(10);
+  });
+
+  it('lets a broken squad rout with its survivors, but makes an encircled one surrender', () => {
+    const base = xiangyangBattle(createNewGame('shu'), 9000);
+    // A wavering defender squad out in the open, struck by one attacker: it routs and escapes.
+    const routing = place(base, {
+      'def-2': { row: 3, col: 4, morale: 4, troops: 6000, maxTroops: 6000 },
+      'atk-lead': { row: 3, col: 3 },
+      'atk-deputy': { row: 0, col: 0 },
+      'atk-support': { row: 7, col: 0 },
+    });
+    const afterRout = executeTacticalAttack(routing, 'atk-lead', 'def-2');
+    const routed = afterRout.units.find((u) => u.id === 'def-2')!;
+    expect(routed.defeated).toBe(true);
+    expect(routed.routed).toBe(true);
+    expect(routed.surrendered).toBe(false);
+    expect(routed.escapedTroops).toBeGreaterThan(0);
+    const outcomeRout = extractTacticalBattleOutcome({ ...afterRout, winner: 'attacker' });
+    expect(outcomeRout.defenderEscapedTroops).toBe(routed.escapedTroops);
+    expect(outcomeRout.defenderRemainingTroops).toBeGreaterThanOrEqual(routed.escapedTroops);
+
+    // The same squad hemmed in by three attackers has nowhere to run: it lays down arms.
+    const encircled = place(base, {
+      'def-2': { row: 3, col: 4, morale: 4, troops: 6000, maxTroops: 6000 },
+      'atk-lead': { row: 3, col: 3 },
+      'atk-deputy': { row: 2, col: 4 },
+      'atk-support': { row: 4, col: 4 },
+    });
+    const afterSurrender = executeTacticalAttack(encircled, 'atk-lead', 'def-2');
+    const surrendered = afterSurrender.units.find((u) => u.id === 'def-2')!;
+    expect(surrendered.defeated).toBe(true);
+    expect(surrendered.surrendered).toBe(true);
+    expect(surrendered.escapedTroops).toBe(0);
+  });
+
+  it('keeps gates shut until battered down and only counts the flag after a breach', () => {
+    const game = createNewGame('shu');
+    let battle = xiangyangBattle(game, 9000);
+    const gateHp = GATE_BASE_HP + game.cities.xiangyang.defense * GATE_HP_PER_DEFENSE;
+    expect(battle.grid[3][6].gateHp).toBe(gateHp);
+    expect(battle.breached).toBe(false);
+
+    // Clear the gateway and stand an attacker in front of it: the gate is closed to him.
+    battle = place(battle, {
+      'def-0': { row: 1, col: 6 },
+      'def-1': { row: 6, col: 6 },
+      'def-2': { row: 0, col: 7 },
+      'atk-lead': { row: 3, col: 5, hasMoved: false, hasActed: false },
+    });
+    const lead = () => battle.units.find((u) => u.id === 'atk-lead')!;
+    expect(getReachableTiles(battle, lead()).some((p) => p.row === 3 && p.col === 6)).toBe(false);
+    expect(getGateAttackTargets(battle, lead())).toContainEqual({ row: 3, col: 6 });
+
+    // A runner who slips around the wall onto the flag does NOT take the city while the gates hold.
+    const runner = moveTacticalUnit(
+      place(battle, { 'atk-deputy': { row: 2, col: 7, hasMoved: false } }),
+      'atk-deputy',
+      3,
+      7
+    );
+    expect(runner.grid[3][7].type).toBe('citadel');
+    expect(runner.units.find((u) => u.id === 'atk-deputy')!.row).toBe(3);
+    expect(runner.winner).toBeNull();
+
+    // Batter the gate down blow by blow.
+    let blows = 0;
+    while (!battle.breached && blows < 12) {
+      battle = executeGateAttack(battle, 'atk-lead', 3, 6);
+      battle = place(battle, { 'atk-lead': { hasActed: false } });
+      blows += 1;
+    }
+    expect(battle.breached).toBe(true);
+    expect(blows).toBeGreaterThanOrEqual(2);
+    expect(battle.grid[3][6].gateHp).toBe(0);
+    expect(battle.lastCallout?.kind).toBe('breach');
+    expect(getReachableTiles(battle, lead()).some((p) => p.row === 3 && p.col === 6)).toBe(true);
+
+    // With the city open, stepping onto the flag wins the battle.
+    const taken = moveTacticalUnit(
+      place(battle, { 'atk-deputy': { row: 2, col: 7, hasMoved: false } }),
+      'atk-deputy',
+      3,
+      7
+    );
+    expect(taken.winner).toBe('attacker');
+  });
+
+  it('makes city wall level matter: stronger gates and more protection for defenders on the works', () => {
+    const game = createNewGame('shu');
+    const withWalls = (level: number) =>
+      xiangyangBattle({
+        ...game,
+        cities: { ...game.cities, xiangyang: { ...game.cities.xiangyang, defense: level } },
+      });
+    const low = withWalls(1);
+    const high = withWalls(5);
+    expect(high.grid[3][6].gateHp!).toBeGreaterThan(low.grid[3][6].gateHp!);
+    expect(getRampartDefBonus(high)).toBeGreaterThan(getRampartDefBonus(low));
+
+    const strike = (battle: TacticalBattleState) => {
+      const b = place(battle, { 'atk-lead': { row: 3, col: 5 } });
+      return previewAttack(b, b.units.find((u) => u.id === 'atk-lead')!, b.units.find((u) => u.id === 'def-0')!);
+    };
+    expect(strike(high).estimatedDamage).toBeLessThan(strike(low).estimatedDamage);
+    // A blow on the squad holding the gateway also batters the gate itself.
+    expect(strike(low).gateDamage).toBeGreaterThan(0);
+
+    // The War Room plan reaches the grid: Siege Engines hit gates harder and blunt the walls.
+    const siege = xiangyangBattle(game, 9000, { tactic: 'siege' });
+    const assault = xiangyangBattle(game, 9000, { tactic: 'assault' });
+    expect(strike(siege).gateDamage).toBeGreaterThan(strike(assault).gateDamage);
+    expect(strike(assault).principles.some((p) => p.id === 'tactic_assault')).toBe(true);
+    // A Fire Attack plan arrives with an extra Stratagem Point.
+    expect(xiangyangBattle(game, 9000, { tactic: 'fire' }).sp.attacker).toBe(assault.sp.attacker + 1);
+  });
+
+  it('respects campaign skill cooldowns and puts every hero who used a skill on cooldown', () => {
+    const game = createNewGame('shu');
+    const cooling: GameState = {
+      ...game,
+      generals: { ...game.generals, guanyu: { ...game.generals.guanyu, skillCooldown: 2 } },
+    };
+    const locked = xiangyangBattle(cooling);
+    const lockedLead = locked.units.find((u) => u.id === 'atk-lead')!;
+    expect(lockedLead.skillLocked).toBe(true);
+    expect(getHeroSkillTargetCoords(locked, lockedLead)).toEqual([]);
+    const adjacent = place(locked, { 'atk-lead': { row: 3, col: 5 } });
+    expect(executeHeroSignatureSkill(adjacent, 'atk-lead', 3, 6)).toBe(adjacent);
+
+    // Wei assaults Jiangling; only the DEFENDER (Guan Yu) uses his signature skill.
+    const weiGame = createNewGame('wei');
+    const battle = createTacticalBattle(
+      weiGame,
+      buildAssaultConfig(weiGame, 'wei', 'xuchang', 'xiangyang', 9000, 'assault', undefined, true, {
+        useSignatureSkill: true,
+      })!,
+      () => 0.1
+    );
+    const attackerHeroId = battle.units.find((u) => u.side === 'attacker' && u.heroId)!.heroId!;
+    const finished: TacticalBattleState = {
+      ...battle,
+      winner: 'defender',
+      // pretend a defending hero spent a skill by tagging a defender squad with a known hero
+      units: battle.units.map((u) =>
+        u.id === 'def-0' ? { ...u, heroId: 'guanyu', skillUsed: true } : u
+      ),
+    };
+    const outcome = extractTacticalBattleOutcome(finished);
+    expect(outcome.skillUsedHeroIds).toEqual(['guanyu']);
+    // The report credits no attacking skill, and the attacking general is NOT put on cooldown.
+    expect(outcome.skillTriggered).toBeUndefined();
+    const after = applyTacticalBattleOutcome(weiGame, outcome, () => 0.5);
+    expect(after.generals[attackerHeroId].skillCooldown).toBe(0);
+    expect(after.generals.guanyu.skillCooldown).toBe(weiGame.generals.guanyu.signatureSkill.cooldownTurns);
+    expect(after.lastBattle?.skillTriggered).toBeUndefined();
+  });
+
+  it('resolves auto-battles and the War Room forecast with the same grid engine', () => {
+    const game = createNewGame('shu');
+    const strong: GameState = {
+      ...game,
+      cities: { ...game.cities, jiangling: { ...game.cities.jiangling, troops: 40000 } },
+    };
+
+    // The forecast is deterministic for the same order and grows with the force committed.
+    const few = estimateBattlePreview(strong, 'shu', 'jiangling', 'xiangyang', 3000, 'siege', 'guanyu');
+    const fewAgain = estimateBattlePreview(strong, 'shu', 'jiangling', 'xiangyang', 3000, 'siege', 'guanyu');
+    const many = estimateBattlePreview(strong, 'shu', 'jiangling', 'xiangyang', 30000, 'siege', 'guanyu');
+    expect(fewAgain.estimatedWinChance).toBe(few.estimatedWinChance);
+    expect(few.estimatedWinChance).toBeLessThan(30);
+    expect(many.estimatedWinChance).toBeGreaterThan(90);
+    expect(many.samples).toBeGreaterThan(0);
+    expect(many.modifiers.some((m) => m.label.en.startsWith('City Walls'))).toBe(true);
+
+    // The auto-battle agrees with what was forecast: a hopeless assault fails, an overwhelming one succeeds.
+    let captures = 0;
+    for (let i = 0; i < 10; i++) {
+      const res = performAttackCity(strong, 'shu', 'jiangling', 'xiangyang', 30000, 'siege', 'guanyu');
+      if (res.cities.xiangyang.owner === 'shu') captures += 1;
+    }
+    expect(captures).toBeGreaterThanOrEqual(9);
+    let failures = 0;
+    for (let i = 0; i < 10; i++) {
+      const res = performAttackCity(strong, 'shu', 'jiangling', 'xiangyang', 3000, 'siege', 'guanyu');
+      if (res.cities.xiangyang.owner === 'neutral') failures += 1;
+      // Survivors of a failed assault come home; the staging city never gains troops from a defeat.
+      expect(res.cities.jiangling.troops).toBeLessThanOrEqual(strong.cities.jiangling.troops);
+    }
+    expect(failures).toBeGreaterThanOrEqual(8);
+  });
+
+  it('lets the survivors of a fallen garrison withdraw to a friendly neighbouring city', () => {
+    // Wu takes Jiangling from Shu: Shu still holds neighbouring Hanzhong and Chengdu.
+    const game = createNewGame('wu');
+    const config = buildAssaultConfig(game, 'wu', 'chaisang', 'jiangling', 9000, 'fire', undefined, true, {
+      useSignatureSkill: true,
+    })!;
+    const battle = createTacticalBattle(game, config, () => 0.1);
+    // The flag falls while most of the garrison is still standing.
+    const finished: TacticalBattleState = { ...battle, winner: 'attacker', breached: true };
+    const outcome = extractTacticalBattleOutcome(finished);
+    expect(outcome.defenderRemainingTroops).toBe(game.cities.jiangling.troops);
+
+    const after = applyTacticalBattleOutcome(game, outcome, () => 0.99);
+    expect(after.cities.jiangling.owner).toBe('wu');
+    const shuNeighbours = ['hanzhong', 'chengdu'];
+    const gained = shuNeighbours.reduce(
+      (sum, id) => sum + (after.cities[id].troops - game.cities[id].troops),
+      0
+    );
+    expect(gained).toBeGreaterThan(0);
+    expect(gained).toBeLessThan(game.cities.jiangling.troops);
+    expect(after.lastBattle?.narrative.en).toContain('withdrew to');
+  });
+});
+

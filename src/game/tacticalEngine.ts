@@ -1,9 +1,11 @@
-import { factionHasTech, getCityGenerals } from './engine.js';
+import { HERO_BONDS } from './heroes.js';
+import { factionHasTech, getChronoInsightBonus, getCityGenerals } from './queries.js';
 import type {
   ArtOfWarPrincipleTag,
   ArtOfWarStratagemDef,
   ArtOfWarStratagemId,
   AttackDamagePreview,
+  GateAttackPreview,
   GridCoord,
   StratagemSuccessPreview,
   TacticalBattleConfig,
@@ -28,8 +30,42 @@ import type {
   FactionId,
   GameState,
   General,
+  HeroBond,
   LocalizedText,
 } from './types.js';
+
+/** Gate hit points: a Lv.3 wall takes about three solid blows to break; each Fortify level adds more. */
+export const GATE_BASE_HP = 1500;
+export const GATE_HP_PER_DEFENSE = 600;
+/** Share of a blow that also batters the gate when its target is standing in the gateway. */
+export const GATE_SPLASH_SHARE = 0.5;
+/**
+ * Morale lost per 100% of a squad's full strength killed in a single blow. Morale loss follows the
+ * share of the squad that falls, not the number of hits, so a large army is not broken by pinpricks:
+ * a fresh squad (morale 84) breaks once it has lost roughly 70% of its men.
+ */
+export const MORALE_LOSS_PER_FULL_STRENGTH = 120;
+/**
+ * Fire Attack casualties on the tile set alight / the tile the wind carries it to, before the
+ * caster's Intellect, squad size, wind and forest multipliers. Kept below a direct blow (920)
+ * because it ignores cover, draws no counter-attack and reaches three tiles.
+ */
+export const FIRE_ATTACK_DAMAGE = 700;
+export const FIRE_SPREAD_DAMAGE = 380;
+/**
+ * Standing in Blazing Fire burns this share of a squad each round, up to a cap - a blaze is only
+ * so wide, so it must not melt a 12,000-man squad four times faster than a 3,000-man one.
+ */
+export const BURN_SHARE = 0.14;
+export const BURN_CAP = 600;
+/**
+ * Enemy squads that must stand next to a squad for it to count as encircled - the same three
+ * (the striker plus two more) that earn the "Encircled!" attack bonus. An encircled squad whose
+ * morale breaks cannot run and surrenders; with fewer around it, it routs and its survivors escape.
+ */
+export const ENCIRCLEMENT_SQUADS = 3;
+/** Squads on opposite sides of a sworn bond must fight within this many tiles to feel it. */
+export const BOND_RANGE = 2;
 
 export const WATER_ADJACENT_CITY_IDS = new Set([
   'xiangyang',
@@ -268,8 +304,8 @@ export function generateCityTacticalGrid(
       col: c,
       type,
       fireTurns: 0,
-      gateHp: type === 'gate' ? 2000 + cityDefense * 500 : undefined,
-      gateMaxHp: type === 'gate' ? 2000 + cityDefense * 500 : undefined,
+      gateHp: type === 'gate' ? GATE_BASE_HP + cityDefense * GATE_HP_PER_DEFENSE : undefined,
+      gateMaxHp: type === 'gate' ? GATE_BASE_HP + cityDefense * GATE_HP_PER_DEFENSE : undefined,
     };
   };
 
@@ -366,7 +402,8 @@ export function generateCityTacticalGrid(
 
   // Defender City Ramparts (Column 6) & Citadel Command Flag (Row 3, Col 7)
   // Rows 1,2,5,6 are fortress walls (impassable to attackers until blown open by Black Powder);
-  // Rows 3,4 are City Gates (walkable, +30% DEF for defenders); Rows 0 & 7 remain flank routes!
+  // Rows 3,4 are City Gates: closed to attackers until battered down (HP scales with the city's wall level).
+  // Rows 0 & 7 remain flank routes into the city, but the Citadel Flag only counts once a gate or wall is breached.
   setT(1, 6, 'wall');
   setT(2, 6, 'wall');
   setT(3, 6, 'gate');
@@ -414,6 +451,8 @@ function buildSquadUnit(params: {
   forceNavalClass?: boolean;
   isFlankSquad?: boolean;
   initialMorale?: number;
+  skillLocked?: boolean;
+  stealthyMarch?: boolean;
 }): TacticalUnit {
   const unitClass = heroToUnitClass(
     params.hero,
@@ -444,8 +483,9 @@ function buildSquadUnit(params: {
     isNavalCapable: params.isNavalCapable,
     row: params.row,
     col: params.col,
-    troops: Math.max(500, Math.round(params.troops)),
-    maxTroops: Math.max(500, Math.round(params.troops)),
+    // Exactly the men committed: no minimum, so a token force is not padded with phantom soldiers.
+    troops: Math.max(1, Math.round(params.troops)),
+    maxTroops: Math.max(1, Math.round(params.troops)),
     morale: clamp(params.initialMorale ?? 82, 20, 100),
     war: params.hero?.war ?? 68,
     intellect: params.hero?.intellect ?? 64,
@@ -456,6 +496,7 @@ function buildSquadUnit(params: {
     hasMoved: false,
     hasActed: false,
     skillUsed: false,
+    skillLocked: Boolean(params.skillLocked) || Boolean(params.hero && params.hero.skillCooldown > 0),
     isHiddenAmbush: false,
     disorderedTurns: 0,
     intimidatedTurns: 0,
@@ -464,8 +505,18 @@ function buildSquadUnit(params: {
     deathGroundTurns: 0,
     wffmTurns: 0,
     isFlankSquad: params.isFlankSquad,
+    stealthyMarch: Boolean(params.stealthyMarch),
     defeated: false,
+    escapedTroops: 0,
   };
+}
+
+/** Split a force into squads by weight so the squads add up to exactly the troops committed. */
+function splitTroops(total: number, weights: number[]): number[] {
+  const whole = Math.max(weights.length, Math.round(total));
+  const parts = weights.map((w) => Math.max(1, Math.floor(whole * w)));
+  parts[0] += whole - parts.reduce((sum, n) => sum + n, 0);
+  return parts;
 }
 
 export function createTacticalBattle(
@@ -514,9 +565,23 @@ export function createTacticalBattle(
     (g) => g.id !== leadAtkHero?.id && g.id !== deputyAtkHero?.id
   );
 
-  const pincerTroops = config.pincerFromCityId && config.pincerTroops ? config.pincerTroops : 0;
-  const totalAtkTroops = Math.max(1500, config.primaryTroops + pincerTroops);
-  const totalDefTroops = Math.max(1500, targetCity?.troops ?? 6000);
+  // A pincer column needs at least 1,000 men to count (same threshold the campaign layer deducts by).
+  const pincerTroops =
+    config.pincerFromCityId && config.pincerTroops && config.pincerTroops >= 1000
+      ? Math.round(config.pincerTroops)
+      : 0;
+  const totalDefTroops = Math.max(1, Math.round(targetCity?.troops ?? 6000));
+  const [leadTroops, deputyTroops, supportTroops] = splitTroops(
+    config.primaryTroops,
+    pincerTroops > 0 ? [0.48, 0.28, 0.24] : [0.45, 0.3, 0.25]
+  );
+  // The lead general's signature skill sits out if held in reserve or already spent in the pre-battle duel.
+  const leadSkillLocked =
+    Boolean(config.holdLeadSkill) ||
+    Boolean(
+      config.initialDuelResult?.skillUsed &&
+        config.initialDuelResult.attackerHeroId === leadAtkHero?.id
+    );
 
   const duelMoraleAtk =
     config.initialDuelResult?.winner === 'attacker'
@@ -534,7 +599,6 @@ export function createTacticalBattle(
   const units: TacticalUnit[] = [];
 
   // Attacker Squads (3 primary + optional 4th Joint Pincer Flank Squad!)
-  const atkSplits = pincerTroops >= 1000 ? [0.4, 0.25, 0.2] : [0.45, 0.3, 0.25];
   const atkSpawns: Array<[number, number]> = [
     [3, 1],
     [2, 0],
@@ -546,27 +610,30 @@ export function createTacticalBattle(
       id: 'atk-lead',
       side: 'attacker',
       faction: config.attackerFaction,
+      stealthyMarch: config.tactic === 'ambush',
       hero: leadAtkHero,
       fallbackName: { en: 'Vanguard Commander', zh: '先锋主将' },
       fallbackIndex: 0,
       row: atkSpawns[0][0],
       col: atkSpawns[0][1],
-      troops: config.primaryTroops * (pincerTroops >= 1000 ? 0.48 : atkSplits[0]),
+      troops: leadTroops,
       hasStirrups: atkStirrups,
       isNavalCapable: atkNavalCapable,
       forceNavalClass: Boolean(config.isRiverStrike),
       initialMorale: duelMoraleAtk,
+      skillLocked: leadSkillLocked,
     }),
     buildSquadUnit({
       id: 'atk-deputy',
       side: 'attacker',
       faction: config.attackerFaction,
+      stealthyMarch: config.tactic === 'ambush',
       hero: deputyAtkHero,
       fallbackName: { en: 'Left Wing Cavalry', zh: '左翼骑军' },
       fallbackIndex: 1,
       row: atkSpawns[1][0],
       col: atkSpawns[1][1],
-      troops: config.primaryTroops * (pincerTroops >= 1000 ? 0.28 : atkSplits[1]),
+      troops: deputyTroops,
       hasStirrups: atkStirrups,
       isNavalCapable: atkNavalCapable,
       forceNavalClass: Boolean(config.isRiverStrike),
@@ -576,12 +643,13 @@ export function createTacticalBattle(
       id: 'atk-support',
       side: 'attacker',
       faction: config.attackerFaction,
+      stealthyMarch: config.tactic === 'ambush',
       hero: thirdAtkHero,
       fallbackName: { en: 'Strategist Archers', zh: '中军弓弩营' },
       fallbackIndex: 2,
       row: atkSpawns[2][0],
       col: atkSpawns[2][1],
-      troops: config.primaryTroops * (pincerTroops >= 1000 ? 0.24 : atkSplits[2]),
+      troops: supportTroops,
       hasStirrups: atkStirrups,
       isNavalCapable: atkNavalCapable,
       initialMorale: duelMoraleAtk,
@@ -589,7 +657,7 @@ export function createTacticalBattle(
   );
 
   // 4th Joint Pincer Flank Squad spawning on the northern flank (row 0, col 1 or 4)
-  if (pincerTroops >= 1000 && config.pincerFromCityId) {
+  if (pincerTroops > 0 && config.pincerFromCityId) {
     const pincerHero = getCityGenerals(gameState, config.pincerFromCityId).find(
       (g) => g.id !== leadAtkHero?.id && g.id !== deputyAtkHero?.id && g.id !== thirdAtkHero?.id
     );
@@ -599,6 +667,7 @@ export function createTacticalBattle(
         id: 'atk-pincer',
         side: 'attacker',
         faction: config.attackerFaction,
+        stealthyMarch: config.tactic === 'ambush',
         hero: pincerHero,
         fallbackName: { en: 'Pincer Flank Corps', zh: '合围奇兵' },
         fallbackIndex: 1,
@@ -616,14 +685,18 @@ export function createTacticalBattle(
   // Defender Squads (up to 3 stationed heroes + Garrison Captain on Gate/Citadel)
   const defHeroes = getCityGenerals(gameState, config.toCityId);
   const defCount = Math.max(3, Math.min(4, defHeroes.length + (defHeroes.length < 3 ? 1 : 0)));
+  // The garrison starts behind its works: two squads in the gateways, the rest manning the walls
+  // beside them. (Squads posted outside the walls were cut down before they could fall back.)
   const defSpawns: Array<[number, number]> = [
     [3, 6], // Holding North City Gate!
     [4, 6], // Holding South City Gate!
-    [2, 5], // Forward High Ground / Flank
-    [5, 5], // Southern Forward Flank
+    [2, 6], // North wall, beside the gate
+    [5, 6], // South wall, beside the gate
   ];
-  const defWeights =
-    defCount === 4 ? [0.32, 0.26, 0.22, 0.2] : [0.4, 0.32, 0.28];
+  const defSquadTroops = splitTroops(
+    totalDefTroops,
+    defCount === 4 ? [0.32, 0.26, 0.22, 0.2] : [0.4, 0.32, 0.28]
+  );
 
   for (let i = 0; i < defCount; i++) {
     const h = defHeroes[i];
@@ -644,7 +717,7 @@ export function createTacticalBattle(
         fallbackIndex: i === 2 ? 2 : i,
         row: sr,
         col: safeCol,
-        troops: totalDefTroops * defWeights[i],
+        troops: defSquadTroops[i],
         hasStirrups: defStirrups,
         isNavalCapable: defNavalCapable,
         initialMorale: duelMoraleDef,
@@ -663,13 +736,30 @@ export function createTacticalBattle(
     .reduce((sum, u) => sum + u.troops, 0);
 
   const introLog: LocalizedText = {
-    en: `Battle of ${targetCity?.name.en || config.toCityId} begins! Wind: ${WIND_DELTA[wind].label.en}. Seize the Citadel Flag or rout the enemy!`,
-    zh: `${targetCity?.name.zh || config.toCityId}之战打响！当前风向：${WIND_DELTA[wind].label.zh}。夺取城池本阵或全歼敌军即可获胜！`,
+    en: `Battle of ${targetCity?.name.en || config.toCityId} begins! Wind: ${WIND_DELTA[wind].label.en}. Break a gate and seize the Citadel Flag, or rout the enemy!`,
+    zh: `${targetCity?.name.zh || config.toCityId}之战打响！当前风向：${WIND_DELTA[wind].label.zh}。攻破城门后夺取本阵大旗，或击溃全部守军即可获胜！`,
   };
+
+  // Campaign context that follows the armies onto the grid.
+  const playerFaction = gameState.playerFaction;
+  const coalitionSide: TacticalSide | null = !gameState.chrono.coalitionActive
+    ? null
+    : config.attackerFaction !== playerFaction && defFaction === playerFaction
+      ? 'attacker'
+      : config.attackerFaction === playerFaction && defFaction !== 'neutral'
+        ? 'defender'
+        : null;
+  const chronoInsightAtk =
+    config.attackerFaction === playerFaction ? getChronoInsightBonus(gameState) * 0.75 : 0;
 
   return {
     config,
     cityName: targetCity?.name ?? { en: config.toCityId, zh: config.toCityId },
+    cityDefense: targetCity?.defense ?? 3,
+    cityTerrain: targetCity?.terrain ?? 'plains',
+    breached: false,
+    coalitionSide,
+    chronoInsightAtk,
     hasWaterFeature,
     grid,
     units,
@@ -677,7 +767,8 @@ export function createTacticalBattle(
     maxRounds: TACTICAL_MAX_ROUNDS,
     activeSide: 'attacker',
     wind,
-    sp: { attacker: 2, defender: 2 },
+    // A Fire Attack plan arrives with kindling prepared: one extra Stratagem Point.
+    sp: { attacker: config.tactic === 'fire' ? 3 : 2, defender: 2 },
     attackerHasGunpowder: atkGunpowder,
     attackerHasStirrups: atkStirrups,
     attackerHasSteamship: atkSteamship,
@@ -694,14 +785,116 @@ export function createTacticalBattle(
       attacker: atkGunpowder ? 2 : 0,
       defender: defGunpowder ? 1 : 0,
     },
-    attackerStartTroops: Math.max(totalAtkTroops, atkStart),
-    defenderStartTroops: Math.max(totalDefTroops, defStart),
+    attackerStartTroops: atkStart,
+    defenderStartTroops: defStart,
     winner: null,
     lastCallout: null,
     logs: [{ id: nextTacId('tlog'), round: 1, side: 'system', text: introLog }],
     duelUsedOnGrid: Boolean(config.initialDuelResult),
     preBattleHeroes: { ...gameState.generals },
   };
+}
+
+// ==================== CITY WALLS, GATES & CAMPAIGN CONTEXT ====================
+
+export function isIntactGate(tile: TacticalTile): boolean {
+  return tile.type === 'gate' && (tile.gateHp ?? 0) > 0;
+}
+
+/**
+ * DEF bonus for defenders fighting from walls, standing gates, or the citadel: +50% at Lv.1,
+ * +90% at Lv.3, +130% at Lv.5. Troops behind good walls are hard to kill until a gate gives way,
+ * which is what makes Fortify (and breaking gates) worth doing.
+ */
+export const RAMPART_BASE_DEF = 0.3;
+export const RAMPART_DEF_PER_LEVEL = 0.2;
+export function getRampartDefBonus(state: TacticalBattleState): number {
+  return RAMPART_BASE_DEF + RAMPART_DEF_PER_LEVEL * state.cityDefense;
+}
+
+/** Does this squad currently enjoy the protection of the city's works? */
+function isOnRampart(state: TacticalBattleState, unit: TacticalUnit): boolean {
+  if (unit.side !== 'defender') return false;
+  const tile = state.grid[unit.row][unit.col];
+  return tile.type === 'wall' || tile.type === 'citadel' || isIntactGate(tile);
+}
+
+/** What a Siege Engines plan leaves of the walls' protection, and its bonus when battering gates. */
+export const SIEGE_PLAN_RAMPART_FACTOR = 0.7;
+export const SIEGE_PLAN_GATE_MULT = 1.5;
+/** ATK bonus a Frontal Assault plan gives every direct blow by the attacking army. */
+export const ASSAULT_PLAN_ATK = 0.15;
+
+/**
+ * Rampart DEF a squad gets against a blow from `strikerSide`. A Siege Engines plan strips away
+ * part of what the walls are worth to the attacking army - against blows, fire and skills alike.
+ */
+function rampartCoverAgainst(
+  state: TacticalBattleState,
+  target: TacticalUnit,
+  strikerSide: TacticalSide
+): number {
+  if (!isOnRampart(state, target)) return 0;
+  const siegeEngines = strikerSide === 'attacker' && state.config.tactic === 'siege';
+  return getRampartDefBonus(state) * (siegeEngines ? SIEGE_PLAN_RAMPART_FACTOR : 1);
+}
+
+function heroOfUnit(state: TacticalBattleState, unit: TacticalUnit): General | undefined {
+  return unit.heroId ? state.preBattleHeroes[unit.heroId] : undefined;
+}
+
+function opposingFaction(state: TacticalBattleState, side: TacticalSide): FactionId {
+  return side === 'attacker' ? state.config.defenderFaction : state.config.attackerFaction;
+}
+
+/** The strongest sworn bond a hero shares with a living comrade fighting within BOND_RANGE tiles. */
+export function getActiveUnitBond(
+  state: TacticalBattleState,
+  unit: TacticalUnit
+): HeroBond | undefined {
+  const hero = heroOfUnit(state, unit);
+  if (!hero || hero.bondIds.length === 0) return undefined;
+  let best: HeroBond | undefined;
+  for (const bondId of hero.bondIds) {
+    const bond = HERO_BONDS[bondId];
+    if (!bond) continue;
+    const comradeNearby = state.units.some(
+      (other) =>
+        other.id !== unit.id &&
+        !other.defeated &&
+        other.side === unit.side &&
+        Boolean(other.heroId) &&
+        bond.memberIds.includes(other.heroId!) &&
+        manhattan(other.row, other.col, unit.row, unit.col) <= BOND_RANGE
+    );
+    if (comradeNearby && (!best || bond.combatBonus > best.combatBonus)) best = bond;
+  }
+  return best;
+}
+
+/**
+ * How hard a squad hits for its size. Every source of damage a squad deals - blows, gate battering,
+ * Fire Attack, signature skills - scales by this, so a token squad cannot burn or cleave like an army.
+ */
+function squadStrengthFactor(unit: TacticalUnit): number {
+  return Math.sqrt(Math.max(400, unit.troops) / 3000);
+}
+
+/** Stone works do not hold a blaze: walls, gates and the citadel never become Blazing Fire tiles. */
+function isStoneWorks(tile: TacticalTile): boolean {
+  return tile.type === 'wall' || tile.type === 'gate' || tile.type === 'citadel';
+}
+
+/** Men a squad loses for standing in (or being dragged into) Blazing Fire for a round. */
+function burnCasualties(unit: TacticalUnit, share = BURN_SHARE): number {
+  return Math.min(unit.troops, BURN_CAP, Math.max(200, Math.round(unit.maxTroops * share)));
+}
+
+/** Morale a squad loses when `damage` of its men fall in one blow, plus any flat psychological shock. */
+function moraleLossFromCasualties(damage: number, unit: TacticalUnit, shock = 0): number {
+  if (damage <= 0) return shock;
+  const share = Math.min(1, damage / Math.max(1, unit.maxTroops));
+  return Math.round(share * MORALE_LOSS_PER_FULL_STRENGTH) + shock;
 }
 
 // ==================== MOVEMENT & PATHFINDING ====================
@@ -731,12 +924,15 @@ export function getTileMoveCost(
   unit: TacticalUnit
 ): number | null {
   if (tile.type === 'wall' && unit.side === 'attacker') return null;
+  if (isIntactGate(tile) && unit.side === 'attacker') return null;
   if (tile.type === 'water') {
     return unit.isNavalCapable ? 1 : null;
   }
   if (tile.fireTurns > 0) return 2;
   if (tile.type === 'forest' || tile.type === 'hill' || tile.type === 'ford') {
     if (unit.wffmTurns > 0 && unit.wffmStance === 'wind') return 1;
+    // A Mountain Ambush plan scouts hidden trails: forests and hills do not slow the attackers.
+    if (unit.stealthyMarch && tile.type !== 'ford') return 1;
     return 2;
   }
   return 1;
@@ -952,14 +1148,100 @@ export function previewAttack(
       positive: true,
     });
   }
-  if ((defTile.type === 'wall' || defTile.type === 'gate' || defTile.type === 'citadel') && defender.side === 'defender') {
-    defMult += 0.3;
+  const tactic = state.config.tactic;
+  // Siege Engines strip away part of what the walls are worth; a breached gate is worth nothing.
+  const rampart = rampartCoverAgainst(state, defender, attacker.side);
+  if (rampart > 0) {
+    const siegeEngines = attacker.side === 'attacker' && tactic === 'siege';
+    defMult += rampart;
     principles.push({
       id: 'city_ramparts',
-      label: { en: 'City Ramparts / Gate', zh: '城墙城门防御' },
-      value: '+30% DEF',
+      label: siegeEngines
+        ? { en: `Walls Lv.${state.cityDefense} (weakened by Siege Engines)`, zh: `城防 Lv.${state.cityDefense}（器械削弱）` }
+        : { en: `City Walls Lv.${state.cityDefense}`, zh: `城墙城门 Lv.${state.cityDefense}` },
+      value: `+${Math.round(rampart * 100)}% DEF`,
       positive: false,
     });
+  }
+
+  // Campaign context: the plan chosen in the War Room, faction traits, sworn bonds, vendettas, coalition.
+  if (attacker.side === 'attacker' && tactic === 'assault') {
+    atkMult += ASSAULT_PLAN_ATK;
+    principles.push({
+      id: 'tactic_assault',
+      label: { en: 'Frontal Assault Plan', zh: '正面强攻之策' },
+      value: `+${Math.round(ASSAULT_PLAN_ATK * 100)}% ATK`,
+      positive: true,
+    });
+  }
+  if (attacker.faction === 'shu' && attacker.heroId) {
+    atkMult += 0.1;
+    principles.push({
+      id: 'trait_shu_valor',
+      label: { en: 'Shu Benevolent Valor', zh: '蜀汉仁德精兵' },
+      value: '+10% ATK',
+      positive: true,
+    });
+  }
+  if (defender.side === 'defender' && defender.faction === 'shu' && state.cityTerrain === 'mountain') {
+    defMult += 0.12;
+    principles.push({
+      id: 'trait_shu_mountain',
+      label: { en: 'Shu Mountain Defense', zh: '蜀道山险' },
+      value: '+12% DEF',
+      positive: false,
+    });
+  }
+  const bond = getActiveUnitBond(state, attacker);
+  if (bond) {
+    atkMult += bond.combatBonus;
+    principles.push({
+      id: 'sworn_bond',
+      label: bond.name,
+      value: `+${Math.round(bond.combatBonus * 100)}% ATK`,
+      positive: true,
+    });
+  }
+  const strikerHero = heroOfUnit(state, attacker);
+  const strikerFoe = opposingFaction(state, attacker.side);
+  if (strikerHero && strikerFoe !== 'neutral' && strikerHero.vendettaAgainst.includes(strikerFoe)) {
+    atkMult += 0.2;
+    principles.push({
+      id: 'vendetta',
+      label: { en: 'Sworn Vendetta', zh: '血海深仇' },
+      value: '+20% ATK',
+      positive: true,
+    });
+  }
+  if (state.coalitionSide === attacker.side) {
+    atkMult += 0.12;
+    principles.push({
+      id: 'coalition_atk',
+      label: { en: 'Coalition Resolve', zh: '合纵联军之势' },
+      value: '+12% ATK',
+      positive: true,
+    });
+  }
+  if (state.coalitionSide === defender.side) {
+    defMult += 0.12;
+    principles.push({
+      id: 'coalition_def',
+      label: { en: 'Coalition Resolve', zh: '合纵联军死守' },
+      value: '+12% DEF',
+      positive: false,
+    });
+  }
+  if (attacker.side === 'attacker' && state.chronoInsightAtk > 0) {
+    const targetHero = heroOfUnit(state, defender);
+    if (targetHero && targetHero.dossier.weakToTactic === tactic) {
+      atkMult += state.chronoInsightAtk;
+      principles.push({
+        id: 'chrono_insight',
+        label: { en: 'Chrono-Insight: Known Flaw', zh: '先知克制软肋' },
+        value: `+${Math.round(state.chronoInsightAtk * 100)}% ATK`,
+        positive: true,
+      });
+    }
   }
 
   // Naval & Modern Tech bonuses
@@ -1055,7 +1337,7 @@ export function previewAttack(
     });
   }
 
-  const troopFactor = Math.sqrt(Math.max(400, attacker.troops) / 3000);
+  const troopFactor = squadStrengthFactor(attacker);
   const rawDamage = 920 * troopFactor * Math.max(0.45, atkMult) / Math.max(0.55, defMult);
   const estimatedDamage = Math.min(defender.troops, Math.max(180, Math.round(rawDamage)));
 
@@ -1066,17 +1348,182 @@ export function previewAttack(
   if (defender.troops - estimatedDamage > 0 && dist <= defRange && defender.disorderedTurns === 0) {
     const survivingFactor = Math.sqrt(Math.max(300, defender.troops - estimatedDamage) / 3000);
     const medShield = sideHasTech(state, attacker.side, 'medicine') ? 0.78 : 1.0;
-    counterDamage = Math.min(
-      attacker.troops - 1,
-      Math.max(80, Math.round(420 * survivingFactor * (defender.war / 80) * medShield))
+    // A Mountain Ambush plan strikes from cover: attackers take 20% less in return.
+    const ambushPlan = attacker.side === 'attacker' && tactic === 'ambush' ? 0.8 : 1.0;
+    counterDamage = Math.max(
+      0,
+      Math.min(
+        attacker.troops - 1,
+        Math.max(80, Math.round(420 * survivingFactor * (defender.war / 80) * medShield * ambushPlan))
+      )
     );
   }
 
-  const moraleDrop = Math.round(
-    10 + (estimatedDamage / Math.max(1, defender.maxTroops)) * 28 + (extraAllies >= 2 ? 12 : 0)
+  // Morale follows the share of the squad that falls (plus a jolt when surrounded), never the hit count.
+  const moraleDrop = moraleLossFromCasualties(
+    estimatedDamage,
+    defender,
+    !immuneFlank && extraAllies >= 2 ? 8 : 0
+  );
+  const counterMoraleDrop = moraleLossFromCasualties(counterDamage, attacker);
+
+  // Striking a defender who holds a standing gate also batters the gate itself.
+  const gateDamage =
+    attacker.side === 'attacker' && defender.side === 'defender' && isIntactGate(defTile)
+      ? Math.round(computeGateDamage(state, attacker).damage * GATE_SPLASH_SHARE)
+      : 0;
+
+  return { estimatedDamage, counterDamage, moraleDrop, counterMoraleDrop, gateDamage, principles };
+}
+
+// ==================== BATTERING THE GATES ====================
+
+function computeGateDamage(
+  state: TacticalBattleState,
+  unit: TacticalUnit
+): { damage: number; principles: ArtOfWarPrincipleTag[] } {
+  const principles: ArtOfWarPrincipleTag[] = [];
+  let mult = 1.0 + (unit.war - 65) * 0.008 + (unit.command - 65) * 0.005;
+  mult *= 0.72 + (unit.morale / 100) * 0.42;
+  if (unit.intimidatedTurns > 0) mult *= 0.75;
+
+  if (state.config.tactic === 'siege') {
+    mult *= SIEGE_PLAN_GATE_MULT;
+    principles.push({
+      id: 'tactic_siege',
+      label: { en: 'Siege Engines Plan', zh: '围城器械之策' },
+      value: `+${Math.round((SIEGE_PLAN_GATE_MULT - 1) * 100)}% vs Gates`,
+      positive: true,
+    });
+  }
+  if (sideHasTech(state, unit.side, 'gunpowder')) {
+    mult *= 1.4;
+    principles.push({
+      id: 'gunpowder_petards',
+      label: { en: 'Black Powder Petards', zh: '黑火药破门' },
+      value: '+40% vs Gates',
+      positive: true,
+    });
+  }
+  if (heroOfUnit(state, unit)?.signatureSkill.effect === 'siege_breaker') {
+    mult *= 1.4;
+    principles.push({
+      id: 'siege_breaker',
+      label: { en: 'Born Siege Breaker', zh: '攻坚名将' },
+      value: '+40% vs Gates',
+      positive: true,
+    });
+  }
+
+  const troopFactor = squadStrengthFactor(unit);
+  return { damage: Math.max(120, Math.round(920 * troopFactor * Math.max(0.45, mult))), principles };
+}
+
+/** Standing gates an attacking squad can batter right now (an occupied gate is struck through its defender). */
+export function getGateAttackTargets(
+  state: TacticalBattleState,
+  unit: TacticalUnit
+): GridCoord[] {
+  if (unit.defeated || unit.hasActed || unit.side !== 'attacker') return [];
+  const range = getUnitEffectiveAttackRange(state, unit);
+  const coords: GridCoord[] = [];
+  for (const row of state.grid) {
+    for (const tile of row) {
+      if (!isIntactGate(tile)) continue;
+      if (manhattan(unit.row, unit.col, tile.row, tile.col) > range) continue;
+      if (getUnitAt(state, tile.row, tile.col)) continue;
+      coords.push({ row: tile.row, col: tile.col });
+    }
+  }
+  return coords;
+}
+
+export function previewGateAttack(
+  state: TacticalBattleState,
+  unit: TacticalUnit,
+  row: number,
+  col: number
+): GateAttackPreview {
+  const { damage, principles } = computeGateDamage(state, unit);
+  const hp = state.grid[row][col].gateHp ?? 0;
+  const gateDamage = Math.min(hp, damage);
+  return { gateDamage, gateHpLeft: hp - gateDamage, breaches: hp - gateDamage <= 0, principles };
+}
+
+/**
+ * Apply damage to one gate tile of a (already cloned) grid. Returns what the caller needs to
+ * announce a breach; the grid is mutated in place.
+ */
+function batterGate(
+  grid: TacticalTile[][],
+  row: number,
+  col: number,
+  damage: number
+): { dealt: number; breachedNow: boolean } {
+  const tile = grid[row][col];
+  if (!isIntactGate(tile) || damage <= 0) return { dealt: 0, breachedNow: false };
+  const dealt = Math.min(tile.gateHp ?? 0, Math.round(damage));
+  tile.gateHp = (tile.gateHp ?? 0) - dealt;
+  return { dealt, breachedNow: tile.gateHp <= 0 };
+}
+
+function breachCallout(state: TacticalBattleState, by: TacticalUnit | undefined): TacticalCallout {
+  return {
+    id: nextTacId('call'),
+    kind: 'breach',
+    title: { en: 'GATE BREACHED!', zh: '城门告破！' },
+    quote: {
+      en: '“The walls are open — the Citadel Flag is ours for the taking!”',
+      zh: '「城门已破，直取本阵大旗！」',
+    },
+    subtitle: {
+      en: `${by ? `${by.name.en} broke` : 'The attackers broke'} into ${state.cityName.en}! The Citadel Flag can now be seized.`,
+      zh: `${by ? by.name.zh : '攻城大军'}攻破${state.cityName.zh}城门！此刻起可夺取本阵大旗。`,
+    },
+    side: 'attacker',
+  };
+}
+
+export function executeGateAttack(
+  state: TacticalBattleState,
+  unitId: string,
+  row: number,
+  col: number
+): TacticalBattleState {
+  if (state.winner) return state;
+  const unit = state.units.find((u) => u.id === unitId && !u.defeated);
+  if (!unit || unit.side !== state.activeSide || unit.hasActed) return state;
+  if (!getGateAttackTargets(state, unit).some((p) => p.row === row && p.col === col)) return state;
+
+  const nextGrid = state.grid.map((r) => r.map((t) => ({ ...t })));
+  const { dealt, breachedNow } = batterGate(nextGrid, row, col, computeGateDamage(state, unit).damage);
+  const nextUnits = state.units.map((u) =>
+    u.id === unit.id ? { ...u, hasActed: true, isHiddenAmbush: false } : u
   );
 
-  return { estimatedDamage, counterDamage, moraleDrop, principles };
+  const hpLeft = nextGrid[row][col].gateHp ?? 0;
+  const summary: LocalizedText = breachedNow
+    ? {
+        en: `${unit.name.en} smashed the city gate for ${dealt.toLocaleString()} — the gate is DOWN!`,
+        zh: `${unit.name.zh}猛撞城门 ${dealt.toLocaleString()}——城门轰然洞开！`,
+      }
+    : {
+        en: `${unit.name.en} battered the city gate for ${dealt.toLocaleString()} (${hpLeft.toLocaleString()} left).`,
+        zh: `${unit.name.zh}冲撞城门 ${dealt.toLocaleString()}（城门尚余 ${hpLeft.toLocaleString()}）。`,
+      };
+
+  const nextSp = { ...state.sp };
+  if (breachedNow) nextSp.attacker = Math.min(TACTICAL_MAX_SP, nextSp.attacker + 1);
+
+  return evaluateVictory({
+    ...state,
+    grid: nextGrid,
+    units: nextUnits,
+    sp: nextSp,
+    breached: state.breached || breachedNow,
+    lastCallout: breachedNow ? breachCallout(state, unit) : state.lastCallout,
+    logs: appendLog(state, unit.side, summary),
+  });
 }
 
 // ==================== INTELLECT-DRIVEN ART OF WAR STRATAGEMS ====================
@@ -1182,6 +1629,34 @@ export function calculateStratagemSuccess(
     }
   }
 
+  // The plan chosen in the War Room readies the matching stratagems for the attacking army.
+  const planMatch =
+    caster.side === 'attacker' &&
+    ((state.config.tactic === 'fire' && stratagemId === 'fire_attack') ||
+      (state.config.tactic === 'ambush' &&
+        (stratagemId === 'feign_disorder' || stratagemId === 'empty_fort_ambush')));
+  if (planMatch) {
+    bonus += 15;
+    factors.push({
+      id: 'war_room_plan',
+      label:
+        state.config.tactic === 'fire'
+          ? { en: 'Fire Attack Plan', zh: '火攻之策已备' }
+          : { en: 'Mountain Ambush Plan', zh: '伏兵之策已备' },
+      value: '+15%',
+      positive: true,
+    });
+  }
+  if (stratagemId === 'fire_attack' && caster.faction === 'wu') {
+    bonus += 12;
+    factors.push({
+      id: 'trait_wu_fire',
+      label: { en: 'Wu Fire Mastery', zh: '东吴火攻之利' },
+      value: '+12%',
+      positive: true,
+    });
+  }
+
   if (opposingUnit && (opposingUnit.disorderedTurns > 0 || opposingUnit.morale < 45)) {
     bonus += 12;
     factors.push({
@@ -1267,6 +1742,54 @@ export function getStratagemTargetCoords(
   return coords;
 }
 
+/**
+ * Who a Fire Attack on (targetRow, targetCol) would scorch and for how much, if it succeeds:
+ * the squad on the tile set alight, plus one on the downwind tile when that is forest or a bridge.
+ */
+export function previewFireAttackHits(
+  state: TacticalBattleState,
+  caster: TacticalUnit,
+  targetRow: number,
+  targetCol: number
+): Array<{ unit: TacticalUnit; damage: number; onPrimary: boolean }> {
+  const tile = state.grid[targetRow][targetCol];
+  const wd = WIND_DELTA[state.wind];
+  const dr = targetRow + wd.dr;
+  const dc = targetCol + wd.dc;
+  const spreads =
+    inBounds(dr, dc) && (state.grid[dr][dc].type === 'forest' || state.grid[dr][dc].type === 'bridge');
+  const upwindAligned =
+    (wd.dr !== 0 && Math.sign(targetRow - caster.row) === wd.dr) ||
+    (wd.dc !== 0 && Math.sign(targetCol - caster.col) === wd.dc);
+  const windMult = upwindAligned ? 1.25 : 1.0;
+  // Wu's fire mastery makes the flames bite 20% harder; the size of the squad setting them matters too.
+  const fireMastery = (caster.faction === 'wu' ? 1.2 : 1.0) * squadStrengthFactor(caster);
+
+  const hits: Array<{ unit: TacticalUnit; damage: number; onPrimary: boolean }> = [];
+  for (const u of state.units) {
+    if (u.defeated || u.side === caster.side) continue;
+    const onPrimary = u.row === targetRow && u.col === targetCol;
+    const onSpread = spreads && u.row === dr && u.col === dc;
+    if (!onPrimary && !onSpread) continue;
+    const baseDmg = onPrimary ? FIRE_ATTACK_DAMAGE : FIRE_SPREAD_DAMAGE;
+    // Defenders behind stone take less from flames, by the same margin the walls protect them in melee.
+    const stoneCover = 1 + rampartCoverAgainst(state, u, caster.side);
+    const damage = Math.min(
+      u.troops,
+      Math.round(
+        (baseDmg *
+          (caster.intellect / 78) *
+          windMult *
+          (tile.type === 'forest' ? 1.25 : 1.0) *
+          fireMastery) /
+          stoneCover
+      )
+    );
+    hits.push({ unit: u, damage, onPrimary });
+  }
+  return hits;
+}
+
 // ==================== VICTORY CHECK HELPER ====================
 
 function evaluateVictory(state: TacticalBattleState): TacticalBattleState {
@@ -1275,11 +1798,12 @@ function evaluateVictory(state: TacticalBattleState): TacticalBattleState {
   const atkAlive = state.units.filter((u) => u.side === 'attacker' && !u.defeated);
   const defAlive = state.units.filter((u) => u.side === 'defender' && !u.defeated);
 
-  // 1. Check Citadel Flag Capture!
+  // 1. Check Citadel Flag Capture! The flag only counts once a gate or wall has been breached,
+  //    so a runner cannot take a walled city by slipping around its intact defenses.
   const citadelOccupant = state.units.find(
     (u) => !u.defeated && u.side === 'attacker' && state.grid[u.row][u.col].type === 'citadel'
   );
-  if (citadelOccupant) {
+  if (citadelOccupant && state.breached) {
     return {
       ...state,
       winner: 'attacker',
@@ -1329,31 +1853,59 @@ function evaluateVictory(state: TacticalBattleState): TacticalBattleState {
   return state;
 }
 
+/**
+ * Apply casualties and morale loss to a squad. When morale breaks while men are still alive the
+ * squad leaves the field: with a way out it routs and its survivors live to fight another day
+ * (`escapedTroops`); encircled by ENCIRCLEMENT_SQUADS or more enemy squads, or talked into
+ * submission (`noEscape`), it surrenders and they are lost.
+ */
 function applyDamageToUnit(
   state: TacticalBattleState,
   unit: TacticalUnit,
   damage: number,
   moraleDrop: number,
-  attackerSide: TacticalSide
+  attackerSide: TacticalSide,
+  opts: { noEscape?: boolean } = {}
 ): TacticalUnit {
   const nextTroops = Math.max(0, unit.troops - Math.max(0, Math.round(damage)));
   const nextMorale =
     unit.deathGroundTurns > 0
       ? Math.max(50, unit.morale - Math.round(moraleDrop * 0.4))
       : clamp(unit.morale - Math.round(moraleDrop), 0, 100);
-  const routedByMorale = nextMorale <= 0 && unit.deathGroundTurns === 0;
-  const defeated = nextTroops <= 0 || routedByMorale;
+  const brokenByMorale = nextMorale <= 0 && unit.deathGroundTurns === 0 && nextTroops > 0;
+  const defeated = nextTroops <= 0 || brokenByMorale;
   const surrounded =
-    defeated && countAdjacentAlliesOf(state, unit.row, unit.col, attackerSide) >= 2;
+    defeated &&
+    countAdjacentAlliesOf(state, unit.row, unit.col, attackerSide) >= ENCIRCLEMENT_SQUADS;
+  const escapes = brokenByMorale && !surrounded && !opts.noEscape;
 
   return {
     ...unit,
     troops: defeated ? 0 : nextTroops,
+    escapedTroops: escapes ? nextTroops : 0,
     morale: nextMorale,
     defeated,
-    surrendered: routedByMorale && nextTroops > 0,
+    routed: escapes,
+    surrendered: brokenByMorale && !escapes,
     encircledWhenDefeated: surrounded,
   };
+}
+
+/** One-line note appended to a log line when a blow breaks a squad's morale. */
+function routNote(unit: TacticalUnit): LocalizedText {
+  if (unit.routed) {
+    return {
+      en: ` ${unit.name.en} broke and fled the field with ${unit.escapedTroops.toLocaleString()} survivors.`,
+      zh: ` ${unit.name.zh}军心崩溃，率 ${unit.escapedTroops.toLocaleString()} 残兵溃退离场。`,
+    };
+  }
+  if (unit.surrendered) {
+    return {
+      en: ` ${unit.name.en}, cut off with no way out, laid down arms.`,
+      zh: ` ${unit.name.zh}陷入重围、走投无路，弃械而降。`,
+    };
+  }
+  return { en: '', zh: '' };
 }
 
 // ==================== ACTION EXECUTORS ====================
@@ -1391,11 +1943,17 @@ export function moveTacticalUnit(
   );
 
   if (ambusher) {
-    const ambDmg = Math.min(
-      movedUnit.troops,
-      Math.max(320, Math.round(movedUnit.maxTroops * 0.24 * (ambusher.intellect / 75)))
+    // The ambusher strikes as it would in a normal attack, +35% for surprise (scales with its own
+    // strength rather than taking a fixed share of the victim).
+    const strike = previewAttack({ ...state, units: nextUnits }, ambusher, movedUnit);
+    const ambDmg = Math.min(movedUnit.troops, Math.round(strike.estimatedDamage * 1.35));
+    movedUnit = applyDamageToUnit(
+      state,
+      movedUnit,
+      ambDmg,
+      moraleLossFromCasualties(ambDmg, movedUnit, 8),
+      ambusher.side
     );
-    movedUnit = applyDamageToUnit(state, movedUnit, ambDmg, 18, ambusher.side);
     movedUnit = { ...movedUnit, hasActed: true }; // Ambush halts advance!
     nextUnits = nextUnits.map((u) =>
       u.id === movedUnit.id
@@ -1422,12 +1980,31 @@ export function moveTacticalUnit(
   // Stepping directly into Blazing Fire burns immediately!
   const destTile = state.grid[toRow][toCol];
   if (!movedUnit.defeated && destTile.fireTurns > 0) {
-    const fireDmg = Math.max(220, Math.round(movedUnit.maxTroops * 0.14));
-    movedUnit = applyDamageToUnit(state, movedUnit, fireDmg, 10, movedUnit.side === 'attacker' ? 'defender' : 'attacker');
+    const fireDmg = burnCasualties(movedUnit);
+    movedUnit = applyDamageToUnit(
+      state,
+      movedUnit,
+      fireDmg,
+      moraleLossFromCasualties(fireDmg, movedUnit),
+      movedUnit.side === 'attacker' ? 'defender' : 'attacker'
+    );
     nextUnits = nextUnits.map((u) => (u.id === movedUnit.id ? movedUnit : u));
-    nextLogs = appendLog(state, 'system', {
-      en: `${movedUnit.name.en} marched through Blazing Fire and lost ${fireDmg.toLocaleString()} troops!`,
-      zh: `${movedUnit.name.zh}踏入烈火，折损 ${fireDmg.toLocaleString()} 兵马！`,
+    nextLogs = appendLog({ ...state, logs: nextLogs }, 'system', {
+      en: `${movedUnit.name.en} marched through Blazing Fire and lost ${fireDmg.toLocaleString()} troops!${routNote(movedUnit).en}`,
+      zh: `${movedUnit.name.zh}踏入烈火，折损 ${fireDmg.toLocaleString()} 兵马！${routNote(movedUnit).zh}`,
+    });
+  }
+
+  // Reaching the flag behind intact defenses does not take the city yet: say so once it happens.
+  if (
+    !movedUnit.defeated &&
+    movedUnit.side === 'attacker' &&
+    destTile.type === 'citadel' &&
+    !state.breached
+  ) {
+    nextLogs = appendLog({ ...state, logs: nextLogs }, 'system', {
+      en: `${movedUnit.name.en} reached the Citadel Flag, but the gates still hold — breach a gate or wall to claim ${state.cityName.en}!`,
+      zh: `${movedUnit.name.zh}已逼近本阵大旗，然城门未破——须先攻破城门或城墙方可夺城！`,
     });
   }
 
@@ -1457,11 +2034,13 @@ export function executeTacticalAttack(
 
   const prev = previewAttack(state, attacker, defender);
   const updatedDef = applyDamageToUnit(state, defender, prev.estimatedDamage, prev.moraleDrop, attacker.side);
-  let updatedAtk = applyDamageToUnit(state, attacker, prev.counterDamage, prev.counterDamage > 0 ? 5 : 0, defender.side);
+  let updatedAtk = applyDamageToUnit(state, attacker, prev.counterDamage, prev.counterMoraleDrop, defender.side);
   updatedAtk = { ...updatedAtk, hasActed: true, isHiddenAmbush: false };
 
   // WFFM "Fierce as Fire" ignites Forest tile on hit!
   const nextGrid = state.grid.map((row) => row.map((t) => ({ ...t })));
+  // A blow against a defender in the gateway also batters the gate behind them.
+  const gateHit = batterGate(nextGrid, defender.row, defender.col, prev.gateDamage);
   if (
     attacker.wffmTurns > 0 &&
     attacker.wffmStance === 'fire' &&
@@ -1474,6 +2053,7 @@ export function executeTacticalAttack(
   const nextSp = { ...state.sp };
   if (
     updatedDef.defeated ||
+    gateHit.breachedNow ||
     prev.principles.some((p) => p.id === 'flanked' || p.id === 'encircled' || p.id === 'half_crossed')
   ) {
     nextSp[attacker.side] = Math.min(TACTICAL_MAX_SP, nextSp[attacker.side] + 1);
@@ -1485,13 +2065,23 @@ export function executeTacticalAttack(
     return u;
   });
 
+  const gateNoteEn = gateHit.breachedNow
+    ? ' The gate behind them gave way!'
+    : gateHit.dealt > 0
+      ? ` Gate -${gateHit.dealt.toLocaleString()}.`
+      : '';
+  const gateNoteZh = gateHit.breachedNow
+    ? ' 其身后城门亦告攻破！'
+    : gateHit.dealt > 0
+      ? ` 城门受损 ${gateHit.dealt.toLocaleString()}。`
+      : '';
   const summary: LocalizedText = {
     en: `${attacker.name.en} struck ${defender.name.en} for ${prev.estimatedDamage.toLocaleString()} casualties${
-      updatedDef.defeated ? ' — ROUTED!' : prev.counterDamage > 0 ? ` (took ${prev.counterDamage.toLocaleString()} counter)` : ''
-    }.`,
+      updatedDef.defeated ? ' — DEFEATED!' : prev.counterDamage > 0 ? ` (took ${prev.counterDamage.toLocaleString()} counter)` : ''
+    }.${routNote(updatedDef).en}${routNote(updatedAtk).en}${gateNoteEn}`,
     zh: `${attacker.name.zh}猛攻${defender.name.zh}，斩杀 ${prev.estimatedDamage.toLocaleString()} 人${
-      updatedDef.defeated ? '——敌军溃散！' : prev.counterDamage > 0 ? `（受反击损 ${prev.counterDamage.toLocaleString()} 人）` : ''
-    }。`,
+      updatedDef.defeated ? '——敌军溃败！' : prev.counterDamage > 0 ? `（受反击损 ${prev.counterDamage.toLocaleString()} 人）` : ''
+    }。${routNote(updatedDef).zh}${routNote(updatedAtk).zh}${gateNoteZh}`,
   };
 
   return evaluateVictory({
@@ -1499,6 +2089,8 @@ export function executeTacticalAttack(
     grid: nextGrid,
     units: nextUnits,
     sp: nextSp,
+    breached: state.breached || gateHit.breachedNow,
+    lastCallout: gateHit.breachedNow ? breachCallout(state, attacker) : state.lastCallout,
     logs: appendLog(state, attacker.side, summary),
   });
 }
@@ -1581,7 +2173,7 @@ export function executeArtOfWarStratagem(
   if (stratagemId === 'fire_attack') {
     calloutKind = 'fire';
     const tile = nextGrid[targetRow][targetCol];
-    tile.fireTurns = 3;
+    if (!isStoneWorks(tile)) tile.fireTurns = 3;
     const wd = WIND_DELTA[state.wind];
     // Also ignite 1 tile downwind if it's a forest or bridge!
     const dr = targetRow + wd.dr;
@@ -1593,31 +2185,22 @@ export function executeArtOfWarStratagem(
       nextGrid[dr][dc].fireTurns = 3;
     }
 
-    const upwindAligned =
-      (wd.dr !== 0 && Math.sign(targetRow - caster.row) === wd.dr) ||
-      (wd.dc !== 0 && Math.sign(targetCol - caster.col) === wd.dc);
-    const windMult = upwindAligned ? 1.25 : 1.0;
-
-    let hitNames: string[] = [];
-    let hitNamesZh: string[] = [];
-    let totalBurn = 0;
+    const hits = previewFireAttackHits(state, caster, targetRow, targetCol);
+    const hitNames = hits.map((h) => h.unit.name.en);
+    const hitNamesZh = hits.map((h) => h.unit.name.zh);
+    const totalBurn = hits.reduce((sum, h) => sum + h.damage, 0);
 
     nextUnits = nextUnits.map((u) => {
-      if (u.defeated || u.side === caster.side) return u;
-      const onPrimary = u.row === targetRow && u.col === targetCol;
-      const onSpread = u.row === dr && u.col === dc && nextGrid[dr][dc].fireTurns > 0;
-      if (!onPrimary && !onSpread) return u;
-      const baseDmg = onPrimary ? 980 : 540;
-      const dmg = Math.round(baseDmg * (caster.intellect / 78) * windMult * (tile.type === 'forest' ? 1.25 : 1.0));
-      totalBurn += dmg;
-      hitNames.push(u.name.en);
-      hitNamesZh.push(u.name.zh);
-      return applyDamageToUnit(state, u, dmg, onPrimary ? 18 : 10, caster.side);
+      const hit = hits.find((h) => h.unit.id === u.id);
+      if (!hit) return u;
+      return applyDamageToUnit(
+        state,
+        u,
+        hit.damage,
+        moraleLossFromCasualties(hit.damage, u, hit.onPrimary ? 4 : 2),
+        caster.side
+      );
     });
-
-    if (totalBurn > 0) {
-      nextSp[caster.side] = Math.min(TACTICAL_MAX_SP, nextSp[caster.side] + 1);
-    }
 
     subtitle =
       hitNames.length > 0
@@ -1668,7 +2251,14 @@ export function executeArtOfWarStratagem(
       let pulled = { ...target, row: curR, col: curC, luredDefDebuffTurns: 2 };
       // If lured straight into Blazing Fire, burn immediately!
       if (nextGrid[curR][curC].fireTurns > 0) {
-        pulled = applyDamageToUnit(state, pulled, Math.round(pulled.maxTroops * 0.16), 14, caster.side);
+        const burn = burnCasualties(pulled, 0.16);
+        pulled = applyDamageToUnit(
+          state,
+          pulled,
+          burn,
+          moraleLossFromCasualties(burn, pulled, 4),
+          caster.side
+        );
       }
       nextUnits = nextUnits.map((u) => (u.id === target.id ? pulled : u));
       subtitle = {
@@ -1739,7 +2329,7 @@ export function executeArtOfWarStratagem(
     );
     if (target) {
       const mDrop = caster.intellect >= 90 ? 35 : 26;
-      const updated = applyDamageToUnit(state, target, 0, mDrop, caster.side);
+      const updated = applyDamageToUnit(state, target, 0, mDrop, caster.side, { noEscape: true });
       const finalTarget = { ...updated, disorderedTurns: 2 };
       nextUnits = nextUnits.map((u) => (u.id === target.id ? finalTarget : u));
       subtitle = finalTarget.defeated
@@ -1775,6 +2365,46 @@ export function executeArtOfWarStratagem(
 
 // ==================== HERO SIGNATURE SKILL, BLACK POWDER BOMB, RALLY & DUEL ====================
 
+/** Signature skills that act on the caster's own position rather than a chosen tile. */
+export function isSelfCenteredSkill(effect: General['signatureSkill']['effect']): boolean {
+  return (
+    effect === 'casualty_shield' ||
+    effect === 'mandate_rally' ||
+    effect === 'morale_shatter' ||
+    effect === 'charisma_charm'
+  );
+}
+
+/**
+ * Tiles a squad may aim its hero's signature skill at right now. Empty when the skill is spent,
+ * on campaign cooldown, held in reserve, or the squad has already acted.
+ */
+export function getHeroSkillTargetCoords(
+  state: TacticalBattleState,
+  unit: TacticalUnit
+): GridCoord[] {
+  if (unit.defeated || unit.hasActed || unit.skillUsed || unit.skillLocked || !unit.heroId) return [];
+  const hero = state.preBattleHeroes[unit.heroId];
+  if (!hero) return [];
+  const eff = hero.signatureSkill.effect;
+  if (isSelfCenteredSkill(eff)) return [{ row: unit.row, col: unit.col }];
+
+  const isStorm = eff === 'fire_ignore_def' || eff === 'river_pierce';
+  const maxRange = isStorm ? 3 : 2;
+  const coords: GridCoord[] = [];
+  for (let r = 0; r < TACTICAL_GRID_SIZE; r++) {
+    for (let c = 0; c < TACTICAL_GRID_SIZE; c++) {
+      const d = manhattan(unit.row, unit.col, r, c);
+      if (d === 0 || d > maxRange) continue;
+      const occupant = getUnitAt(state, r, c);
+      if ((occupant && occupant.side !== unit.side) || eff === 'fire_ignore_def') {
+        coords.push({ row: r, col: c });
+      }
+    }
+  }
+  return coords;
+}
+
 export function executeHeroSignatureSkill(
   state: TacticalBattleState,
   unitId: string,
@@ -1783,7 +2413,8 @@ export function executeHeroSignatureSkill(
 ): TacticalBattleState {
   if (state.winner) return state;
   const caster = state.units.find((u) => u.id === unitId && !u.defeated);
-  if (!caster || caster.side !== state.activeSide || caster.hasActed || caster.skillUsed || !caster.heroId) {
+  if (!caster || caster.side !== state.activeSide || !caster.heroId) return state;
+  if (!getHeroSkillTargetCoords(state, caster).some((p) => p.row === targetRow && p.col === targetCol)) {
     return state;
   }
 
@@ -1798,6 +2429,9 @@ export function executeHeroSignatureSkill(
 
   let totalDmg = 0;
   let hitCount = 0;
+  const strength = squadStrengthFactor(caster);
+  // Even a legendary blow lands softer on troops behind the city's works.
+  const coverOf = (target: TacticalUnit) => 1 + rampartCoverAgainst(state, target, caster.side);
 
   if (sk.effect === 'fire_ignore_def' || sk.effect === 'river_pierce') {
     // 3-tile Fire / River Storm centered on target + downwind!
@@ -1809,27 +2443,31 @@ export function executeHeroSignatureSkill(
     ].filter((p) => inBounds(p.row, p.col));
 
     for (const bt of blastTiles) {
-      if (nextGrid[bt.row][bt.col].type !== 'wall') {
+      if (!isStoneWorks(nextGrid[bt.row][bt.col])) {
         nextGrid[bt.row][bt.col].fireTurns = 3;
       }
     }
     nextUnits = nextUnits.map((u) => {
       if (u.defeated || u.side === caster.side) return u;
       if (!blastTiles.some((bt) => bt.row === u.row && bt.col === u.col)) return u;
-      const dmg = Math.round(1150 * (caster.intellect / 76));
+      const dmg = Math.min(u.troops, Math.round((1150 * (caster.intellect / 76) * strength) / coverOf(u)));
       totalDmg += dmg;
       hitCount += 1;
-      return applyDamageToUnit(state, u, dmg, 22, caster.side);
+      return applyDamageToUnit(state, u, dmg, moraleLossFromCasualties(dmg, u, 6), caster.side);
     });
   } else if (sk.effect === 'morale_shatter' || sk.effect === 'charisma_charm') {
     // AoE Roar / Mandate Shockwave hitting enemies within range 2 of caster!
     nextUnits = nextUnits.map((u) => {
       if (u.defeated || u.side === caster.side) return u;
       if (manhattan(u.row, u.col, caster.row, caster.col) > 2) return u;
-      const dmg = Math.round(880 * (Math.max(caster.war, caster.intellect) / 80));
+      const dmg = Math.min(
+        u.troops,
+        Math.round((880 * (Math.max(caster.war, caster.intellect) / 80) * strength) / coverOf(u))
+      );
       totalDmg += dmg;
       hitCount += 1;
-      const damaged = applyDamageToUnit(state, u, dmg, 28, caster.side);
+      // A morale-shattering roar is the one physical blow that also carries a heavy flat shock.
+      const damaged = applyDamageToUnit(state, u, dmg, moraleLossFromCasualties(dmg, u, 12), caster.side);
       return { ...damaged, disorderedTurns: Math.max(1, damaged.disorderedTurns) };
     });
   } else if (sk.effect === 'casualty_shield' || sk.effect === 'mandate_rally') {
@@ -1852,10 +2490,19 @@ export function executeHeroSignatureSkill(
       const isMain = u.row === targetRow && u.col === targetCol;
       const isCleave = manhattan(u.row, u.col, targetRow, targetCol) === 1;
       if (!isMain && !isCleave) return u;
-      const dmg = Math.round((isMain ? 1550 : 750) * (caster.war / 82));
+      const dmg = Math.min(
+        u.troops,
+        Math.round(((isMain ? 1550 : 750) * (caster.war / 82) * strength) / coverOf(u))
+      );
       totalDmg += dmg;
       hitCount += 1;
-      return applyDamageToUnit(state, u, dmg, isMain ? 24 : 12, caster.side);
+      return applyDamageToUnit(
+        state,
+        u,
+        dmg,
+        moraleLossFromCasualties(dmg, u, isMain ? 6 : 2),
+        caster.side
+      );
     });
   }
 
@@ -1898,6 +2545,7 @@ export function executeGunpowderBomb(
   const caster = state.units.find((u) => u.id === casterId && !u.defeated);
   if (!caster || caster.side !== state.activeSide || caster.hasActed) return state;
   if (state.gunpowderBombsLeft[caster.side] <= 0) return state;
+  if (!inBounds(targetRow, targetCol)) return state;
   if (manhattan(caster.row, caster.col, targetRow, targetCol) > 3) return state;
 
   const nextGrid = state.grid.map((row) => row.map((t) => ({ ...t })));
@@ -1915,24 +2563,33 @@ export function executeGunpowderBomb(
       t.type = 'plains';
       wallsBreached += 1;
     }
-    if (t.type !== 'water') {
+    // Black powder tears a standing gate off its hinges outright.
+    if (batterGate(nextGrid, p.row, p.col, t.gateHp ?? 0).breachedNow) {
+      wallsBreached += 1;
+    }
+    if (t.type !== 'water' && !isStoneWorks(t)) {
       t.fireTurns = Math.max(t.fireTurns, 2);
     }
   }
+  const breachedNow = wallsBreached > 0 && !state.breached;
 
   let totalDmg = 0;
   let nextUnits = state.units.map((u) => {
     if (u.id === caster.id) return { ...u, hasActed: true };
     if (u.defeated || u.side === caster.side) return u;
     if (!area.some((p) => p.row === u.row && p.col === u.col)) return u;
-    const dmg = Math.round(1180);
+    const dmg = Math.min(u.troops, 1180);
     totalDmg += dmg;
-    return applyDamageToUnit(state, u, dmg, 20, caster.side);
+    return applyDamageToUnit(state, u, dmg, moraleLossFromCasualties(dmg, u, 6), caster.side);
   });
 
   const subtitle: LocalizedText = {
-    en: `BLACK POWDER BOMB! Shattered ${wallsBreached} wall section(s), ignited 2×2 zone, and dealt ${totalDmg.toLocaleString()} blast casualties!`,
-    zh: `黑火药震天雷轰炸！炸塌 ${wallsBreached} 段城墙、引燃 2×2 区域，造成 ${totalDmg.toLocaleString()} 爆炸伤亡！`,
+    en: `BLACK POWDER BOMB! Shattered ${wallsBreached} wall/gate section(s), ignited 2×2 zone, and dealt ${totalDmg.toLocaleString()} blast casualties!${
+      breachedNow ? ' The city is breached — the Citadel Flag can now be seized!' : ''
+    }`,
+    zh: `黑火药震天雷轰炸！炸塌 ${wallsBreached} 段城墙城门、引燃 2×2 区域，造成 ${totalDmg.toLocaleString()} 爆炸伤亡！${
+      breachedNow ? '城防已破，可直取本阵大旗！' : ''
+    }`,
   };
 
   const callout: TacticalCallout = {
@@ -1955,6 +2612,7 @@ export function executeGunpowderBomb(
       ...state.gunpowderBombsLeft,
       [caster.side]: state.gunpowderBombsLeft[caster.side] - 1,
     },
+    breached: state.breached || wallsBreached > 0,
     lastCallout: callout,
     logs: appendLog(state, caster.side, subtitle),
   });
@@ -2005,13 +2663,15 @@ export function applyGridDuelResult(
 
   let nextUnits = state.units.map((u) => {
     if (u.id === atk.id) {
+      // A signature skill spent in single combat is spent for the rest of the battle.
+      const base = { ...u, hasActed: true, skillUsed: u.skillUsed || duel.skillUsed };
       if (duel.winner === 'attacker') {
-        return { ...u, morale: 100, hasActed: true };
+        return { ...base, morale: 100 };
       }
       if (duel.winner === 'defender') {
-        return applyDamageToUnit(state, { ...u, hasActed: true }, Math.round(u.maxTroops * 0.2), 28, def.side);
+        return applyDamageToUnit(state, base, Math.round(u.maxTroops * 0.2), 28, def.side);
       }
-      return { ...u, hasActed: true };
+      return base;
     }
     if (u.id === def.id) {
       if (duel.winner === 'attacker') {
@@ -2112,17 +2772,17 @@ export function endTacticalSideTurn(
       const u = nextUnits[i];
       if (u.defeated) continue;
       if (nextGrid[u.row][u.col].fireTurns > 0) {
-        const burn = Math.max(200, Math.round(u.maxTroops * 0.14));
+        const burn = burnCasualties(u);
         nextUnits[i] = applyDamageToUnit(
           state,
           u,
           burn,
-          10,
+          moraleLossFromCasualties(burn, u),
           u.side === 'attacker' ? 'defender' : 'attacker'
         );
-        nextLogs = appendLog(state, 'system', {
-          en: `${u.name.en} suffered ${burn.toLocaleString()} burn casualties in the flames!`,
-          zh: `${u.name.zh}深陷火海，烧伤折损 ${burn.toLocaleString()} 兵马！`,
+        nextLogs = appendLog({ ...state, logs: nextLogs }, 'system', {
+          en: `${u.name.en} suffered ${burn.toLocaleString()} burn casualties in the flames!${routNote(nextUnits[i]).en}`,
+          zh: `${u.name.zh}深陷火海，烧伤折损 ${burn.toLocaleString()} 兵马！${routNote(nextUnits[i]).zh}`,
         });
       }
     }
@@ -2163,6 +2823,176 @@ export function endTacticalSideTurn(
 
 // ==================== SMART ART OF WAR TACTICAL AI ====================
 
+const CITADEL_TILE: GridCoord = { row: 3, col: 7 };
+
+function intactGateCoords(state: TacticalBattleState): GridCoord[] {
+  const coords: GridCoord[] = [];
+  for (const row of state.grid) {
+    for (const tile of row) {
+      if (isIntactGate(tile)) coords.push({ row: tile.row, col: tile.col });
+    }
+  }
+  return coords;
+}
+
+/** The flag needs a guard once the walls are breached or an attacker has slipped inside them. */
+function isFlagThreatened(state: TacticalBattleState): boolean {
+  if (state.breached) return true;
+  return state.units.some((u) => !u.defeated && u.side === 'attacker' && u.col >= 6);
+}
+
+/**
+ * Marching distance (in movement points, for this squad's terrain costs) from every tile to the
+ * nearest goal tile. Real path distance - around rivers, walls and closed gates - so squads cross
+ * at the bridges instead of piling up on the near bank.
+ */
+function marchDistanceMap(
+  state: TacticalBattleState,
+  unit: TacticalUnit,
+  goals: GridCoord[]
+): number[][] {
+  const FAR = 99;
+  const dist: number[][] = Array.from({ length: TACTICAL_GRID_SIZE }, () =>
+    Array<number>(TACTICAL_GRID_SIZE).fill(FAR)
+  );
+  const queue: Array<{ row: number; col: number; d: number }> = [];
+  for (const g of goals) {
+    dist[g.row][g.col] = 0;
+    queue.push({ row: g.row, col: g.col, d: 0 });
+  }
+  while (queue.length > 0) {
+    queue.sort((a, b) => a.d - b.d);
+    const cur = queue.shift()!;
+    if (cur.d > dist[cur.row][cur.col]) continue;
+    // Walking from a neighbour into `cur` costs what it costs to enter `cur`.
+    const enterCost = getTileMoveCost(state.grid[cur.row][cur.col], unit);
+    if (enterCost === null) continue;
+    for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const nr = cur.row + dr;
+      const nc = cur.col + dc;
+      if (!inBounds(nr, nc)) continue;
+      if (getTileMoveCost(state.grid[nr][nc], unit) === null) continue;
+      const nd = cur.d + enterCost;
+      if (nd < dist[nr][nc]) {
+        dist[nr][nc] = nd;
+        queue.push({ row: nr, col: nc, d: nd });
+      }
+    }
+  }
+  return dist;
+}
+
+/** Where an attacking squad is trying to get to: the flag once the city is open, a gate until then. */
+function attackerMarchGoals(state: TacticalBattleState, unit: TacticalUnit): GridCoord[] {
+  if (state.breached) return [CITADEL_TILE];
+  const goals: GridCoord[] = [];
+  for (const gate of intactGateCoords(state)) {
+    for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const r = gate.row + dr;
+      const c = gate.col + dc;
+      if (inBounds(r, c) && getTileMoveCost(state.grid[r][c], unit) !== null) goals.push({ row: r, col: c });
+    }
+  }
+  return goals.length > 0 ? goals : [CITADEL_TILE];
+}
+
+/** How much the AI likes standing on a tile. Used for both candidate tiles and the squad's current one. */
+function scoreAITile(
+  state: TacticalBattleState,
+  unit: TacticalUnit,
+  row: number,
+  col: number,
+  enemies: TacticalUnit[],
+  marchDist: number[][] | null
+): number {
+  const tile = state.grid[row][col];
+  const side = unit.side;
+  let score = 0;
+  if (tile.fireTurns > 0) score -= 120;
+  if (tile.type === 'hill') score += 22;
+  if (tile.type === 'forest' && tile.fireTurns === 0) score += 14;
+  if (tile.type === 'ford' && !unit.isNavalCapable) score -= 18;
+
+  if (side === 'attacker') {
+    // March on the flag once the city is open; until then the flag is worthless, so close on a gate.
+    if (state.breached && tile.type === 'citadel') score += 500;
+    if (marchDist) score -= marchDist[row][col] * 9;
+    if (!state.breached) {
+      const gates = intactGateCoords(state);
+      const gateDist = Math.min(...gates.map((g) => manhattan(row, col, g.row, g.col)));
+      const reach = unit.unitClass === 'archer' ? (tile.type === 'hill' ? 3 : 2) : 1;
+      if (gateDist <= reach) score += 16;
+    }
+  } else {
+    // Defenders fight from the works and do not chase into the open field.
+    if (tile.type === 'wall' || tile.type === 'citadel' || isIntactGate(tile)) score += 90;
+    if (col >= 5) score += 12;
+    if (col < 4) score -= (4 - col) * 22;
+    if (tile.type === 'citadel' && isFlagThreatened(state)) {
+      const comradeOnFlag = state.units.some(
+        (u) =>
+          u.id !== unit.id &&
+          !u.defeated &&
+          u.side === side &&
+          state.grid[u.row][u.col].type === 'citadel'
+      );
+      if (!comradeOnFlag) score += 300;
+    }
+  }
+
+  // Distance to nearest enemy matched to unit class range
+  if (enemies.length > 0) {
+    const nearestDist = Math.min(...enemies.map((e) => manhattan(row, col, e.row, e.col)));
+    if (unit.unitClass === 'archer') {
+      score += nearestDist === 2 ? 32 : nearestDist === 1 ? -10 : -nearestDist * 5;
+    } else {
+      score += nearestDist === 1 ? 38 : -nearestDist * 8;
+    }
+
+    // Flanking bonus awareness!
+    for (const e of enemies) {
+      if (manhattan(row, col, e.row, e.col) === 1) {
+        score += countAdjacentAlliesOf(state, e.row, e.col, side, unit.id) * 18;
+      }
+    }
+  }
+
+  return score;
+}
+
+/** Best place to drop a Black Powder Bomb, or null when nothing in range is worth one. */
+function pickAIBombTarget(state: TacticalBattleState, unit: TacticalUnit): GridCoord | null {
+  let best: GridCoord | null = null;
+  let bestValue = 59; // must at least catch one enemy squad or open the city
+  for (let r = 0; r < TACTICAL_GRID_SIZE; r++) {
+    for (let c = 0; c < TACTICAL_GRID_SIZE; c++) {
+      if (manhattan(unit.row, unit.col, r, c) > 3) continue;
+      let value = 0;
+      let ownWorksHit = false;
+      for (const [dr, dc] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        const tr = r + dr;
+        const tc = c + dc;
+        if (!inBounds(tr, tc)) continue;
+        const tile = state.grid[tr][tc];
+        const isWorks = tile.type === 'wall' || isIntactGate(tile);
+        if (isWorks) {
+          if (unit.side === 'defender') ownWorksHit = true;
+          else value += isIntactGate(tile) ? (state.breached ? 30 : 100) : state.breached ? 10 : 40;
+        }
+        const occupant = getUnitAt(state, tr, tc);
+        if (occupant) value += occupant.side === unit.side ? -80 : 60;
+      }
+      // A defender never blows up its own walls or gates.
+      if (ownWorksHit) continue;
+      if (value > bestValue) {
+        bestValue = value;
+        best = { row: r, col: c };
+      }
+    }
+  }
+  return best;
+}
+
 export function executeSingleAITurnStep(
   state: TacticalBattleState,
   rng: () => number = Math.random
@@ -2179,48 +3009,18 @@ export function executeSingleAITurnStep(
   let cur = state;
   let unit = readyUnit;
 
-  // 1. Move toward optimal tactical tile if not yet moved
+  // 1. Move to the best tactical tile, or hold position if nothing reachable beats where we stand
   if (!unit.hasMoved) {
     const reachable = getReachableTiles(cur, unit);
     const enemies = cur.units.filter((u) => !u.defeated && u.side !== side);
     if (reachable.length > 0 && enemies.length > 0) {
+      const marchDist =
+        side === 'attacker' ? marchDistanceMap(cur, unit, attackerMarchGoals(cur, unit)) : null;
       let bestTile: GridCoord | null = null;
-      let bestScore = -9999;
+      let bestScore = scoreAITile(cur, unit, unit.row, unit.col, enemies, marchDist);
 
       for (const tileCoord of reachable) {
-        const tile = cur.grid[tileCoord.row][tileCoord.col];
-        let score = 0;
-        if (tile.fireTurns > 0) score -= 120;
-        if (tile.type === 'hill') score += 22;
-        if (tile.type === 'forest' && tile.fireTurns === 0) score += 14;
-        if (tile.type === 'ford' && !unit.isNavalCapable) score -= 18;
-
-        // Attacker strongly wants to seize the Citadel Flag!
-        if (side === 'attacker') {
-          if (tile.type === 'citadel') score += 500;
-          score -= manhattan(tileCoord.row, tileCoord.col, 3, 7) * 9;
-        } else {
-          // Defender values holding the Gates / Citadel / nearby forward hills
-          if (tile.type === 'gate' || tile.type === 'citadel' || tile.type === 'wall') score += 28;
-          if (tileCoord.col >= 5) score += 12;
-        }
-
-        // Distance to nearest enemy matched to unit class range
-        const nearestDist = Math.min(...enemies.map((e) => manhattan(tileCoord.row, tileCoord.col, e.row, e.col)));
-        if (unit.unitClass === 'archer') {
-          score += nearestDist === 2 ? 32 : nearestDist === 1 ? -10 : -nearestDist * 5;
-        } else {
-          score += nearestDist === 1 ? 38 : -nearestDist * 8;
-        }
-
-        // Flanking bonus awareness!
-        for (const e of enemies) {
-          if (manhattan(tileCoord.row, tileCoord.col, e.row, e.col) === 1) {
-            const alliesNear = countAdjacentAlliesOf(cur, e.row, e.col, side, unit.id);
-            score += alliesNear * 18;
-          }
-        }
-
+        const score = scoreAITile(cur, unit, tileCoord.row, tileCoord.col, enemies, marchDist);
         if (score > bestScore) {
           bestScore = score;
           bestTile = tileCoord;
@@ -2239,31 +3039,37 @@ export function executeSingleAITurnStep(
     }
   }
 
-  // 2. Consider Black Powder Bomb if enemies are clustered
+  // 2. Black Powder Bomb: open the gates/walls, or catch enemy squads (never our own works)
   if (cur.gunpowderBombsLeft[side] > 0) {
-    const enemies = cur.units.filter(
-      (u) => !u.defeated && u.side !== side && manhattan(unit.row, unit.col, u.row, u.col) <= 3
-    );
-    if (enemies.length > 0) {
-      cur = executeGunpowderBomb(cur, unit.id, enemies[0].row, enemies[0].col);
+    const bombAt = pickAIBombTarget(cur, unit);
+    if (bombAt) {
+      cur = executeGunpowderBomb(cur, unit.id, bombAt.row, bombAt.col);
       return { state: cur, finishedSideTurn: Boolean(cur.winner) };
     }
   }
 
   // 3. Consider INT-driven Art of War Stratagem if SP available and success odds >= 58%!
   if (cur.sp[side] >= 1 && unit.disorderedTurns === 0) {
-    // Priority A: Fire Attack on an enemy standing in Forest or Water
-    const fireCoords = getStratagemTargetCoords(cur, unit, 'fire_attack');
-    const enemyFireTarget = fireCoords.find((p) => {
-      const occ = getUnitAt(cur, p.row, p.col);
-      return occ && occ.side !== side;
-    });
-    if (enemyFireTarget) {
-      const odds = calculateStratagemSuccess(cur, unit, 'fire_attack', enemyFireTarget.row, enemyFireTarget.col);
-      if (odds.chance >= 60) {
-        cur = executeArtOfWarStratagem(cur, unit.id, 'fire_attack', enemyFireTarget.row, enemyFireTarget.col, undefined, rng);
-        return { state: cur, finishedSideTurn: Boolean(cur.winner) };
-      }
+    // Priority A: Fire Attack on the enemy squad it would hurt most - but only when the flames
+    // are expected to do at least as much as this squad's best direct blow would.
+    const bestBlow = Math.max(
+      0,
+      ...getAttackTargets(cur, unit).map((t) => previewAttack(cur, unit, t).estimatedDamage)
+    );
+    const fireOption = getStratagemTargetCoords(cur, unit, 'fire_attack')
+      .filter((p) => {
+        const occ = getUnitAt(cur, p.row, p.col);
+        return occ && occ.side !== side;
+      })
+      .map((p) => {
+        const chance = calculateStratagemSuccess(cur, unit, 'fire_attack', p.row, p.col).chance;
+        const damage = previewFireAttackHits(cur, unit, p.row, p.col).reduce((sum, h) => sum + h.damage, 0);
+        return { p, chance, expected: (damage * chance) / 100 };
+      })
+      .sort((a, b) => b.expected - a.expected)[0];
+    if (fireOption && fireOption.chance >= 60 && fireOption.expected >= bestBlow) {
+      cur = executeArtOfWarStratagem(cur, unit.id, 'fire_attack', fireOption.p.row, fireOption.p.col, undefined, rng);
+      return { state: cur, finishedSideTurn: Boolean(cur.winner) };
     }
 
     // Priority B: Subdue Without Fighting on low-morale enemy if high INT
@@ -2292,22 +3098,41 @@ export function executeSingleAITurnStep(
     }
   }
 
-  // 4. Consider Hero Signature Skill or Direct Attack on highest-value enemy in range
+  // 4. Hero Signature Skill, a direct attack on the most valuable enemy in range, or the gate itself
   const targets = getAttackTargets(cur, unit);
-  if (targets.length > 0) {
-    const bestTarget = [...targets].sort((a, b) => {
-      const pa = previewAttack(cur, unit, a).estimatedDamage;
-      const pb = previewAttack(cur, unit, b).estimatedDamage;
-      const killA = pa >= a.troops ? 10000 : 0;
-      const killB = pb >= b.troops ? 10000 : 0;
-      return killB + pb - (killA + pa);
-    })[0];
+  const skillAim = pickAISkillTarget(cur, unit, targets);
+  if (skillAim) {
+    cur = executeHeroSignatureSkill(cur, unit.id, skillAim.row, skillAim.col);
+    return { state: cur, finishedSideTurn: Boolean(cur.winner) };
+  }
 
-    if (!unit.skillUsed && unit.heroId && (cur.round >= 2 || targets.length >= 2)) {
-      cur = executeHeroSignatureSkill(cur, unit.id, bestTarget.row, bestTarget.col);
-    } else {
-      cur = executeTacticalAttack(cur, unit.id, bestTarget.id);
-    }
+  // Value of a blow on a squad: casualties, plus the damage it does to a gate the squad is holding.
+  const valueOf = (t: TacticalUnit) => {
+    const prev = previewAttack(cur, unit, t);
+    // An enemy squad standing on our flag must be thrown off it before anything else.
+    const onFlag = cur.grid[t.row][t.col].type === 'citadel' && side === 'defender' ? 50000 : 0;
+    return onFlag + (prev.estimatedDamage >= t.troops ? 10000 : 0) + prev.estimatedDamage + prev.gateDamage;
+  };
+  const bestTarget = [...targets].sort((a, b) => valueOf(b) - valueOf(a))[0];
+
+  // Value of battering an undefended gate: its damage, and a great deal if this blow opens the city.
+  const gates = getGateAttackTargets(cur, unit).map((g) => ({
+    coord: g,
+    preview: previewGateAttack(cur, unit, g.row, g.col),
+  }));
+  const bestGate = gates.sort(
+    (a, b) =>
+      Number(b.preview.breaches) - Number(a.preview.breaches) ||
+      a.preview.gateHpLeft - b.preview.gateHpLeft
+  )[0];
+  const gateValue = bestGate ? bestGate.preview.gateDamage + (bestGate.preview.breaches ? 10000 : 0) : -1;
+
+  if (bestGate && (!bestTarget || gateValue > valueOf(bestTarget))) {
+    cur = executeGateAttack(cur, unit.id, bestGate.coord.row, bestGate.coord.col);
+    return { state: cur, finishedSideTurn: Boolean(cur.winner) };
+  }
+  if (bestTarget) {
+    cur = executeTacticalAttack(cur, unit.id, bestTarget.id);
     return { state: cur, finishedSideTurn: Boolean(cur.winner) };
   }
 
@@ -2323,6 +3148,46 @@ export function executeSingleAITurnStep(
 
   cur = executeRallyHold(cur, unit.id);
   return { state: cur, finishedSideTurn: false };
+}
+
+/** Where (if anywhere) the AI should spend this squad's signature skill right now. */
+function pickAISkillTarget(
+  state: TacticalBattleState,
+  unit: TacticalUnit,
+  attackTargets: TacticalUnit[]
+): GridCoord | null {
+  const coords = getHeroSkillTargetCoords(state, unit);
+  if (coords.length === 0 || !unit.heroId) return null;
+  const effect = state.preBattleHeroes[unit.heroId]?.signatureSkill.effect;
+  if (!effect) return null;
+  const self: GridCoord = { row: unit.row, col: unit.col };
+
+  if (effect === 'casualty_shield' || effect === 'mandate_rally') {
+    // Rally & heal: worth it once a squad nearby (or our own) is hurt or wavering.
+    const someoneNeedsIt = state.units.some(
+      (u) =>
+        !u.defeated &&
+        u.side === unit.side &&
+        manhattan(u.row, u.col, unit.row, unit.col) <= 2 &&
+        (u.morale < 55 || u.troops < u.maxTroops * 0.65)
+    );
+    return someoneNeedsIt ? self : null;
+  }
+
+  if (effect === 'morale_shatter' || effect === 'charisma_charm') {
+    const inRoar = state.units.filter(
+      (u) => !u.defeated && u.side !== unit.side && manhattan(u.row, u.col, unit.row, unit.col) <= 2
+    ).length;
+    return inRoar >= 2 || (inRoar === 1 && state.round >= 2) ? self : null;
+  }
+
+  // Aimed skills: strike the largest enemy squad in reach once battle is joined.
+  const aimed = coords
+    .map((p) => ({ p, occupant: getUnitAt(state, p.row, p.col) }))
+    .filter((x) => x.occupant && x.occupant.side !== unit.side)
+    .sort((a, b) => b.occupant!.troops - a.occupant!.troops)[0];
+  if (!aimed) return null;
+  return state.round >= 2 || attackTargets.length >= 2 ? aimed.p : null;
 }
 
 /** Run remaining battle turns automatically via Tactical AI (for testing or instant finish). */
@@ -2342,12 +3207,19 @@ export function resolveTacticalBattleByAI(
 // ==================== OUTCOME SUMMARY BUILDER ====================
 
 export function extractTacticalBattleOutcome(state: TacticalBattleState): TacticalBattleOutcome {
-  const attackerRemainingTroops = state.units
-    .filter((u) => u.side === 'attacker' && !u.defeated)
-    .reduce((sum, u) => sum + u.troops, 0);
-  const defenderRemainingTroops = state.units
-    .filter((u) => u.side === 'defender' && !u.defeated)
-    .reduce((sum, u) => sum + u.troops, 0);
+  // Survivors = squads still on the field + routed squads that got away. Squads that were wiped
+  // out or surrendered count for nothing.
+  const survivorsOf = (side: TacticalSide) =>
+    state.units
+      .filter((u) => u.side === side)
+      .reduce((sum, u) => sum + (u.defeated ? u.escapedTroops : u.troops), 0);
+  const escapedOf = (side: TacticalSide) =>
+    state.units
+      .filter((u) => u.side === side && u.defeated)
+      .reduce((sum, u) => sum + u.escapedTroops, 0);
+
+  const attackerRemainingTroops = survivorsOf('attacker');
+  const defenderRemainingTroops = survivorsOf('defender');
 
   const attackerLosses = Math.max(0, state.attackerStartTroops - attackerRemainingTroops);
   const defenderLosses = Math.max(0, state.defenderStartTroops - defenderRemainingTroops);
@@ -2373,9 +3245,11 @@ export function extractTacticalBattleOutcome(state: TacticalBattleState): Tactic
   );
   const leadDef = state.units.find((u) => u.side === 'defender' && u.heroId);
 
-  const skillHero = state.units.find((u) => u.skillUsed && u.heroId);
-  const skillTriggered = skillHero?.heroId
-    ? state.preBattleHeroes[skillHero.heroId]?.signatureSkill.name
+  // Every hero who spent a signature skill goes on cooldown; the report credits an attacking hero only.
+  const skillUsedHeroIds = state.units.filter((u) => u.skillUsed && u.heroId).map((u) => u.heroId!);
+  const attackerSkillHero = state.units.find((u) => u.side === 'attacker' && u.skillUsed && u.heroId);
+  const skillTriggered = attackerSkillHero?.heroId
+    ? state.preBattleHeroes[attackerSkillHero.heroId]?.signatureSkill.name
     : undefined;
 
   return {
@@ -2387,13 +3261,16 @@ export function extractTacticalBattleOutcome(state: TacticalBattleState): Tactic
     defenderLosses,
     attackerRemainingTroops,
     defenderRemainingTroops,
+    attackerEscapedTroops: escapedOf('attacker'),
+    defenderEscapedTroops: escapedOf('defender'),
     attackerGeneralId: leadAtk?.heroId,
     deputyGeneralId: deputyAtk?.heroId,
     defenderGeneralId: leadDef?.heroId,
     skillTriggered,
+    skillUsedHeroIds,
     defeatedEnemyHeroIds,
     surrenderedOrEncircledHeroIds,
-    roundsPlayed: state.round,
+    roundsPlayed: Math.min(state.round, state.maxRounds),
     victoryReason: state.victoryReason || {
       en: attackerWon ? 'City captured in tactical combat!' : 'City defense held!',
       zh: attackerWon ? '阵前决战大获全胜，攻克城池！' : '阵前坚守大捷，击退敌军！',

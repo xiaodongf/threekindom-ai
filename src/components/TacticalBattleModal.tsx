@@ -28,6 +28,7 @@ import {
   createTacticalBattle,
   endTacticalSideTurn,
   executeArtOfWarStratagem,
+  executeGateAttack,
   executeGunpowderBomb,
   executeHeroSignatureSkill,
   executeRallyHold,
@@ -35,11 +36,16 @@ import {
   executeTacticalAttack,
   extractTacticalBattleOutcome,
   getAttackTargets,
+  getGateAttackTargets,
+  getHeroSkillTargetCoords,
+  getRampartDefBonus,
   getReachableTiles,
   getStratagemTargetCoords,
+  isIntactGate,
   manhattan,
   moveTacticalUnit,
   previewAttack,
+  previewGateAttack,
 } from '../game/tacticalEngine.js';
 import type {
   ArtOfWarStratagemId,
@@ -130,22 +136,22 @@ const TILE_INFO: Record<TacticalTileType, { name: LocalizedText; hint: Localized
   wall: {
     name: { en: 'City Wall', zh: '坚固城墙' },
     hint: {
-      en: 'Defender +30% DEF · Blocks attackers (breach with Black Powder!)',
-      zh: '守军防+30% · 阻挡攻军（可用黑火药轰塌！）',
+      en: 'Defenders here gain the rampart DEF bonus · Blocks attackers (breach with Black Powder!)',
+      zh: '守军获城防加成 · 阻挡攻军（可用黑火药轰塌！）',
     },
   },
   gate: {
     name: { en: 'City Gate', zh: '城门要冲' },
     hint: {
-      en: 'Defender +30% DEF · Enables Empty Fort Ruse (空城计)!',
-      zh: '守军防+30% · 在此可发动【空城计】震慑敌军！',
+      en: 'Closed to attackers until battered down · Defenders gain the rampart DEF bonus · Empty Fort Ruse (空城计)!',
+      zh: '攻破之前攻军不可通行 · 守军获城防加成 · 可发动【空城计】！',
     },
   },
   citadel: {
     name: { en: 'Citadel Command Flag', zh: '城池本阵大旗' },
     hint: {
-      en: 'Objective! Attackers win immediately upon occupying this tile.',
-      zh: '决胜要地！攻方占领此格即刻攻克城池！',
+      en: 'Objective! Attackers win by occupying this tile once a gate or wall is breached.',
+      zh: '决胜要地！城门或城墙告破后，攻方占领此格即攻克城池！',
     },
   },
 };
@@ -303,26 +309,30 @@ export function TacticalBattleModal({
 
     const delay = aiAutoPlay ? 180 : 420;
     const timer = window.setTimeout(() => {
-      setBattle((prev) => {
-        if (prev.winner) return prev;
-        const beforeCalloutId = prev.lastCallout?.id;
-        const { state: next } = executeSingleAITurnStep(prev);
-        if (next.lastCallout && next.lastCallout.id !== beforeCalloutId) {
-          if (next.lastCallout.kind === 'fire' || next.lastCallout.kind === 'tech') {
-            battleAudio.playExplosion(0.2);
-          } else if (next.lastCallout.kind === 'skill') {
-            battleAudio.playSkillSurge(0.2);
-          } else {
-            battleAudio.playWarDrum(0.18);
-          }
+      // The step rolls dice and plays sounds, so it runs here - exactly once per tick - rather than
+      // inside a setState updater (which React may invoke twice). `battle` is the state this
+      // effect was scheduled for; any change to it reschedules the timer.
+      const beforeCalloutId = battle.lastCallout?.id;
+      const { state: next } = executeSingleAITurnStep(battle);
+      if (next.lastCallout && next.lastCallout.id !== beforeCalloutId) {
+        if (
+          next.lastCallout.kind === 'fire' ||
+          next.lastCallout.kind === 'tech' ||
+          next.lastCallout.kind === 'breach'
+        ) {
+          battleAudio.playExplosion(0.2);
+        } else if (next.lastCallout.kind === 'skill') {
+          battleAudio.playSkillSurge(0.2);
         } else {
-          battleAudio.playSteelClash(0.1);
+          battleAudio.playWarDrum(0.18);
         }
-        if (next.winner) {
-          battleAudio.playOutcomeHorn(next.winner === playerSide, 0.2);
-        }
-        return next;
-      });
+      } else {
+        battleAudio.playSteelClash(0.1);
+      }
+      if (next.winner) {
+        battleAudio.playOutcomeHorn(next.winner === playerSide, 0.2);
+      }
+      setBattle(next);
     }, delay);
 
     return () => window.clearTimeout(timer);
@@ -354,34 +364,15 @@ export function TacticalBattleModal({
   }, [activeStratagem, battle, commandMode, isPlayerTurn, playerSide, selectedUnit]);
 
   const skillTargetCoords = useMemo(() => {
-    if (!isPlayerTurn || !selectedUnit || commandMode !== 'hero_skill' || selectedUnit.skillUsed) {
-      return [];
-    }
-    const hero = selectedUnit.heroId ? battle.preBattleHeroes[selectedUnit.heroId] : undefined;
-    if (!hero) return [];
-    const eff = hero.signatureSkill.effect;
-    if (
-      eff === 'casualty_shield' ||
-      eff === 'mandate_rally' ||
-      eff === 'morale_shatter' ||
-      eff === 'charisma_charm'
-    ) {
-      return [{ row: selectedUnit.row, col: selectedUnit.col }];
-    }
-    const maxR = eff === 'fire_ignore_def' || eff === 'river_pierce' ? 3 : 2;
-    const coords: GridCoord[] = [];
-    for (let r = 0; r < 8; r++) {
-      for (let c = 0; c < 8; c++) {
-        if (manhattan(selectedUnit.row, selectedUnit.col, r, c) <= maxR) {
-          const occ = battle.units.find((u) => !u.defeated && u.row === r && u.col === c);
-          if ((occ && occ.side !== selectedUnit.side) || eff === 'fire_ignore_def') {
-            coords.push({ row: r, col: c });
-          }
-        }
-      }
-    }
-    return coords;
+    if (!isPlayerTurn || !selectedUnit || commandMode !== 'hero_skill') return [];
+    return getHeroSkillTargetCoords(battle, selectedUnit);
   }, [battle, commandMode, isPlayerTurn, selectedUnit]);
+
+  // Standing, undefended gates the selected squad can batter right now
+  const gateTargets = useMemo(() => {
+    if (!isPlayerTurn || !selectedUnit || selectedUnit.side !== playerSide) return [];
+    return getGateAttackTargets(battle, selectedUnit);
+  }, [battle, isPlayerTurn, playerSide, selectedUnit]);
 
   const bombCoords = useMemo(() => {
     if (
@@ -435,6 +426,13 @@ export function TacticalBattleModal({
     if (!occ || !attackTargets.some((t) => t.id === occ.id)) return null;
     return { target: occ, preview: previewAttack(battle, selectedUnit, occ) };
   }, [attackTargets, battle, commandMode, hoveredCoord, playerSide, selectedUnit]);
+
+  const hoverGatePreview = useMemo(() => {
+    if (!hoveredCoord || !selectedUnit || selectedUnit.hasActed) return null;
+    if (commandMode !== 'attack' && commandMode !== 'move') return null;
+    if (!gateTargets.some((p) => p.row === hoveredCoord.row && p.col === hoveredCoord.col)) return null;
+    return previewGateAttack(battle, selectedUnit, hoveredCoord.row, hoveredCoord.col);
+  }, [battle, commandMode, gateTargets, hoveredCoord, selectedUnit]);
 
   const hoverStratagemPreview = useMemo(() => {
     if (!hoveredCoord || !selectedUnit || commandMode !== 'stratagem' || !activeStratagem) {
@@ -612,6 +610,38 @@ export function TacticalBattleModal({
       return;
     }
 
+    // 5b. Batter a standing, undefended city gate in range
+    if (!occupant && gateTargets.some((p) => p.row === row && p.col === col)) {
+      const gatePrev = previewGateAttack(battle, selectedUnit, row, col);
+      const next = executeGateAttack(battle, selectedUnit.id, row, col);
+      const dist = manhattan(selectedUnit.row, selectedUnit.col, row, col);
+      setVfxEvent({
+        id: `vfx-${Date.now()}`,
+        kind: dist > 1 ? 'arrow' : 'slash',
+        fromRow: selectedUnit.row,
+        fromCol: selectedUnit.col,
+        toRow: row,
+        toCol: col,
+      });
+      if (gatePrev.breaches) {
+        triggerBoardShake();
+        battleAudio.playExplosion(0.26);
+        spawnPopup(row, col, lang === 'zh' ? '城门告破！' : 'GATE BREACHED!', 'fire');
+      } else {
+        battleAudio.playSteelClash(0.18);
+        spawnPopup(
+          row,
+          col,
+          `${lang === 'zh' ? '城门' : 'Gate'} -${gatePrev.gateDamage.toLocaleString()}`,
+          'dmg'
+        );
+      }
+      if (next.winner) battleAudio.playOutcomeHorn(next.winner === playerSide, 0.22);
+      setBattle(next);
+      setCommandMode('move');
+      return;
+    }
+
     // 6. Move onto reachable tile
     if (commandMode === 'move' && reachableTiles.some((p) => p.row === row && p.col === col)) {
       const next = moveTacticalUnit(battle, selectedUnit.id, row, col);
@@ -722,8 +752,8 @@ export function TacticalBattleModal({
                 </h2>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-cyan-200">
                   {lang === 'zh'
-                    ? `第 ${battle.round}/${battle.maxRounds} 合`
-                    : `Round ${battle.round}/${battle.maxRounds}`}
+                    ? `第 ${Math.min(battle.round, battle.maxRounds)}/${battle.maxRounds} 合`
+                    : `Round ${Math.min(battle.round, battle.maxRounds)}/${battle.maxRounds}`}
                 </span>
                 <span
                   className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
@@ -847,34 +877,53 @@ export function TacticalBattleModal({
         <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 gap-3 p-3 bg-slate-950/70">
           {/* LEFT: 8x8 TACTICAL BATTLEFIELD */}
           <div className="lg:col-span-7 flex flex-col gap-2">
-            {/* Sun Tzu Quote / Seen-Through / Skill Callout Banner */}
-            {battle.lastCallout && (
+            {/* Sun Tzu Quote / Seen-Through / Skill Callout Banner. Always rendered at a fixed height
+                (it shows the objective until the first callout) so the board never jumps under the cursor. */}
+            {battle.lastCallout ? (
               <div
-                className={`rounded-xl px-3.5 py-2 border flex items-start justify-between gap-3 text-xs ${
+                className={`rounded-xl px-3.5 py-2 border flex items-start justify-between gap-3 text-xs h-[58px] overflow-hidden ${
                   battle.lastCallout.kind === 'seen_through'
                     ? 'bg-rose-950/75 border-rose-400/60 text-rose-100'
-                    : battle.lastCallout.kind === 'fire' || battle.lastCallout.kind === 'tech'
+                    : battle.lastCallout.kind === 'fire' ||
+                        battle.lastCallout.kind === 'tech' ||
+                        battle.lastCallout.kind === 'breach'
                       ? 'bg-orange-950/75 border-orange-400/60 text-orange-100'
                       : 'bg-cyan-950/75 border-cyan-400/55 text-cyan-100'
                 }`}
               >
-                <div className="space-y-0.5">
-                  <div className="font-display font-extrabold tracking-wide flex items-center gap-1.5">
+                <div className="space-y-0.5 min-w-0">
+                  <div className="font-display font-extrabold tracking-wide flex items-center gap-1.5 whitespace-nowrap overflow-hidden">
                     {battle.lastCallout.kind === 'fire' ? (
-                      <Flame className="w-3.5 h-3.5 text-orange-400" />
+                      <Flame className="w-3.5 h-3.5 text-orange-400 shrink-0" />
                     ) : (
-                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
                     )}
-                    <span>{tLoc(battle.lastCallout.title, lang)}</span>
+                    <span className="shrink-0">{tLoc(battle.lastCallout.title, lang)}</span>
                     {battle.lastCallout.quote && (
-                      <span className="text-[11px] font-normal italic text-amber-200/90 hidden sm:inline">
+                      <span className="text-[11px] font-normal italic text-amber-200/90 hidden sm:inline truncate">
                         — {tLoc(battle.lastCallout.quote, lang)}
                       </span>
                     )}
                   </div>
-                  <div className="text-[11px] text-slate-200">
+                  <div className="text-[11px] text-slate-200 line-clamp-2">
                     {tLoc(battle.lastCallout.subtitle, lang)}
                   </div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl px-3.5 py-2 border bg-slate-900/80 border-slate-700/80 text-xs h-[58px] overflow-hidden">
+                <div className="font-display font-extrabold tracking-wide text-amber-200 flex items-center gap-1.5">
+                  <Crown className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                  <span>{lang === 'zh' ? '作战目标' : 'Objective'}</span>
+                </div>
+                <div className="text-[11px] text-slate-200 line-clamp-2">
+                  {playerSide === 'attacker'
+                    ? lang === 'zh'
+                      ? `在 ${battle.maxRounds} 回合内攻破一座城门（或炸塌城墙）后夺取本阵大旗，或击溃全部守军。`
+                      : `Within ${battle.maxRounds} rounds, break a gate (or blast a wall) and then seize the Citadel Flag — or rout every defending squad.`
+                    : lang === 'zh'
+                      ? `坚守 ${battle.maxRounds} 回合或击溃来犯之敌。城门一破，务必守住本阵大旗！`
+                      : `Hold out for ${battle.maxRounds} rounds or rout the attackers. Once a gate falls, keep a squad on the Citadel Flag!`}
                 </div>
               </div>
             )}
@@ -907,9 +956,11 @@ export function TacticalBattleModal({
                         selectedUnit && selectedUnit.row === r && selectedUnit.col === c
                       );
                       const isReachable = reachableTiles.some((p) => p.row === r && p.col === c);
-                      const isAttackable = Boolean(
-                        visibleUnit && attackTargets.some((t) => t.id === visibleUnit.id)
-                      );
+                      const isAttackable =
+                        Boolean(visibleUnit && attackTargets.some((t) => t.id === visibleUnit.id)) ||
+                        (!occupant && gateTargets.some((p) => p.row === r && p.col === c));
+                      const gateIntact = isIntactGate(tile);
+                      const gateBreached = tile.type === 'gate' && !gateIntact;
                       const isStratTarget = stratagemCoords.some((p) => p.row === r && p.col === c);
                       const isSkillTarget = skillTargetCoords.some((p) => p.row === r && p.col === c);
                       const isBombTarget = bombCoords.some((p) => p.row === r && p.col === c);
@@ -977,10 +1028,42 @@ export function TacticalBattleModal({
                           )}
                           {tile.type === 'gate' && !visibleUnit && (
                             <div className="pointer-events-none relative z-10 flex flex-col items-center">
-                              <div className="w-5 h-5 rounded-t-full bg-slate-950/85 border border-amber-300/75 shadow" />
-                              <span className="text-[7.5px] font-black px-1 rounded bg-slate-950/85 text-amber-200 -mt-0.5">
-                                {lang === 'zh' ? '城门' : 'GATE'}
+                              <div
+                                className={`w-5 h-5 rounded-t-full shadow border ${
+                                  gateBreached
+                                    ? 'bg-transparent border-dashed border-rose-400/80'
+                                    : 'bg-slate-950/85 border-amber-300/75'
+                                }`}
+                              />
+                              <span
+                                className={`text-[7.5px] font-black px-1 rounded -mt-0.5 ${
+                                  gateBreached
+                                    ? 'bg-rose-950/90 text-rose-200'
+                                    : 'bg-slate-950/85 text-amber-200'
+                                }`}
+                              >
+                                {gateBreached
+                                  ? lang === 'zh'
+                                    ? '已破'
+                                    : 'BREACHED'
+                                  : lang === 'zh'
+                                    ? '城门'
+                                    : 'GATE'}
                               </span>
+                            </div>
+                          )}
+                          {/* Gate hit points (shown even while a squad holds the gateway) */}
+                          {gateIntact && (
+                            <div
+                              className="pointer-events-none absolute bottom-0 inset-x-0 z-20 h-1 bg-slate-950/90"
+                              title={`${tile.gateHp} / ${tile.gateMaxHp}`}
+                            >
+                              <div
+                                className="h-full bg-amber-400"
+                                style={{
+                                  width: `${Math.round(((tile.gateHp ?? 0) / Math.max(1, tile.gateMaxHp ?? 1)) * 100)}%`,
+                                }}
+                              />
                             </div>
                           )}
                           {tile.type === 'citadel' && !visibleUnit && (
@@ -1288,7 +1371,11 @@ export function TacticalBattleModal({
 
                   <button
                     type="button"
-                    disabled={!isPlayerTurn || selectedUnit.hasActed || attackTargets.length === 0}
+                    disabled={
+                      !isPlayerTurn ||
+                      selectedUnit.hasActed ||
+                      (attackTargets.length === 0 && gateTargets.length === 0)
+                    }
                     onClick={() => {
                       setCommandMode('attack');
                       setActiveStratagem(null);
@@ -1322,7 +1409,19 @@ export function TacticalBattleModal({
                   {selectedHeroObj && (
                     <button
                       type="button"
-                      disabled={!isPlayerTurn || selectedUnit.hasActed || selectedUnit.skillUsed}
+                      disabled={
+                        !isPlayerTurn ||
+                        selectedUnit.hasActed ||
+                        selectedUnit.skillUsed ||
+                        selectedUnit.skillLocked
+                      }
+                      title={
+                        selectedUnit.skillLocked
+                          ? lang === 'zh'
+                            ? '绝技冷却中或已留作后手，本战不可用'
+                            : 'Signature skill is cooling down or held in reserve this battle'
+                          : undefined
+                      }
                       onClick={() => {
                         setCommandMode('hero_skill');
                         setActiveStratagem(null);
@@ -1335,7 +1434,13 @@ export function TacticalBattleModal({
                       }`}
                     >
                       <Sparkles className="w-3.5 h-3.5" />
-                      <span className="truncate">{tLoc(selectedHeroObj.signatureSkill.name, lang)}</span>
+                      <span className="truncate">
+                        {selectedUnit.skillLocked
+                          ? lang === 'zh'
+                            ? '绝技冷却中'
+                            : 'Skill cooling down'
+                          : tLoc(selectedHeroObj.signatureSkill.name, lang)}
+                      </span>
                     </button>
                   )}
 
@@ -1559,6 +1664,37 @@ export function TacticalBattleModal({
                     ))}
                   </div>
                 </>
+              ) : hoverGatePreview ? (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-rose-200">
+                      {lang === 'zh' ? '冲撞城门' : 'Batter the Gate'}
+                    </span>
+                    <span className="font-mono font-extrabold text-amber-300">
+                      -{hoverGatePreview.gateDamage.toLocaleString()}{' '}
+                      {hoverGatePreview.breaches
+                        ? lang === 'zh'
+                          ? '· 城门告破！'
+                          : '· BREACH!'
+                        : `(${hoverGatePreview.gateHpLeft.toLocaleString()} ${lang === 'zh' ? '剩余' : 'left'})`}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-300">
+                    {lang === 'zh'
+                      ? '城门一破，攻军方可入城并夺取本阵大旗。'
+                      : 'Once a gate falls, attackers can enter the city and seize the Citadel Flag.'}
+                  </div>
+                  <div className="flex flex-wrap gap-1 pt-0.5">
+                    {hoverGatePreview.principles.map((p) => (
+                      <span
+                        key={p.id}
+                        className="text-[10px] px-1.5 py-0.5 rounded border bg-emerald-500/15 border-emerald-500/40 text-emerald-200"
+                      >
+                        {tLoc(p.label, lang)} {p.value}
+                      </span>
+                    ))}
+                  </div>
+                </>
               ) : hoveredTile ? (
                 <>
                   <div className="flex items-center justify-between">
@@ -1578,6 +1714,20 @@ export function TacticalBattleModal({
                   <p className="text-[11px] text-slate-300">
                     {tLoc(TILE_INFO[hoveredTile.type].hint, lang)}
                   </p>
+                  {(hoveredTile.type === 'wall' ||
+                    hoveredTile.type === 'gate' ||
+                    hoveredTile.type === 'citadel') && (
+                    <p className="text-[11px] font-mono text-amber-200">
+                      {lang === 'zh' ? `城防 Lv.${battle.cityDefense}` : `Walls Lv.${battle.cityDefense}`}
+                      {hoveredTile.type === 'gate' && !isIntactGate(hoveredTile)
+                        ? lang === 'zh'
+                          ? ' · 城门已破，无防御加成'
+                          : ' · gate breached, no DEF bonus'
+                        : ` · +${Math.round(getRampartDefBonus(battle) * 100)}% DEF`}
+                      {isIntactGate(hoveredTile) &&
+                        ` · ${lang === 'zh' ? '城门' : 'Gate'} ${(hoveredTile.gateHp ?? 0).toLocaleString()} / ${(hoveredTile.gateMaxHp ?? 0).toLocaleString()}`}
+                    </p>
+                  )}
                 </>
               ) : (
                 <div className="text-[11px] text-slate-400 space-y-1">
@@ -1586,8 +1736,8 @@ export function TacticalBattleModal({
                   </div>
                   <p>
                     {lang === 'zh'
-                      ? '点击我方将领移动（青色格）或攻击（红色格），悬停敌军/密林查看《孙子兵法》地形加成与智力成功率！随时可点击右上角交由 AI 托管。'
-                      : 'Click your generals to move (cyan) or strike (crimson). Hover targets to inspect Art of War terrain bonuses & General INT stratagem odds, or toggle AI Auto-Finish anytime.'}
+                      ? '点击我方将领移动（青色格）或攻击（红色格，含可冲撞的城门），悬停敌军/密林/城门查看《孙子兵法》加成与智力成功率！城门未破，夺旗无效。随时可交由 AI 托管。'
+                      : 'Click your generals to move (cyan) or strike (crimson — including a gate you can batter). Hover targets, forests and gates for Art of War bonuses & INT odds. The flag only counts once a gate is down. Toggle AI Auto-Finish anytime.'}
                   </p>
                 </div>
               )}
@@ -1617,6 +1767,7 @@ export function TacticalBattleModal({
             lang={lang}
             attacker={battle.preBattleHeroes[activeGridDuel.atkUnit.heroId]}
             defender={battle.preBattleHeroes[activeGridDuel.defUnit.heroId]}
+            terrain={gameState.cities[battle.config.toCityId]?.terrain || 'plains'}
             onComplete={(duelResult) => {
               const next = applyGridDuelResult(
                 battle,

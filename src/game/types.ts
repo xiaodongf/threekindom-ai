@@ -275,10 +275,18 @@ export interface BattleModifierTag {
 }
 
 export interface BattlePreview {
-  estimatedWinChance: number; // 5..95
+  /** Share of simulated grid battles (tactical AI on both sides) in which the city fell, 3..97. */
+  estimatedWinChance: number;
+  /** Troops committed to the assault. */
   atkPower: number;
+  /** Troops in the garrison. */
   defPower: number;
   modifiers: BattleModifierTag[];
+  /** Average casualties across the simulated battles. */
+  expectedAttackerLosses?: number;
+  expectedDefenderLosses?: number;
+  /** How many simulated battles the forecast is based on. */
+  samples?: number;
 }
 
 export interface OperationReport {

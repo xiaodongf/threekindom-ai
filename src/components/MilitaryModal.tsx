@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useDeferredValue, useMemo, useState } from 'react';
 import {
   Anchor,
   Bomb,
@@ -174,25 +174,50 @@ export function MilitaryModal({
 
   const isCombatAssault = actionType === 'assault' || actionType === 'river_strike';
 
-  const preview =
-    isCombatAssault && resolvedFromId
-      ? estimateBattlePreview(
-          state,
-          player,
-          resolvedFromId,
-          targetCityId,
-          clampedTroops,
-          tactic,
-          leadHero?.id,
-          {
-            deputyGeneralId: deputyHero?.id,
-            useSignatureSkill: canUseSkill && useSkill,
-            pincerFromCityId: clampedPincerTroops > 0 ? activePincerCity?.id : undefined,
-            pincerTroops: clampedPincerTroops,
-            isRiverStrike: actionType === 'river_strike',
-          }
-        )
-      : null;
+  // The forecast plays the assault out on the 8x8 grid a few dozen times (AI on both sides), so it
+  // is memoised on the order's inputs and follows the troop sliders with a deferred value.
+  const forecastTroops = useDeferredValue(clampedTroops);
+  const forecastPincerTroops = useDeferredValue(clampedPincerTroops);
+  const leadHeroId = leadHero?.id;
+  const deputyHeroId = deputyHero?.id;
+  const forecastPincerCityId = activePincerCity?.id;
+  const forecastUsesSkill = canUseSkill && useSkill;
+  const preview = useMemo(
+    () =>
+      isCombatAssault && resolvedFromId
+        ? estimateBattlePreview(
+            state,
+            player,
+            resolvedFromId,
+            targetCityId,
+            forecastTroops,
+            tactic,
+            leadHeroId,
+            {
+              deputyGeneralId: deputyHeroId,
+              useSignatureSkill: forecastUsesSkill,
+              pincerFromCityId: forecastPincerTroops > 0 ? forecastPincerCityId : undefined,
+              pincerTroops: forecastPincerTroops,
+              isRiverStrike: actionType === 'river_strike',
+            }
+          )
+        : null,
+    [
+      actionType,
+      deputyHeroId,
+      forecastPincerTroops,
+      forecastTroops,
+      forecastUsesSkill,
+      isCombatAssault,
+      leadHeroId,
+      forecastPincerCityId,
+      player,
+      resolvedFromId,
+      state,
+      tactic,
+      targetCityId,
+    ]
+  );
 
   const opTabs: Array<{
     id: MilitaryActionType;
@@ -735,6 +760,13 @@ export function MilitaryModal({
                     style={{ width: `${preview.estimatedWinChance}%` }}
                   />
                 </div>
+                {preview.samples ? (
+                  <p className="text-[10px] text-slate-400 leading-snug">
+                    {lang === 'zh'
+                      ? `依据 ${preview.samples} 场 8×8 沙盘推演（双方皆由 AI 指挥）——与「AI 默认托管」同一套规则；亲临指挥可胜过此数。预计战损：我军约 ${(preview.expectedAttackerLosses ?? 0).toLocaleString()}，敌军约 ${(preview.expectedDefenderLosses ?? 0).toLocaleString()}。`
+                      : `From ${preview.samples} simulated 8×8 battles with AI commanding both sides — the same rules as AI Default; commanding in person can beat it. Expected losses: ~${(preview.expectedAttackerLosses ?? 0).toLocaleString()} yours vs ~${(preview.expectedDefenderLosses ?? 0).toLocaleString()} theirs.`}
+                  </p>
+                ) : null}
                 <div className="flex flex-wrap gap-1.5">
                   {preview.modifiers.slice(0, 7).map((m, idx) => (
                     <span

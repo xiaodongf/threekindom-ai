@@ -5,6 +5,7 @@ import type {
   LocalizedText,
   PlayableFactionId,
   TacticId,
+  TerrainType,
 } from './types.js';
 
 export const TACTICAL_GRID_SIZE = 8;
@@ -56,7 +57,7 @@ export interface TacticalTile {
   col: number;
   type: TacticalTileType;
   fireTurns: number; // >0 means tile is Blazing Fire!
-  gateHp?: number; // present on 'gate' tiles (when 0, gate is breached)
+  gateHp?: number; // present on 'gate' tiles; attackers cannot enter while > 0 (0 = breached)
   gateMaxHp?: number;
 }
 
@@ -84,6 +85,8 @@ export interface TacticalUnit {
   hasMoved: boolean;
   hasActed: boolean;
   skillUsed: boolean;
+  /** Signature skill unavailable this battle (campaign cooldown, held back, or spent in the pre-battle duel). */
+  skillLocked: boolean;
   isHiddenAmbush: boolean;
   disorderedTurns: number;
   intimidatedTurns: number; // from Empty Fort Ruse (-25% ATK, -1 Move)
@@ -93,8 +96,14 @@ export interface TacticalUnit {
   wffmStance?: WffmStance;
   wffmTurns: number;
   isFlankSquad?: boolean;
+  /** Mountain Ambush plan: forests and hills cost this squad 1 move instead of 2. */
+  stealthyMarch?: boolean;
   defeated: boolean;
+  /** Morale broke with nowhere to run (encircled or subdued): the survivors lay down arms. */
   surrendered?: boolean;
+  /** Morale broke with a way out: the squad left the field and `escapedTroops` survive the battle. */
+  routed?: boolean;
+  escapedTroops: number;
   encircledWhenDefeated?: boolean;
 }
 
@@ -109,6 +118,17 @@ export interface AttackDamagePreview {
   estimatedDamage: number;
   counterDamage: number;
   moraleDrop: number;
+  /** Morale the striking squad loses to the counter-attack. */
+  counterMoraleDrop: number;
+  /** Damage dealt to the city gate the target is standing in (0 when not on an intact gate). */
+  gateDamage: number;
+  principles: ArtOfWarPrincipleTag[];
+}
+
+export interface GateAttackPreview {
+  gateDamage: number;
+  gateHpLeft: number;
+  breaches: boolean;
   principles: ArtOfWarPrincipleTag[];
 }
 
@@ -124,7 +144,7 @@ export interface StratagemSuccessPreview {
 
 export interface TacticalCallout {
   id: string;
-  kind: 'stratagem' | 'seen_through' | 'skill' | 'fire' | 'ambush' | 'tech' | 'duel';
+  kind: 'stratagem' | 'seen_through' | 'skill' | 'fire' | 'ambush' | 'tech' | 'duel' | 'breach';
   title: LocalizedText;
   quote?: LocalizedText;
   subtitle: LocalizedText;
@@ -154,11 +174,22 @@ export interface TacticalBattleConfig {
   deputyGeneralId?: string;
   consumeAP: boolean;
   initialDuelResult?: DuelResult;
+  /** Keep the lead general's signature skill in reserve (War Room "Use Skill" unchecked). */
+  holdLeadSkill?: boolean;
 }
 
 export interface TacticalBattleState {
   config: TacticalBattleConfig;
   cityName: LocalizedText;
+  /** Strategic context carried onto the grid so campaign choices matter in battle. */
+  cityDefense: number; // city wall level 1..5: sets gate HP and the rampart DEF bonus
+  cityTerrain: TerrainType;
+  /** True once a gate is broken or a wall is blown open; the Citadel Flag only counts after this. */
+  breached: boolean;
+  /** Side fighting with Grand Coalition resolve (+12% ATK & DEF) against the Time-Traveler, if any. */
+  coalitionSide: TacticalSide | null;
+  /** Attacker ATK bonus vs heroes whose historical flaw matches the chosen tactic (player attacks only). */
+  chronoInsightAtk: number;
   hasWaterFeature: boolean;
   grid: TacticalTile[][]; // 8 rows x 8 cols
   units: TacticalUnit[];
@@ -197,12 +228,19 @@ export interface TacticalBattleOutcome {
   defenderStartTroops: number;
   attackerLosses: number;
   defenderLosses: number;
+  /** Troops alive at the end: squads still on the field plus routed squads that escaped. */
   attackerRemainingTroops: number;
   defenderRemainingTroops: number;
+  /** The part of the remaining troops that left the field as routed squads. */
+  attackerEscapedTroops: number;
+  defenderEscapedTroops: number;
   attackerGeneralId?: string;
   deputyGeneralId?: string;
   defenderGeneralId?: string;
+  /** Signature skill used by an attacking hero (shown in the battle report). */
   skillTriggered?: LocalizedText;
+  /** Every hero on either side who spent their signature skill (all go on cooldown). */
+  skillUsedHeroIds: string[];
   defeatedEnemyHeroIds: string[];
   surrenderedOrEncircledHeroIds: string[];
   roundsPlayed: number;

@@ -38,6 +38,7 @@ import {
   applyDiplomacyOutcome,
   applyHeroEncounterOutcome,
   applyTacticalBattleOutcome,
+  buildAssaultConfig,
   createDefaultPlayerProfile,
   createNewGame,
   executeAITurnAction,
@@ -340,6 +341,10 @@ export default function App() {
   });
   const [activeDuel, setActiveDuel] = useState<{
     payload: ExecuteMilitaryPayload;
+    demoAction?: 'strike' | 'feint' | 'guard' | 'skill' | 'chrono_counter' | 'finale';
+    demoTimeSec?: number;
+    demoTerrain?: 'plains' | 'river' | 'mountain' | 'fortress';
+    demoNight?: boolean;
   } | null>(null);
   const [warQueue, setWarQueue] = useState<WarTheaterQueueItem[]>([]);
   const [warStage, setWarStage] = useState<WarStage>('idle');
@@ -394,15 +399,54 @@ export default function App() {
     accumulatedWarItems: WarTheaterQueueItem[];
   } | null>(null);
 
-  // Optional ?demoWar=1, ?demoMarch=1, or ?demoTactical=1 URL preview for visual inspection
+  // Optional ?demoDuel=1, ?demoWar=1, ?demoMarch=1, or ?demoTactical=1 URL preview for visual inspection
   useEffect(() => {
     if (!gameState) return;
     const params = new URLSearchParams(window.location.search);
+    const demoDuel = params.get('demoDuel');
     const demoTactical = params.get('demoTactical');
     const demoWar = params.get('demoWar');
     const demoMarch = params.get('demoMarch');
     const demoTime = Number(params.get('demoTime') || '0');
     const demoTerrain = params.get('demoTerrain');
+
+    if (demoDuel === '1' && !activeDuel) {
+      const atkId = params.get('atk') || 'guanyu';
+      const defId = params.get('def') || 'lubu';
+      const actionParam = params.get('demoDuelAction') || undefined;
+      const validAction =
+        actionParam === 'strike' ||
+        actionParam === 'feint' ||
+        actionParam === 'guard' ||
+        actionParam === 'skill' ||
+        actionParam === 'chrono_counter' ||
+        actionParam === 'finale'
+          ? actionParam
+          : undefined;
+      const duelTerrain =
+        demoTerrain === 'river' || demoTerrain === 'mountain' || demoTerrain === 'fortress'
+          ? demoTerrain
+          : 'plains';
+      setActiveDuel({
+        payload: {
+          actionType: 'assault',
+          fromCityId: 'jiangling',
+          toCityId: 'xiangyang',
+          troops: 10000,
+          tactic: 'assault',
+          generalId: gameState.generals[atkId] ? atkId : 'guanyu',
+          defenderHeroId: gameState.generals[defId] ? defId : 'lubu',
+          useSignatureSkill: false,
+          startDuel: true,
+          battleMode: 'ai_default',
+        },
+        demoAction: validAction,
+        demoTimeSec: Number.isFinite(demoTime) && demoTime > 0 ? demoTime : undefined,
+        demoTerrain: duelTerrain,
+        demoNight: params.get('demoNight') === '1',
+      });
+      return;
+    }
 
     if (demoTactical === '1' && !activeTactical) {
       const upgraded: GameState = {
@@ -615,23 +659,28 @@ export default function App() {
           : payload.pincerFromCityId
             ? 'pincer'
             : 'assault';
-      const config: TacticalBattleConfig = {
-        id: `tac-${Date.now().toString(36)}`,
-        fromCityId: payload.fromCityId,
-        toCityId: payload.toCityId,
-        attackerFaction: gameState.playerFaction,
-        defenderFaction: targetCity?.owner ?? 'neutral',
-        playerSide: 'attacker',
-        primaryTroops: payload.troops,
-        pincerFromCityId: payload.pincerFromCityId,
-        pincerTroops: payload.pincerTroops,
-        tactic: payload.tactic,
-        isRiverStrike: payload.actionType === 'river_strike',
-        attackerGeneralId: payload.generalId,
-        deputyGeneralId: payload.deputyId,
-        consumeAP: true,
-        initialDuelResult: duelResult,
-      };
+      // Same order builder the auto-battle and the forecast use (validates the order, clamps troops,
+      // falls back to the best general). The player decides on the grid whether to spend the skill.
+      const config = buildAssaultConfig(
+        gameState,
+        gameState.playerFaction,
+        payload.fromCityId,
+        payload.toCityId,
+        payload.troops,
+        payload.tactic,
+        payload.generalId,
+        true,
+        {
+          deputyGeneralId: payload.deputyId,
+          useSignatureSkill: true,
+          duelResult,
+          pincerFromCityId: payload.pincerFromCityId,
+          pincerTroops: payload.pincerTroops,
+          isRiverStrike: payload.actionType === 'river_strike',
+        },
+        'attacker'
+      );
+      if (!config || gameState.actionPoints < 1) return;
       const march: ActiveMapMarch = {
         id: `tac-march-${Date.now().toString(36)}`,
         fromCityId: payload.fromCityId,
@@ -986,22 +1035,32 @@ export default function App() {
       return;
     }
 
-    // Direct 8x8 Tactical Defense!
-    const atkHero = getCityGenerals(prompt.snapshotState, prompt.fromCityId)[0];
+    // Direct 8x8 Tactical Defense! The rival's order is built exactly as the auto-resolve would build it.
+    const config = buildAssaultConfig(
+      prompt.snapshotState,
+      prompt.attackerFaction,
+      prompt.fromCityId,
+      prompt.toCityId,
+      prompt.troops,
+      prompt.action.tactic ?? 'assault',
+      undefined,
+      false,
+      { useSignatureSkill: true },
+      'defender'
+    );
+    if (!config) {
+      void runEndTurnPipeline(
+        prompt.snapshotState,
+        prompt.remainingAiFactions,
+        prompt.accumulatedWarItems
+      );
+      return;
+    }
+    const atkHero = config.attackerGeneralId
+      ? prompt.snapshotState.generals[config.attackerGeneralId]
+      : undefined;
     const targetName = prompt.snapshotState.cities[prompt.toCityId]?.name ?? { en: '', zh: '' };
     const atkShort = prompt.snapshotState.factions[prompt.attackerFaction].shortName;
-    const config: TacticalBattleConfig = {
-      id: `tac-def-${Date.now().toString(36)}`,
-      fromCityId: prompt.fromCityId,
-      toCityId: prompt.toCityId,
-      attackerFaction: prompt.attackerFaction,
-      defenderFaction: prompt.snapshotState.playerFaction,
-      playerSide: 'defender',
-      primaryTroops: prompt.troops,
-      tactic: prompt.action.tactic ?? 'assault',
-      attackerGeneralId: atkHero?.id,
-      consumeAP: false,
-    };
     const march: ActiveMapMarch = {
       id: `tac-def-march-${Date.now().toString(36)}`,
       fromCityId: prompt.fromCityId,
@@ -1281,13 +1340,24 @@ export default function App() {
         />
       )}
 
-      {/* Interactive 3-Round Pre-Battle Hero Duel Modal */}
+      {/* Interactive 3-Round Real-Time 3D Cavalry Hero Duel Modal */}
       {activeDuel && duelAttacker && duelDefender && (
         <DuelModal
           state={gameState}
           lang={lang}
           attacker={duelAttacker}
           defender={duelDefender}
+          terrain={
+            activeDuel.demoTerrain ??
+            gameState.cities[activeDuel.payload.toCityId]?.terrain ??
+            'plains'
+          }
+          isNight={
+            activeDuel.demoNight ?? activeDuel.payload.actionType === 'raid'
+          }
+          theme={visualTheme}
+          demoAction={activeDuel.demoAction}
+          demoTimeSec={activeDuel.demoTimeSec}
           onComplete={(duelResult) =>
             executeAssaultWithOptionalDuel(activeDuel.payload, duelResult)
           }
