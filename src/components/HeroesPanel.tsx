@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import {
   Coins,
   Eye,
@@ -69,6 +69,7 @@ export function HeroesPanel({
 }: HeroesPanelProps) {
   const [filter, setFilter] = useState<HeroFilter>('mine');
   const [relocateTarget, setRelocateTarget] = useState<Record<string, string>>({});
+  const [collapsedManually, setCollapsedManually] = useState(false);
 
   const player = state.playerFaction;
   const ownedCities = getFactionCities(state, player);
@@ -96,8 +97,10 @@ export function HeroesPanel({
     fallen: fallenHeroes,
   };
 
-  // If user clicked a hero on the map, auto-show that hero's details at top!
+  // If user clicked a hero on the map, auto-show that hero's details; otherwise showcase the lead hero by default!
   const visibleList = listByFilter[filter];
+  const activeExpandedId =
+    focusedHeroId ?? (!collapsedManually && visibleList.length > 0 ? visibleList[0].id : null);
 
   const filterTabs: Array<{ id: HeroFilter; label: string; count: number }> = [
     { id: 'mine', label: lang === 'zh' ? '麾下' : 'Mine', count: myHeroes.length },
@@ -133,7 +136,10 @@ export function HeroesPanel({
           <>
             {/* The hero, painted large: face first, name in brush lettering */}
             <div
-              onClick={() => onSelectFocusHero(null)}
+              onClick={() => {
+                setCollapsedManually(true);
+                onSelectFocusHero(null);
+              }}
               {...parallaxProps}
               className="anim-rise relative -mx-3 -mt-3 h-72 overflow-hidden cursor-pointer group"
               title={lang === 'zh' ? '收起' : 'Collapse'}
@@ -150,6 +156,40 @@ export function HeroesPanel({
                 }}
               />
               <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[#1c1813]" />
+              {hero.status !== 'executed' && (
+                <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+                  {[0, 1, 2, 3].map((m) => {
+                    const moteColor =
+                      hero.faction === 'wei'
+                        ? 'rgba(210, 228, 255, 0.8)'
+                        : hero.faction === 'shu'
+                          ? 'rgba(176, 236, 194, 0.78)'
+                          : hero.faction === 'wu'
+                            ? 'rgba(255, 170, 118, 0.82)'
+                            : 'rgba(232, 209, 153, 0.75)';
+                    return (
+                      <span
+                        key={m}
+                        className="kingdom-mote absolute rounded-full"
+                        style={
+                          {
+                            left: `${16 + m * 22}%`,
+                            top: `${24 + (m % 2) * 26}%`,
+                            width: '3px',
+                            height: '3px',
+                            background: moteColor,
+                            '--mote-dx': `${hero.faction === 'wei' ? -10 + m * 5 : 10 + m * 4}px`,
+                            '--mote-dy': `${hero.faction === 'wei' ? 42 : -44}px`,
+                            '--mote-dur': `${6.2 + m * 0.9}s`,
+                            '--mote-delay': `${-m * 1.4}s`,
+                            '--mote-alpha': 0.5,
+                          } as CSSProperties
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              )}
               <Seal
                 char={heroFaction?.bannerChar ?? (lang === 'zh' ? '野' : '野')}
                 size={34}
@@ -195,7 +235,10 @@ export function HeroesPanel({
           </>
         ) : (
           <div
-            onClick={() => onSelectFocusHero(hero.id)}
+            onClick={() => {
+              setCollapsedManually(false);
+              onSelectFocusHero(hero.id);
+            }}
             className="flex items-center gap-3 cursor-pointer"
           >
             <HeroAvatar hero={hero} size="md" showLevel />
@@ -465,7 +508,10 @@ export function HeroesPanel({
         {filterTabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setFilter(tab.id)}
+            onClick={() => {
+              setFilter(tab.id);
+              setCollapsedManually(false);
+            }}
             className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
               filter === tab.id
                 ? 'btn-gold shadow'
@@ -494,7 +540,7 @@ export function HeroesPanel({
             {lang === 'zh' ? '此分类暂无武将。' : 'No heroes in this category.'}
           </div>
         ) : (
-          visibleList.map((hero) => renderHeroCard(hero, focusedHeroId === hero.id))
+          visibleList.map((hero) => renderHeroCard(hero, activeExpandedId === hero.id))
         )}
       </div>
     </div>

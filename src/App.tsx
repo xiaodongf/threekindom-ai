@@ -506,7 +506,7 @@ export default function App() {
 
     if ((demoWar === '1' || demoMarch === '1') && warQueue.length === 0) {
       const atkHero = gameState.generals.guanyu || Object.values(gameState.generals)[0];
-      const defHero = gameState.generals.xiahou || Object.values(gameState.generals)[1];
+      const defHero = gameState.generals.xiahoudun || Object.values(gameState.generals)[1];
       const sampleBattle: BattleReport = {
         id: 'demo-battle',
         turn: gameState.turn,

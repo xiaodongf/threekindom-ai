@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import type { HorseCoatId } from '../../game/heroDuelProfiles.js';
+import type { General } from '../../game/types.js';
+import type { HeroDuelProfile, HorseCoatId } from '../../game/heroDuelProfiles.js';
 import { HORSE_COAT_PALETTES } from '../../game/heroDuelProfiles.js';
 import type { DisposeBag } from './duelGeometry3D.js';
 import { bestArt } from '../../utils/art.js';
@@ -477,4 +478,238 @@ export function createTrailTexture(bag: DisposeBag): THREE.CanvasTexture {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 64, 64);
   return finish(bag, c, { srgb: false });
+}
+
+/**
+ * Painted hero face texture mapped onto the head SphereGeometry (+X front is at U = 0.5, V = 0.5).
+ * Gives each general tailored complexion, brow/eye expression, facial hair, scars, or Xiahou Dun's eyepatch.
+ */
+export function createHeroFaceTexture(
+  hero: General,
+  profile: HeroDuelProfile,
+  bag: DisposeBag
+): THREE.CanvasTexture {
+  const S = 256;
+  const [c, ctx] = makeCanvas(S, S);
+  const id = hero.id;
+
+  const baseSkin =
+    id === 'guanyu'
+      ? '#b84c3e'
+      : profile.isHeroine
+        ? '#ecc3a8'
+        : id === 'zhangfei' || id === 'menghuo' || id === 'yanbaihu'
+          ? '#be825c'
+          : profile.isScholarRobe
+            ? '#e2b290'
+            : '#d69e78';
+
+  ctx.fillStyle = baseSkin;
+  ctx.fillRect(0, 0, S, S);
+
+  // Subtle cheek & temple shading around front face (cx = 128, cy = 128)
+  const warmGlow = ctx.createRadialGradient(128, 126, 8, 128, 132, 74);
+  warmGlow.addColorStop(0, 'rgba(255, 235, 215, 0.22)');
+  warmGlow.addColorStop(0.65, 'rgba(0, 0, 0, 0)');
+  warmGlow.addColorStop(1, 'rgba(38, 18, 10, 0.28)');
+  ctx.fillStyle = warmGlow;
+  ctx.fillRect(0, 0, S, S);
+
+  // Hairline / sideburns strictly behind the ears (ears sit at U = 0.25 -> x = 64 and U = 0.75 -> x = 192)
+  const hairCol =
+    id === 'huangzhong' || id === 'yanyan' || id === 'huatuo'
+      ? '#d8dee6'
+      : id === 'caozhang'
+        ? '#c78824'
+        : '#18151a';
+  ctx.fillStyle = hairCol;
+  ctx.fillRect(0, 0, S, 76);
+  ctx.fillRect(0, 0, 48, S);
+  ctx.fillRect(S - 48, 0, 48, S);
+  // Neat sideburn tabs in front of the ears
+  if (!profile.isHeroine) {
+    ctx.fillRect(48, 84, 8, 52);
+    ctx.fillRect(S - 56, 84, 8, 52);
+  } else {
+    // Soft temple locks for heroines
+    ctx.beginPath();
+    ctx.moveTo(48, 76);
+    ctx.quadraticCurveTo(60, 118, 52, 162);
+    ctx.lineTo(48, 162);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(S - 48, 76);
+    ctx.quadraticCurveTo(S - 60, 118, S - 52, 162);
+    ctx.lineTo(S - 48, 162);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Sculpted ears at U = 0.25 (x = 62) and U = 0.75 (x = 194)
+  for (const ex of [61, 195]) {
+    ctx.fillStyle = 'rgba(48, 20, 12, 0.34)';
+    ctx.beginPath();
+    ctx.ellipse(ex, 132, 4.5, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255, 232, 212, 0.2)';
+    ctx.beginPath();
+    ctx.ellipse(ex + (ex < 128 ? 1.5 : -1.5), 131, 2.5, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Nose bridge highlight & nostrils (aligned with 3D nose cone at equator y = 136..148)
+  ctx.fillStyle = 'rgba(255, 244, 230, 0.26)';
+  ctx.fillRect(125, 124, 6, 24);
+  ctx.fillStyle = 'rgba(52, 24, 16, 0.48)';
+  ctx.beginPath();
+  ctx.arc(123, 150, 2.2, 0, Math.PI * 2);
+  ctx.arc(133, 150, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eyes (left & right of U = 0.5, positioned clearly below helmet/hood brow line)
+  for (const side of [-1, 1]) {
+    const ex = 128 + side * 20;
+    const ey = 128;
+    // Sclera
+    ctx.fillStyle = '#f5efe6';
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, 8.2, profile.isHeroine ? 4.8 : 3.9, side * -0.08, 0, Math.PI * 2);
+    ctx.fill();
+    // Iris & pupil
+    ctx.fillStyle = '#1b1410';
+    ctx.beginPath();
+    ctx.arc(ex - side * 1, ey, 3.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(ex - side * 2, ey - 1, 1.1, 0, Math.PI * 2);
+    ctx.fill();
+    // Upper lash / ink eyeliner
+    ctx.strokeStyle = '#120e0c';
+    ctx.lineWidth = profile.isHeroine ? 2.3 : 2.0;
+    ctx.beginPath();
+    ctx.moveTo(ex - 8.5, ey + side * 0.8);
+    ctx.quadraticCurveTo(ex, ey - 5.2, ex + 8.5, ey - side * 0.8);
+    ctx.stroke();
+
+    // Expressive sword-brows
+    ctx.strokeStyle = hairCol;
+    ctx.lineWidth = profile.isHeroine ? 2.4 : 4.0;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ex - side * 8.5, ey - 7.5);
+    ctx.quadraticCurveTo(ex, ey - 11, ex + side * 11, ey - (profile.isHeroine ? 9 : 13.5));
+    ctx.stroke();
+  }
+
+  // Xiahou Dun's iconic black leather eyepatch over his left eye
+  if (id === 'xiahoudun') {
+    ctx.strokeStyle = '#1b1614';
+    ctx.lineWidth = 4.5;
+    ctx.beginPath();
+    ctx.moveTo(64, 108);
+    ctx.lineTo(192, 144);
+    ctx.stroke();
+    ctx.fillStyle = '#1a1614';
+    ctx.strokeStyle = '#b68c3a';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(148, 128, 11.5, 8.8, -0.12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Cheek battle-scars for scarred vanguard veterans (visible on both profile & 3/4 view)
+  if (id === 'caoren' || id === 'yuejin' || id === 'liaohua' || id === 'yanbaihu' || id === 'zhoutai') {
+    ctx.strokeStyle = 'rgba(112, 34, 28, 0.76)';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(92, 134);
+    ctx.lineTo(106, 156);
+    ctx.moveTo(146, 135);
+    ctx.lineTo(156, 156);
+    ctx.stroke();
+  }
+
+  // Mouth / mustache & goatee
+  if (profile.isHeroine) {
+    ctx.fillStyle = 'rgba(218, 108, 102, 0.24)';
+    ctx.beginPath();
+    ctx.arc(102, 142, 12, 0, Math.PI * 2);
+    ctx.arc(154, 142, 12, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#b83b34';
+    ctx.beginPath();
+    ctx.ellipse(128, 164, 7.5, 3.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = 'rgba(84, 38, 30, 0.78)';
+    ctx.fillRect(119, 163, 18, 3);
+    if (hero.war >= 78 || profile.hasLongBeard || hero.intellect >= 85) {
+      ctx.strokeStyle = hairCol;
+      ctx.lineWidth = 3.4;
+      ctx.beginPath();
+      ctx.moveTo(128, 158);
+      ctx.quadraticCurveTo(113, 158, 103, 168);
+      ctx.moveTo(128, 158);
+      ctx.quadraticCurveTo(143, 158, 153, 168);
+      ctx.stroke();
+
+      ctx.fillStyle = hairCol;
+      ctx.beginPath();
+      ctx.moveTo(121, 170);
+      ctx.lineTo(135, 170);
+      ctx.lineTo(128, 190);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  return finish(bag, c);
+}
+
+/** Coursed Han fortress stone-brick diffuse + bump map for siege duel arenas. */
+export function createFortressWallTextures(bag: DisposeBag): {
+  map: THREE.CanvasTexture;
+  bumpMap: THREE.CanvasTexture;
+} {
+  const S = 256;
+  const [cMap, ctx] = makeCanvas(S, S);
+  const [cBump, bctx] = makeCanvas(S, S);
+  const rnd = seeded(9187);
+
+  ctx.fillStyle = '#48413a';
+  ctx.fillRect(0, 0, S, S);
+  bctx.fillStyle = '#303030';
+  bctx.fillRect(0, 0, S, S);
+
+  const rows = 8;
+  const cols = 4;
+  const rh = S / rows;
+  const cw = S / cols;
+  for (let r = 0; r < rows; r++) {
+    const off = (r % 2) * (cw * 0.5);
+    for (let c = -1; c <= cols; c++) {
+      const x = c * cw + off;
+      const y = r * rh;
+      const v = 76 + Math.floor(rnd() * 22);
+      ctx.fillStyle = `rgb(${v}, ${v - 5}, ${v - 11})`;
+      ctx.fillRect(x + 2, y + 2, cw - 4, rh - 4);
+      ctx.fillStyle = 'rgba(255,245,225,0.09)';
+      ctx.fillRect(x + 2, y + 2, cw - 4, 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.fillRect(x + 2, y + rh - 4, cw - 4, 2);
+
+      const bv = 175 + Math.floor(rnd() * 50);
+      bctx.fillStyle = `rgb(${bv},${bv},${bv})`;
+      bctx.fillRect(x + 2, y + 2, cw - 4, rh - 4);
+    }
+  }
+
+  return {
+    map: finish(bag, cMap, { repeat: [14, 2] }),
+    bumpMap: finish(bag, cBump, { srgb: false, repeat: [14, 2] }),
+  };
 }

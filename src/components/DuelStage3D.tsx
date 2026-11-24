@@ -15,7 +15,7 @@ import {
 } from './duel/duelChoreography.js';
 import { DisposeBag } from './duel/duelGeometry3D.js';
 import type { MountedGeneralRig3D } from './duel/duelModels3D.js';
-import { RIDER_SCALE, applyRigPose3D, buildMountedGeneralRig3D, flashRig } from './duel/duelModels3D.js';
+import { applyRigPose3D, buildMountedGeneralRig3D, flashRig } from './duel/duelModels3D.js';
 import { createSkyDomeTexture } from './duel/duelTextures3D.js';
 import type {
   DuelCalloutBanner,
@@ -270,38 +270,75 @@ export function DuelStage3D({
     const post = createDuelPostFx(renderer, scene, camera, width, height);
     const grade = post.grade.uniforms;
 
-    // Chrono-Insight: the predicted arc of the enemy's blow, drawn in the air
+    // Chrono-Insight: the predicted arc of the enemy's blow, dynamically tracking live weapon tip -> chest
     const chronoArcMat = bag.add(
       new THREE.MeshBasicMaterial({
         color: new THREE.Color(0.5, 1.6, 2.4),
         transparent: true,
         opacity: 0,
+        side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       })
     );
-    const chronoArc = new THREE.Mesh(
-      bag.add(
-        new THREE.TubeGeometry(
-          new THREE.CatmullRomCurve3([
-            new THREE.Vector3(1.9, 3.6, 0.4),
-            new THREE.Vector3(0.5, 3.5, 0.5),
-            new THREE.Vector3(-1.1, 2.7, 0.4),
-          ]),
-          28,
-          0.035,
-          6,
-          false
-        )
-      ),
-      chronoArcMat
-    );
+    const chronoArcGeo = bag.add(new THREE.PlaneGeometry(1, 0.065, 20, 1));
+    const chronoArc = new THREE.Mesh(chronoArcGeo, chronoArcMat);
+    chronoArc.frustumCulled = false;
     const chronoRingMat = chronoArcMat.clone();
     bag.add(chronoRingMat);
-    chronoRingMat.side = THREE.DoubleSide;
-    const chronoRing = new THREE.Mesh(bag.add(new THREE.RingGeometry(0.42, 0.5, 32)), chronoRingMat);
+    const chronoRing = new THREE.Mesh(bag.add(new THREE.RingGeometry(0.38, 0.47, 32)), chronoRingMat);
     chronoRing.position.set(-1.1, 2.7, 0.4);
     scene.add(chronoArc, chronoRing);
+
+    // Flying 3D projectiles for bow generals (arrows/chakrams) and feather-fan strategists (wind-fire waves)
+    const makeArrowProj = (colorHex: string) => {
+      const grp = new THREE.Group();
+      const shaft = new THREE.Mesh(
+        bag.add(new THREE.CylinderGeometry(0.016, 0.016, 1.05, 6)),
+        bag.add(new THREE.MeshStandardMaterial({ color: '#6b492a', roughness: 0.7 }))
+      );
+      shaft.rotation.z = Math.PI * 0.5;
+      const head = new THREE.Mesh(
+        bag.add(new THREE.ConeGeometry(0.048, 0.2, 6)),
+        bag.add(new THREE.MeshBasicMaterial({ color: new THREE.Color(colorHex).multiplyScalar(2.2) }))
+      );
+      head.rotation.z = -Math.PI * 0.5;
+      head.position.x = 0.58;
+      const fletch = new THREE.Mesh(
+        bag.add(new THREE.ConeGeometry(0.055, 0.18, 4)),
+        bag.add(new THREE.MeshBasicMaterial({ color: '#f8fafc' }))
+      );
+      fletch.rotation.z = Math.PI * 0.5;
+      fletch.position.x = -0.46;
+      grp.add(shaft, head, fletch);
+      grp.visible = false;
+      scene.add(grp);
+      return grp;
+    };
+    const makeFanWaveProj = (colorHex: string) => {
+      const grp = new THREE.Group();
+      const wave = new THREE.Mesh(
+        bag.add(new THREE.TorusGeometry(0.58, 0.055, 8, 24, Math.PI * 0.88)),
+        bag.add(
+          new THREE.MeshBasicMaterial({
+            color: new THREE.Color(colorHex).multiplyScalar(2.1),
+            transparent: true,
+            opacity: 0.9,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          })
+        )
+      );
+      wave.rotation.z = -Math.PI * 0.44;
+      grp.add(wave);
+      grp.visible = false;
+      scene.add(grp);
+      return grp;
+    };
+    const leftBowProj = atkProfile.weaponClass === 'bow' ? makeArrowProj(atkProfile.auraColor) : null;
+    const rightBowProj = defProfile.weaponClass === 'bow' ? makeArrowProj(defProfile.auraColor) : null;
+    const leftFanProj = atkProfile.weaponClass === 'fan' ? makeFanWaveProj(atkProfile.auraColor) : null;
+    const rightFanProj = defProfile.weaponClass === 'fan' ? makeFanWaveProj(defProfile.auraColor) : null;
 
     // The loser's own weapon, knocked spinning out of their hand
     let disarmed: THREE.Object3D | null = null;
@@ -552,11 +589,10 @@ export function DuelStage3D({
           st.disarmSpawned = true;
           if (disarmed) scene.remove(disarmed);
           loser.weapon.visible = true;
+          loser.weapon.updateWorldMatrix(true, false);
           disarmed = loser.weapon.clone();
           loser.weapon.visible = false;
-          loser.weapon.getWorldPosition(disarmed.position);
-          loser.weapon.getWorldQuaternion(disarmed.quaternion);
-          disarmed.scale.setScalar(RIDER_SCALE);
+          loser.weapon.matrixWorld.decompose(disarmed.position, disarmed.quaternion, disarmed.scale);
           scene.add(disarmed);
           const away = st.finaleWinner === 'attacker' ? 1 : -1;
           disarmedVel.set(away * 1.6, 5.2, 2.2);
@@ -589,9 +625,63 @@ export function DuelStage3D({
       chronoArcMat.opacity = sampled.chronoScanAlpha * 0.9;
       chronoRingMat.opacity = sampled.chronoScanAlpha;
       if (sampled.chronoScanAlpha > 0.01) {
+        rightRig.trailTip.getWorldPosition(va);
+        leftRig.chest.getWorldPosition(vb);
+        const pos = chronoArcGeo.attributes.position as THREE.BufferAttribute;
+        for (let i = 0; i <= 20; i++) {
+          const u = i / 20;
+          const ax = va.x + (vb.x - va.x) * u;
+          const ay = va.y + (vb.y - va.y) * u + Math.sin(u * Math.PI) * 0.55;
+          const az = va.z + (vb.z - va.z) * u + Math.sin(u * Math.PI) * 0.25;
+          pos.setXYZ(i, ax, ay + 0.032, az);
+          pos.setXYZ(i + 21, ax, ay - 0.032, az);
+        }
+        pos.needsUpdate = true;
+        chronoRing.position.copy(vb);
         chronoRing.lookAt(camera.position);
         chronoRing.scale.setScalar(0.85 + Math.sin(totalElapsed * 12) * 0.18);
       }
+
+      // Update flying 3D arrows / strategist wind-fire waves during active bow & fan strikes
+      const updateRangedProj = (
+        proj: THREE.Group | null,
+        striker: MountedGeneralRig3D,
+        victim: MountedGeneralRig3D,
+        strikes: number[] | undefined,
+        isFan: boolean
+      ) => {
+        if (!proj) return;
+        if (st.phase !== 'exchange' || !strikes || strikes.length === 0) {
+          proj.visible = false;
+          return;
+        }
+        let activeU = -1;
+        for (const tc of strikes) {
+          const u = (st.phaseTime - (tc - 0.24)) / 0.24;
+          if (u >= 0 && u <= 1) {
+            activeU = u;
+            break;
+          }
+        }
+        if (activeU < 0) {
+          proj.visible = false;
+          return;
+        }
+        proj.visible = true;
+        striker.trailTip.getWorldPosition(va);
+        victim.chest.getWorldPosition(vb);
+        proj.position.lerpVectors(va, vb, activeU);
+        proj.position.y += Math.sin(activeU * Math.PI) * (isFan ? 0.15 : 0.35);
+        vc.subVectors(vb, va).normalize();
+        proj.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), vc);
+        if (isFan) {
+          proj.scale.setScalar(0.65 + activeU * 0.85);
+        }
+      };
+      updateRangedProj(leftBowProj, leftRig, rightRig, st.plan?.script.left.strikes, false);
+      updateRangedProj(rightBowProj, rightRig, leftRig, st.plan?.script.right.strikes, false);
+      updateRangedProj(leftFanProj, leftRig, rightRig, st.plan?.script.left.strikes, true);
+      updateRangedProj(rightFanProj, rightRig, leftRig, st.plan?.script.right.strikes, true);
 
       if (disarmed) {
         if (disarmed.position.y > disarmedRestY || disarmedVel.y > 0) {
@@ -681,7 +771,7 @@ export function DuelStage3D({
       const shakeY = (Math.sin(e * 53.9 + 2.1) + Math.sin(e * 71.3)) * 0.5 * trauma * 0.24;
 
       heroLightLevel += ((sampled.camera.cutId === 1 ? 1 : 0) - heroLightLevel) * (1 - Math.exp(-10 * rawDt));
-      heroLight.intensity = heroLightLevel * 42;
+      heroLight.intensity = heroLightLevel * 15;
       heroLight.position.copy(camPos).add(vc.set(0, 0.9, 0.4));
 
       // Punch-in: a short dolly toward the point of impact

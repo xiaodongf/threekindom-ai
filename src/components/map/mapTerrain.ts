@@ -37,6 +37,7 @@ precision highp float;
 
 uniform sampler2D uHeight;
 uniform sampler2D uMask;
+uniform sampler2D uLake;
 uniform sampler2D uProvince;
 uniform sampler2D uBorder;
 uniform vec2 uTexel;
@@ -104,9 +105,13 @@ void main() {
   float curve = (hL + hR + hU + hD) * 0.25 - hm.r;
 
   vec4 mask = texture2D(uMask, uv);
+  vec2 lk = texture2D(uLake, uv).rg;
   float land = smoothstep(0.4, 0.6, mask.r);
   float coastField = mask.g;
   float water = smoothstep(0.22, 0.62, mask.b) * land;
+  float lake = smoothstep(0.34, 0.66, lk.r) * land;
+  float lakeShelf = lk.g * land;
+  float lakeShore = (1.0 - smoothstep(0.0, 0.11, abs(lk.r - 0.46))) * land;
   float road = mask.a * land;
 
   float grain = fbm(uv * vec2(260.0, 172.0));
@@ -137,7 +142,12 @@ void main() {
   vec3 riverCol = vec3(0.50, 0.70, 0.68);
   ground = mix(ground, riverCol * (0.8 + 0.2 * shade), water * 0.92);
   ground = mix(ground, ground * 0.62, smoothstep(0.1, 0.3, mask.b) * (1.0 - water) * land * 0.5);
-  ground = mix(ground, vec3(0.80, 0.72, 0.50), road * 0.4);
+  float lakeRipple = sin((0.82 - lk.g) * 62.0 - uTime * 0.55 + mottle * 3.8);
+  vec3 lakeWater = mix(vec3(0.42, 0.64, 0.62), vec3(0.22, 0.44, 0.47), clamp(lakeShelf * 1.15, 0.0, 1.0));
+  lakeWater += smoothstep(0.88, 1.0, lakeRipple) * 0.055;
+  ground = mix(ground, ground * 0.76, smoothstep(0.05, 0.36, lk.r) * (1.0 - lake) * land * 0.45);
+  ground = mix(ground, lakeWater * (0.86 + 0.14 * shade), lake * 0.94);
+  ground = mix(ground, vec3(0.80, 0.72, 0.50), road * 0.4 * (1.0 - lake));
 
   // Sea: deep ink-teal, paler on the shelf, with shore-parallel ripple lines
   float shelf = smoothstep(0.1, 0.5, coastField);
@@ -159,8 +169,13 @@ void main() {
   vec3 inkLand = mix(paper, vec3(0.17, 0.16, 0.15), clamp(inkRelief, 0.0, 0.72));
   inkLand = mix(inkLand, vec3(0.42, 0.57, 0.52), smoothstep(700.0, 2600.0, metres) * 0.22);
   inkLand = mix(inkLand, vec3(0.38, 0.50, 0.62), smoothstep(2600.0, 4200.0, metres) * 0.25);
-  inkLand = mix(inkLand, vec3(0.20, 0.33, 0.42), water * 0.9);
-  inkLand = mix(inkLand, vec3(0.42, 0.30, 0.20), road * 0.45);
+  inkLand = mix(inkLand, vec3(0.22, 0.35, 0.44), water * 0.85);
+  vec3 inkLake = mix(vec3(0.81, 0.81, 0.73), vec3(0.68, 0.75, 0.71), clamp(lakeShelf * 1.2, 0.0, 1.0))
+    * (0.96 + grain * 0.07);
+  inkLake -= smoothstep(0.86, 1.0, lakeRipple) * 0.075;
+  inkLand = mix(inkLand, inkLake, lake * 0.92);
+  inkLand = mix(inkLand, vec3(0.13, 0.12, 0.11), lakeShore * 0.48);
+  inkLand = mix(inkLand, vec3(0.42, 0.30, 0.20), road * 0.45 * (1.0 - lake));
   vec3 inkSea = mix(vec3(0.66, 0.72, 0.69), vec3(0.80, 0.80, 0.72), shelf) * (0.96 + grain * 0.07);
   inkSea -= smoothstep(0.88, 1.0, ripple) * shelf * 0.1;
   vec3 paperCol = mix(inkSea, inkLand, land);
@@ -201,7 +216,7 @@ void main() {
   float rimCity = 1.0 - smoothstep(0.0, 0.34, bd);
   float rimProvince = 1.0 - smoothstep(0.0, 0.34, pbd);
   float rim = mix(rimCity, max(rimProvince, rimCity * frontier), uLevel);
-  float fill = mix(0.1, 0.3, uPaper) + rim * mix(0.34, 0.4, uPaper);
+  float fill = (mix(0.1, 0.3, uPaper) + rim * mix(0.34, 0.4, uPaper)) * (1.0 - lake * mix(0.45, 0.72, uPaper));
   col = mix(col, mix(col, realmCol, 0.85) * (0.85 + 0.3 * shade * (1.0 - uPaper) + 0.15 * uPaper),
     fill * reach * mix(0.35, 1.0, held));
 
@@ -284,6 +299,7 @@ export function buildMapTerrain(
       uniforms: {
         uHeight: { value: world.heightTex },
         uMask: { value: world.maskTex },
+        uLake: { value: world.lakeTex },
         uProvince: { value: world.provinceTex },
         uBorder: { value: world.borderTex },
         uTexel: { value: new THREE.Vector2(1 / world.texW, 1 / world.texH) },

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { Castle, Coins, Cpu, Languages, Shield, Swords } from 'lucide-react';
 import { createInitialCities, createInitialFactions } from '../game/data.js';
 import { createDefaultPlayerProfile } from '../game/engine.js';
@@ -148,6 +148,47 @@ export function FactionSelect({
                 />
               )}
               <div className="absolute inset-0 bg-gradient-to-b from-transparent via-slate-950/20 to-slate-950/95" />
+              {/* Subtle realm atmosphere: northern frost/sparks for Wei, bamboo mist for Shu, river embers for Wu */}
+              <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+                {[0, 1, 2, 3, 4, 5].map((m) => {
+                  const moteColor =
+                    fid === 'wei'
+                      ? 'rgba(216, 232, 255, 0.85)'
+                      : fid === 'shu'
+                        ? 'rgba(182, 236, 198, 0.8)'
+                        : 'rgba(255, 174, 120, 0.85)';
+                  const moteGlow =
+                    fid === 'wei'
+                      ? '0 0 6px rgba(130, 180, 240, 0.7)'
+                      : fid === 'shu'
+                        ? '0 0 7px rgba(105, 198, 136, 0.65)'
+                        : '0 0 7px rgba(235, 98, 60, 0.75)';
+                  const left = 12 + ((m * 17 + idx * 11) % 76);
+                  const top = 16 + ((m * 23 + idx * 7) % 52);
+                  const size = fid === 'shu' ? 4 + (m % 3) : 2.5 + (m % 3);
+                  return (
+                    <span
+                      key={m}
+                      className="kingdom-mote absolute rounded-full"
+                      style={
+                        {
+                          left: `${left}%`,
+                          top: `${top}%`,
+                          width: `${size}px`,
+                          height: `${size}px`,
+                          background: moteColor,
+                          boxShadow: moteGlow,
+                          '--mote-dx': `${fid === 'wei' ? -14 + m * 5 : 12 + m * 4}px`,
+                          '--mote-dy': `${fid === 'wei' ? 54 : -56}px`,
+                          '--mote-dur': `${6.4 + m * 0.85}s`,
+                          '--mote-delay': `${-m * 1.15}s`,
+                          '--mote-alpha': fid === 'shu' ? 0.42 : 0.58,
+                        } as CSSProperties
+                      }
+                    />
+                  );
+                })}
+              </div>
               <div
                 className="absolute inset-x-0 top-0 h-1.5"
                 style={{ background: faction.color }}

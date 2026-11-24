@@ -73,8 +73,8 @@ const MARCH_SECONDS = 1.4;
  * 120 km apart do not touch; pulled back to the province map only each province's chief city is
  * drawn, larger, and the rest become ink dots.
  */
-const CITY_SCALE_NEAR = 1.15;
-const CITY_SCALE_FAR = 1.5;
+const CITY_SCALE_NEAR = 0.94;
+const CITY_SCALE_FAR = 1.32;
 
 /** The city that stands for its province on the province map; capitals always do. */
 function isChiefCity(city: City): boolean {
@@ -136,9 +136,9 @@ export function WebGLStrategyMap({
   const apiRef = useRef<MapApi | null>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [paperShown, setPaperShown] = useState(false);
+  const [paperShown, setPaperShown] = useState(() => viewMode !== 'terrain');
   // Two levels of map: provinces from afar, cities up close
-  const [provinceLevel, setProvinceLevel] = useState(true);
+  const [provinceLevel, setProvinceLevel] = useState(() => viewMode !== 'terrain');
   const [nearProvince, setNearProvince] = useState<ProvinceId | null>(null);
 
   const cities = Object.values(state.cities);
@@ -269,8 +269,8 @@ export function WebGLStrategyMap({
     const groundPoint = new THREE.Vector3();
     const provinceIndex = (id: ProvinceId) => PROVINCE_ORDER.indexOf(id);
 
-    // 0 = cities, 1 = provinces; follows the camera's distance
-    let level = 1;
+    // 0 = cities, 1 = provinces; follows the camera's distance (or 0 immediately in Terrain view)
+    let level = live.current.viewMode === 'terrain' ? 0 : 1;
     let fly: FlyGoal | null = null;
     let hoverProvince: ProvinceId | null = null;
     let groundCityAt: ((mapX: number, mapY: number) => City | null) | null = null;
@@ -529,9 +529,9 @@ export function WebGLStrategyMap({
 
       let lastTs = performance.now();
       let elapsed = 0;
-      let paper = 0;
-      let lastPaperShown = false;
-      let lastProvinceLevel = true;
+      let paper = live.current.viewMode === 'terrain' ? 0 : 1;
+      let lastPaperShown = paper > 0.5;
+      let lastProvinceLevel = level > 0.5;
       let lastNearProvince: ProvinceId | null = null;
       let lastSelected = live.current.selectedCityId;
       const camOffset = new THREE.Vector3();
@@ -609,12 +609,13 @@ export function WebGLStrategyMap({
           }
         }
 
-        // Provinces from afar, cities up close; in the automatic view the far map is the paper sheet
+        // Provinces from afar, cities up close; explicit Terrain mode always reveals all 32 cities
         const dist = camera.position.distanceTo(controls.target);
-        const wantLevel = smooth(cityLevelBelow, provinceLevelAbove, dist);
+        const wantLevel =
+          cur.viewMode === 'terrain' ? 0 : smooth(cityLevelBelow, provinceLevelAbove, dist);
         level += (wantLevel - level) * (stillMotion ? 1 : 1 - Math.exp(-dt * 8));
         const wantPaper = cur.viewMode === 'paper' ? 1 : cur.viewMode === 'terrain' ? 0 : wantLevel;
-        paper += (wantPaper - paper) * (stillMotion ? 1 : 1 - Math.exp(-dt * 5));
+        paper += (wantPaper - paper) * (stillMotion ? 1 : 1 - Math.exp(-dt * 7));
         const relief = 1 + (PAPER_RELIEF - 1) * paper;
         const u = terrain.material.uniforms;
         u.uTime.value = elapsed;
@@ -647,8 +648,9 @@ export function WebGLStrategyMap({
 
         // Ownership and growth
         terrain.setOwners(world.cityIds.map(ownerOf), elapsed, !stillMotion);
-        const chiefScale = CITY_SCALE_NEAR + (CITY_SCALE_FAR - CITY_SCALE_NEAR) * level;
-        const minorScale = CITY_SCALE_NEAR * (1 - level);
+        const paperModelFade = 1 - smooth(0.55, 0.88, paper);
+        const chiefScale = (CITY_SCALE_NEAR + (CITY_SCALE_FAR - CITY_SCALE_NEAR) * level) * paperModelFade;
+        const minorScale = CITY_SCALE_NEAR * (1 - level) * paperModelFade;
         for (const marker of markers.values()) {
           const city = cur.state.cities[marker.id];
           if (!city) continue;
@@ -844,10 +846,13 @@ export function WebGLStrategyMap({
         for (const marker of markers.values()) {
           const el = labelEls.current.get(marker.id);
           if (!el) continue;
-          // A city reduced to a dot is marked on the ground; a standing city carries its plaque
+          // A city reduced to a dot or cartographic paper seal is marked on the ground; a standing 3D city carries its plaque
           const asDot = level > 0.5 && !marker.chief;
+          const unnamedSeat =
+            level > 0.5 && marker.chief && !cur.state.cities[marker.id]?.isCapital &&
+            marker.id !== cur.selectedCityId && !(cur.attackMode && cur.strikeableIds.has(marker.id));
           // cityLabelHeight is measured on a model drawn at 1.35
-          const lift = asDot ? 0.25 : marker.labelLift * (marker.scale / 1.35);
+          const lift = asDot || marker.scale <= 0.08 ? 0.22 : marker.labelLift * (marker.scale / 1.35);
           projVec
             .set(marker.root.position.x, marker.root.position.y + lift, marker.root.position.z)
             .project(camera);
@@ -856,7 +861,8 @@ export function WebGLStrategyMap({
           const visible = projVec.z < 1 && sx > -60 && sx < w + 60 && sy > -20 && sy < h + 60;
           el.style.display = visible ? '' : 'none';
           if (visible) {
-            el.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(-50%, ${asDot ? '-50%' : '-100%'})`;
+            const centerAnchor = asDot || (paper > 0.5 && unnamedSeat);
+            el.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(-50%, ${centerAnchor ? '-50%' : '-100%'})`;
           }
         }
 
@@ -948,7 +954,7 @@ export function WebGLStrategyMap({
     ));
 
   return (
-    <div className="relative w-full h-full overflow-hidden">
+    <div className="@container relative w-full h-full overflow-hidden">
       <div ref={containerRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
 
       {/* Soft vignette: the table falls away into shadow */}
@@ -1049,7 +1055,22 @@ export function WebGLStrategyMap({
               style={{ display: 'none' }}
               className="absolute top-0 left-0 flex flex-col items-center pointer-events-auto will-change-transform"
             >
-              {unnamed ? null : asDot ? (
+              {unnamed ? (
+                paperShown ? (
+                  <button
+                    type="button"
+                    onClick={choose}
+                    title={`${tLoc(city.name, lang)} · ${city.troops.toLocaleString()}`}
+                    aria-label={tLoc(city.name, lang)}
+                    className="group relative flex items-center justify-center w-[15px] h-[15px] rounded-[2px] border-[1.5px] border-[#1c1712] bg-[#efe6cf] shadow-[0_1px_3px_rgba(0,0,0,0.35)] cursor-pointer transition-transform hover:scale-125"
+                  >
+                    <span
+                      className="block w-[9px] h-[9px] rounded-[1px] border border-[#1c1712]/70"
+                      style={{ backgroundColor: FACTION_CSS[city.owner] }}
+                    />
+                  </button>
+                ) : null
+              ) : asDot ? (
                 <button
                   type="button"
                   onClick={choose}
@@ -1146,6 +1167,17 @@ export function WebGLStrategyMap({
                       </span>
                     )}
                   </button>
+                  {paperShown && (
+                    <span
+                      aria-hidden="true"
+                      className="mt-1 flex items-center justify-center w-[13px] h-[13px] rounded-[2px] border-[1.5px] border-[#1c1712] bg-[#efe6cf] shadow-[0_1px_2px_rgba(0,0,0,0.3)]"
+                    >
+                      <span
+                        className="block w-[7px] h-[7px] rounded-[1px]"
+                        style={{ backgroundColor: city.isCapital ? '#b83b2a' : FACTION_CSS[city.owner] }}
+                      />
+                    </span>
+                  )}
                 </>
               )}
             </div>
@@ -1187,7 +1219,7 @@ export function WebGLStrategyMap({
         )}
       </div>
 
-      <div className="pointer-events-none absolute bottom-2.5 right-3 z-20 text-[10px] text-slate-200/80 bg-slate-950/75 px-3 py-1 rounded-full border border-amber-400/25">
+      <div className="hidden @[1120px]:block pointer-events-none absolute bottom-2.5 right-3 z-20 text-[10px] text-slate-200/80 bg-slate-950/75 px-3 py-1 rounded-full border border-amber-400/25">
         {zh
           ? '拖拽平移 · 右键拖拽旋转 · 滚轮缩放（拉远见州，推近见城）'
           : 'Drag to pan · Right-drag to turn · Scroll to zoom (provinces from afar, cities up close)'}

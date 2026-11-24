@@ -57,7 +57,7 @@ export function TechTree({ nodes, selected, onSelect }: TechTreeProps) {
         <path d="M206 230 C 214 214, 208 204, 220 194" strokeWidth="2" />
         <path d="M290 250 C 304 252, 316 262, 330 262" strokeWidth="1.8" />
         <path d="M326 160 C 340 156, 350 164, 364 160" strokeWidth="1.8" />
-        <path d="M118 236 C 110 250, 118 262, 110 274" strokeWidth="1.8" />
+        <path d="M90 242 C 80 226, 84 212, 76 200" strokeWidth="1.8" />
         <path d="M278 48 C 284 34, 280 24, 290 14" strokeWidth="1.8" />
       </g>
       {/* A lighter wash under the trunk, as ink pools where the brush rests */}
@@ -77,7 +77,7 @@ export function TechTree({ nodes, selected, onSelect }: TechTreeProps) {
         [220, 194],
         [330, 262],
         [364, 160],
-        [110, 274],
+        [76, 200],
         [290, 14],
       ].map(([x, y], i) => (
         <circle key={i} cx={x} cy={y} r="2.6" fill="#84281c" opacity="0.8" />
@@ -129,6 +129,9 @@ export function TechTree({ nodes, selected, onSelect }: TechTreeProps) {
                   />
                 ))}
                 <circle r="2.3" fill="#d0a74f" stroke="#745623" strokeWidth="0.5" />
+                {/* Fallen plum petals resting near a completed discovery */}
+                <ellipse cx="11" cy="8" rx="2.6" ry="1.5" transform="rotate(28 11 8)" fill="#e18a77" opacity="0.72" />
+                <ellipse cx="-12" cy="6" rx="2.2" ry="1.3" transform="rotate(-34 -12 6)" fill="#f0bcb0" opacity="0.65" />
               </g>
             ) : (
               <g>
@@ -147,6 +150,10 @@ export function TechTree({ nodes, selected, onSelect }: TechTreeProps) {
               fontSize="10.5"
               fontWeight={isSelected ? 800 : 600}
               fill={node.state === 'bud' ? '#5c5244' : '#1c1712'}
+              paintOrder="stroke"
+              stroke="#e5d9bf"
+              strokeWidth="3"
+              strokeLinejoin="round"
             >
               {node.label}
             </text>

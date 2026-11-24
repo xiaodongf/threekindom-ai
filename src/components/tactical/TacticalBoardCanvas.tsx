@@ -144,6 +144,7 @@ async function paintBoard(canvas: HTMLCanvasElement, grid: TacticalTile[][], ali
   wash('hill', ['hill'], 2.3, 0.5);
   wash('forest', ['forest'], 2.2, 0.5);
   wash('water', ['water', 'bridge', 'ford'], 2.4, 0.44);
+  wash('ford', ['ford'], 1.6, 0.41);
 
   // Works of man: crisp pieces, turned to follow the river or the wall they belong to
   const piece = (type: TacticalTileType, r: number, c: number, quarterTurn: boolean, inset: number) => {
@@ -168,9 +169,238 @@ async function paintBoard(canvas: HTMLCanvasElement, grid: TacticalTile[][], ali
     ctx.restore();
   };
 
+  const paintFordDetails = (r: number, c: number, riverRunsLR: boolean) => {
+    const cx = (c + 0.5) * CELL;
+    const cy = (r + 0.5) * CELL;
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (riverRunsLR) ctx.rotate(Math.PI / 2);
+    // Soft sunlit gravel shoal glow
+    const shoal = ctx.createRadialGradient(0, 0, 4, 0, 0, CELL * 0.48);
+    shoal.addColorStop(0, 'rgba(218, 196, 146, 0.42)');
+    shoal.addColorStop(0.65, 'rgba(176, 158, 118, 0.22)');
+    shoal.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = shoal;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, CELL * 0.48, CELL * 0.38, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Stepping stones & white-water current ripples across the shallow crossing
+    const stones = [
+      [-36, -6, 9, 6.5],
+      [-19, 5, 10, 7],
+      [-2, -4, 10.5, 7.5],
+      [16, 4, 9.5, 6.8],
+      [34, -3, 8.5, 6],
+    ];
+    for (const [sx, sy, rx, ry] of stones) {
+      ctx.strokeStyle = 'rgba(226, 242, 238, 0.42)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.ellipse(sx + 2, sy, rx + 4, ry + 3, 0.1, -0.9, 0.9);
+      ctx.stroke();
+
+      ctx.fillStyle = '#6f6758';
+      ctx.strokeStyle = 'rgba(24, 20, 15, 0.65)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.ellipse(sx, sy, rx, ry, (rnd() - 0.5) * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(216, 205, 182, 0.35)';
+      ctx.beginPath();
+      ctx.ellipse(sx - 2, sy - 1.5, rx * 0.55, ry * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  };
+
+  const paintContinuousWall = (r: number, c: number, isGate: boolean, gateIntact: boolean) => {
+    const img = images.get('wall');
+    if (!img) return;
+    const joinL = isType(grid, r, c - 1, ['wall', 'gate']);
+    const joinR = isType(grid, r, c + 1, ['wall', 'gate']);
+    const joinU = isType(grid, r - 1, c, ['wall', 'gate']);
+    const joinD = isType(grid, r + 1, c, ['wall', 'gate']);
+    const runsLR = (joinL || joinR) && !(joinU || joinD);
+    const padL = joinL ? 0 : 5;
+    const padR = joinR ? 0 : 5;
+    const padU = joinU ? 0 : 5;
+    const padD = joinD ? 0 : 5;
+    const x = c * CELL + padL;
+    const y = r * CELL + padU;
+    const w = CELL - padL - padR;
+    const h = CELL - padU - padD;
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+    ctx.shadowBlur = 9;
+    ctx.shadowOffsetY = 3;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, [
+      joinL || joinU ? 0 : 7,
+      joinR || joinU ? 0 : 7,
+      joinR || joinD ? 0 : 7,
+      joinL || joinD ? 0 : 7,
+    ]);
+    ctx.fillStyle = '#1b1815';
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.clip();
+
+    ctx.save();
+    ctx.translate(c * CELL + CELL / 2, r * CELL + CELL / 2);
+    if (runsLR) ctx.rotate(Math.PI / 2);
+    ctx.drawImage(img, -CELL / 2, -CELL / 2, CELL, CELL);
+    ctx.restore();
+
+    // Parapet merlon highlights so contiguous walls read as one fortified rampart
+    ctx.strokeStyle = 'rgba(22, 18, 14, 0.72)';
+    ctx.lineWidth = 2;
+    if (!joinU) {
+      ctx.beginPath();
+      ctx.moveTo(x, y + 1);
+      ctx.lineTo(x + w, y + 1);
+      ctx.stroke();
+    }
+    if (!joinD) {
+      ctx.beginPath();
+      ctx.moveTo(x, y + h - 1);
+      ctx.lineTo(x + w, y + h - 1);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    if (!isGate) return;
+
+    // Distinct Han Gatehouse (城门楼) over the rampart
+    const cx = (c + 0.5) * CELL;
+    const cy = (r + 0.5) * CELL;
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (runsLR) ctx.rotate(Math.PI / 2);
+
+    if (gateIntact) {
+      // Gateway passage & iron-studded double doors
+      ctx.fillStyle = '#18120e';
+      ctx.beginPath();
+      ctx.roundRect(-28, -26, 56, 52, 6);
+      ctx.fill();
+
+      // Vermilion Han gatehouse corner pillars flanking even garrisoned units
+      ctx.fillStyle = '#9b2418';
+      ctx.strokeStyle = '#dfb55c';
+      ctx.lineWidth = 1.4;
+      for (const [px, py] of [
+        [-38, -28],
+        [28, -28],
+        [-38, 18],
+        [28, 18],
+      ]) {
+        ctx.beginPath();
+        ctx.roundRect(px, py, 10, 10, 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = '#7c2419';
+      ctx.strokeStyle = '#d0a74f';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.roundRect(-22, -20, 21, 40, 2);
+      ctx.roundRect(1, -20, 21, 40, 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Gilded bronze door studs
+      ctx.fillStyle = '#e4be68';
+      for (const dx of [-15, -8, 8, 15]) {
+        for (const dy of [-11, 0, 11]) {
+          ctx.beginPath();
+          ctx.arc(dx, dy, 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Wide double-eave gatehouse roof with crimson trim & upturned golden finials
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+      ctx.shadowBlur = 9;
+      ctx.fillStyle = '#7e1e15';
+      ctx.strokeStyle = '#dfb860';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(-42, -20);
+      ctx.quadraticCurveTo(0, -30, 42, -20);
+      ctx.lineTo(39, 20);
+      ctx.quadraticCurveTo(0, 28, -39, 20);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#2b3036';
+      ctx.strokeStyle = '#c89e4c';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-38, -14);
+      ctx.quadraticCurveTo(0, -23, 38, -14);
+      ctx.lineTo(34, 14);
+      ctx.quadraticCurveTo(0, 21, -34, 14);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowColor = 'transparent';
+
+      // Central golden roof ridge & corner lantern glows
+      ctx.strokeStyle = '#ebd07c';
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(-30, -1);
+      ctx.lineTo(30, -1);
+      ctx.stroke();
+
+      for (const [lx, ly] of [
+        [-38, -22],
+        [38, -22],
+        [-36, 22],
+        [36, 22],
+      ]) {
+        ctx.fillStyle = 'rgba(255, 115, 45, 0.45)';
+        ctx.beginPath();
+        ctx.arc(lx, ly, 5.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ff6b35';
+        ctx.beginPath();
+        ctx.arc(lx, ly, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      // Breached gateway: scorched open passage + shattered timber/stone debris
+      ctx.fillStyle = 'rgba(20, 15, 11, 0.86)';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 28, 36, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#6f5c46';
+      for (const [rx, ry, rw, rh, rot] of [
+        [-22, -16, 12, 5, 0.4],
+        [14, -18, 11, 5, -0.5],
+        [-20, 14, 13, 5, -0.3],
+        [12, 15, 12, 5, 0.35],
+      ]) {
+        ctx.save();
+        ctx.translate(rx, ry);
+        ctx.rotate(rot);
+        ctx.fillRect(-rw / 2, -rh / 2, rw, rh);
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  };
+
   for (let r = 0; r < N; r++) {
     for (let c = 0; c < N; c++) {
-      const type = grid[r][c].type;
+      const tile = grid[r][c];
+      const type = tile.type;
       const waterLR =
         isType(grid, r, c - 1, ['water', 'ford', 'bridge']) || isType(grid, r, c + 1, ['water', 'ford', 'bridge']);
       const waterUD =
@@ -179,13 +409,9 @@ async function paintBoard(canvas: HTMLCanvasElement, grid: TacticalTile[][], ali
         // The painting shows a west-east bridge over a north-south river
         piece('bridge', r, c, waterLR && !waterUD, 7);
       } else if (type === 'ford') {
-        piece('ford', r, c, false, 12);
+        paintFordDetails(r, c, waterLR && !waterUD);
       } else if (type === 'wall' || type === 'gate') {
-        const runsLR =
-          isType(grid, r, c - 1, ['wall', 'gate']) || isType(grid, r, c + 1, ['wall', 'gate']);
-        const runsUD =
-          isType(grid, r - 1, c, ['wall', 'gate']) || isType(grid, r + 1, c, ['wall', 'gate']);
-        piece('wall', r, c, runsLR && !runsUD, 3);
+        paintContinuousWall(r, c, type === 'gate', type === 'gate' && (tile.gateHp ?? 0) > 0);
       } else if (type === 'citadel') {
         piece('citadel', r, c, false, 5);
       }
@@ -226,7 +452,9 @@ async function paintBoard(canvas: HTMLCanvasElement, grid: TacticalTile[][], ali
 
 export function TacticalBoardCanvas({ grid }: { grid: TacticalTile[][] }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const signature = grid.map((row) => row.map((t) => t.type).join(',')).join('|');
+  const signature = grid
+    .map((row) => row.map((t) => `${t.type}:${t.type === 'gate' && (t.gateHp ?? 0) > 0 ? 1 : 0}`).join(','))
+    .join('|');
   const gridRef = useRef(grid);
   gridRef.current = grid;
 

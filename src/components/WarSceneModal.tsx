@@ -17,6 +17,7 @@ import { HeroAvatar } from './HeroAvatar.js';
 import { Art } from './ui/Art.js';
 import { CountUp } from './ui/CountUp.js';
 import { Seal } from './ui/Seal.js';
+import { WarStage3D } from './WarStage3D.js';
 
 export interface WarSceneConfig {
   id: string;
@@ -106,6 +107,8 @@ export function WarSceneModal({
   onFinish,
 }: WarSceneModalProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const elapsedRef = useRef<number>(initialElapsed);
+  const [webglFailed, setWebglFailed] = useState<boolean>(false);
   const [speed, setSpeed] = useState<1 | 2>(1);
   const [muted, setMuted] = useState<boolean>(battleAudio.muted);
   const [progress, setProgress] = useState<number>(Math.min(1, initialElapsed / TOTAL_DURATION));
@@ -149,7 +152,84 @@ export function WarSceneModal({
     setMuted(next);
   };
 
+  // Master timeline & Web Audio battle SFX driver when 3D WebGL stage is active
   useEffect(() => {
+    if (webglFailed) return;
+    elapsedRef.current = initialElapsed;
+    let lastTs = performance.now();
+    let rafId = 0;
+
+    let firedDrum1 = initialElapsed >= 0.05;
+    let firedVolley = initialElapsed >= 0.65;
+    let firedSkill = initialElapsed >= 1.35;
+    let firedBlast = initialElapsed >= 1.95;
+    let firedClash = initialElapsed >= 2.65;
+    let firedOutcome = initialElapsed >= 4.4;
+
+    const step = (now: number) => {
+      const rawDt = Math.min(0.05, Math.max(0.001, (now - lastTs) / 1000));
+      lastTs = now;
+      const dt = rawDt * speedRef.current;
+      elapsedRef.current += dt;
+      const elapsed = elapsedRef.current;
+      setProgress(Math.min(1, elapsed / TOTAL_DURATION));
+
+      if (!firedDrum1 && elapsed >= 0.05) {
+        firedDrum1 = true;
+        battleAudio.playWarDrum(0.32);
+      }
+      if (!firedVolley && elapsed >= 0.65) {
+        firedVolley = true;
+        battleAudio.playArrowVolley(0.16);
+      }
+      if (!firedSkill && elapsed >= 1.35) {
+        firedSkill = true;
+        if (cutInHero || scene.skillTriggered) {
+          setShowSkillCutIn(true);
+          battleAudio.playSkillSurge(0.24);
+        }
+      }
+      if (elapsed >= 2.75) {
+        setShowSkillCutIn(false);
+      }
+      if (!firedBlast && elapsed >= 1.95) {
+        firedBlast = true;
+        if (
+          scene.hasGunpowder ||
+          scene.tactic === 'fire' ||
+          scene.mode === 'bombard' ||
+          scene.mode === 'raid'
+        ) {
+          battleAudio.playExplosion(0.3);
+        } else {
+          battleAudio.playWarDrum(0.26);
+        }
+      }
+      if (!firedClash && elapsed >= 2.65) {
+        firedClash = true;
+        battleAudio.playSteelClash(0.18);
+        if (scene.hasGunpowder || scene.mode === 'bombard') {
+          battleAudio.playExplosion(0.26);
+        }
+      }
+      if (!firedOutcome && elapsed >= 4.4) {
+        firedOutcome = true;
+        const playerVictory = scene.isPlayerDefending ? !scene.attackerWon : scene.attackerWon;
+        battleAudio.playOutcomeHorn(playerVictory, 0.2);
+        setCompleted(true);
+      }
+
+      if (elapsed < TOTAL_DURATION) {
+        rafId = requestAnimationFrame(step);
+      }
+    };
+
+    rafId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafId);
+  }, [scene, webglFailed, initialElapsed, cutInHero]);
+
+  useEffect(() => {
+    if (!webglFailed) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -921,7 +1001,7 @@ export function WarSceneModal({
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [scene]);
+  }, [scene, webglFailed, initialElapsed, cutInHero]);
 
   const modeLabel: Record<WarSceneConfig['mode'], LocalizedText> = {
     assault: { en: 'City Siege Battle', zh: '攻城决战' },
@@ -1022,59 +1102,69 @@ export function WarSceneModal({
           </div>
         </div>
 
-        {/* 60fps HTML5 2.5D Canvas War Theater with Studio-Painted Panoramic Backdrop */}
-        <div className="flex-1 min-h-0 flex items-center justify-center bg-[#0a0806]">
-        <div
-          className="relative bg-slate-950 overflow-hidden"
-          style={{ width: 'min(100%, calc((100vh - 6.5rem) * 2.2))' }}
-        >
-          <Art
-            src={
-              scene.mode === 'raid' || scene.mode === 'discord'
-                ? '/art/bg_night_raid.jpg'
-                : scene.terrain === 'river' || scene.mode === 'river_strike'
-                  ? '/art/bg_yangtze_river.jpg'
-                  : scene.terrain === 'mountain'
-                    ? '/art/bg_mountain_pass.jpg'
-                    : '/art/bg_plains_siege.jpg'
-            }
-            alt="Battlefield Panorama"
-            style={{ transform: `scale(${(1 + progress * 0.065).toFixed(4)})` }}
-            className="pointer-events-none absolute inset-0 w-full h-full object-cover object-center theme-art-grade transition-transform duration-150"
-          />
-          {/* Subtle Widescreen Cinema Letterbox Bars */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-3 bg-gradient-to-b from-black/80 to-transparent z-10" />
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-black/85 to-transparent z-10" />
+        {/* Real-Time 3D WebGL Instanced Battle Diorama (with 2D Canvas fallback) */}
+        <div className="flex-1 relative min-h-0 flex items-center justify-center bg-[#0a0806] overflow-hidden">
+          {!webglFailed ? (
+            <WarStage3D
+              scene={scene}
+              state={state}
+              elapsedRef={elapsedRef}
+              onFallback={() => setWebglFailed(true)}
+            />
+          ) : (
+            <div
+              className="relative bg-slate-950 overflow-hidden"
+              style={{ width: 'min(100%, calc((100vh - 6.5rem) * 2.2))' }}
+            >
+              <Art
+                src={
+                  scene.mode === 'raid' || scene.mode === 'discord'
+                    ? '/art/bg_night_raid.jpg'
+                    : scene.terrain === 'river' || scene.mode === 'river_strike'
+                      ? '/art/bg_yangtze_river.jpg'
+                      : scene.terrain === 'mountain'
+                        ? '/art/bg_mountain_pass.jpg'
+                        : '/art/bg_plains_siege.jpg'
+                }
+                alt="Battlefield Panorama"
+                style={{ transform: `scale(${(1 + progress * 0.065).toFixed(4)})` }}
+                className="pointer-events-none absolute inset-0 w-full h-full object-cover object-center theme-art-grade transition-transform duration-150"
+              />
+              <canvas
+                ref={canvasRef}
+                className="relative z-10 w-full aspect-[880/400] block"
+              />
+            </div>
+          )}
 
-          <canvas
-            ref={canvasRef}
-            className="relative z-10 w-full aspect-[880/400] block"
-          />
+          {/* Subtle Widescreen Cinema Vignette Bars */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-5 bg-gradient-to-b from-black/75 to-transparent z-10" />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-black/85 to-transparent z-10" />
 
-          {/* Dramatic Diagonal Hero Signature Skill Cut-In Overlay! */}
+          {/* Lower-Third Hero Signature Skill Cut-In (leaves center 3D melee unobstructed) */}
           {showSkillCutIn && cutInHero && (
-            <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 z-20 bg-gradient-to-r from-slate-950/95 via-cyan-950/88 to-slate-950/95 border-y-2 border-amber-300/90 py-3 px-6 flex items-center justify-center gap-4 shadow-[0_0_50px_rgba(251,191,36,0.45)]">
+            <div className="anim-rise pointer-events-none absolute bottom-11 inset-x-4 max-w-2xl mx-auto z-20 ink-panel gold-border-glow rounded-lg py-2.5 px-5 flex items-center gap-4">
               <HeroAvatar hero={cutInHero} size="lg" showLevel />
-              <div className="max-w-lg">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-widest text-amber-300">
-                  <Flame className="w-4 h-4 text-orange-400" />
-                  <span>
+                  <Flame className="w-4 h-4 text-orange-400 shrink-0" />
+                  <span className="truncate">
                     {scene.skillTriggered
                       ? tLoc(scene.skillTriggered, lang)
                       : tLoc(cutInHero.signatureSkill.name, lang)}
                   </span>
                 </div>
-                <div className="font-display text-lg sm:text-xl font-black text-white mt-0.5">
+                <div className="font-brush text-2xl font-bold text-slate-50 leading-tight mt-0.5">
                   {tLoc(cutInHero.name, lang)}
                 </div>
-                <p className="text-xs sm:text-sm text-cyan-100 italic mt-0.5">
+                <p className="text-xs sm:text-sm text-amber-100/90 italic mt-0.5 line-clamp-1">
                   “{tLoc(cutInHero.signatureSkill.battleCry, lang)}”
                 </p>
               </div>
             </div>
           )}
 
-          {/* Modern Tech Active Badges (Bottom-Left of Canvas) */}
+          {/* Modern Tech Active Badges (Bottom-Left of Stage) */}
           <div className="pointer-events-none absolute bottom-3 left-3 z-20 flex flex-wrap gap-1.5">
             {scene.hasGunpowder && (
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-600/80 text-white border border-amber-300/60 shadow">
@@ -1100,7 +1190,7 @@ export function WarSceneModal({
 
           {/* Verdict: a seal comes down, then the ledger counts the cost */}
           {completed && (
-            <div className="absolute inset-0 z-30 bg-[#0a0806]/70 flex flex-col items-center justify-center p-4 text-center">
+            <div className="absolute inset-0 z-30 bg-[#0a0806]/72 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center">
               <div className="anim-rise flex items-center gap-5">
                 <Seal
                   char={playerWon ? '勝' : '敗'}
@@ -1198,7 +1288,6 @@ export function WarSceneModal({
               </button>
             </div>
           )}
-        </div>
         </div>
 
         {/* Bottom Timeline Progress Bar */}

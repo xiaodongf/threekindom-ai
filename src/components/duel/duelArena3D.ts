@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { FactionId, General, TerrainType } from '../../game/types.js';
 import type { DisposeBag } from './duelGeometry3D.js';
 import {
+  createFortressWallTextures,
   createGroundDetailTextures,
   createPaintedPanoramaTexture,
   createSilkBannerTexture,
@@ -258,16 +259,48 @@ export function buildDuelArena3D(
   // ------------------------------------------------------------ fortress wall, braziers
   const woodMat = bag.add(new THREE.MeshStandardMaterial({ color: '#4a2f1b', roughness: 0.9 }));
   if (terrain === 'fortress') {
-    const wallMat = bag.add(new THREE.MeshStandardMaterial({ color: '#5a5046', roughness: 0.92 }));
+    const brickTex = createFortressWallTextures(bag);
+    const wallMat = bag.add(
+      new THREE.MeshStandardMaterial({
+        map: brickTex.map,
+        bumpMap: brickTex.bumpMap,
+        bumpScale: 1.6,
+        roughness: 0.9,
+      })
+    );
     const wall = new THREE.Mesh(bag.add(new THREE.BoxGeometry(70, 6, 2.4)), wallMat);
     wall.position.set(0, 3, -21);
     wall.receiveShadow = true;
     group.add(wall);
     const merlonGeo = bag.add(new THREE.BoxGeometry(1.6, 1.2, 2.5));
     for (let mx = -33; mx <= 33; mx += 3) {
+      if (Math.abs(mx) < 4.5) continue;
       const merlon = new THREE.Mesh(merlonGeo, wallMat);
       merlon.position.set(mx, 6.6, -21);
       group.add(merlon);
+    }
+
+    // Central Vermilion Gatehouse Tower & Glowing Silk Lanterns
+    const redWood = bag.add(new THREE.MeshStandardMaterial({ color: '#7a2018', roughness: 0.65 }));
+    const roofTile = bag.add(new THREE.MeshStandardMaterial({ color: '#262a30', roughness: 0.72 }));
+    const archDark = bag.add(new THREE.MeshStandardMaterial({ color: '#16110d', roughness: 0.95 }));
+    const arch = new THREE.Mesh(bag.add(new THREE.BoxGeometry(4.6, 3.8, 2.6)), archDark);
+    arch.position.set(0, 1.9, -20.9);
+    const gateHall = new THREE.Mesh(bag.add(new THREE.BoxGeometry(9.6, 2.8, 3.0)), redWood);
+    gateHall.position.set(0, 7.4, -21);
+    const gateRoof = new THREE.Mesh(bag.add(new THREE.ConeGeometry(7.8, 2.4, 4)), roofTile);
+    gateRoof.rotation.y = Math.PI * 0.25;
+    gateRoof.scale.set(1.05, 1, 0.56);
+    gateRoof.position.set(0, 9.8, -21);
+    group.add(arch, gateHall, gateRoof);
+
+    const lanternMat = bag.add(new THREE.MeshBasicMaterial({ color: new THREE.Color(3.0, 0.75, 0.25) }));
+    const lanternGeo = bag.add(new THREE.SphereGeometry(0.28, 10, 8));
+    for (const lx of [-15, -9, -3.6, 3.6, 9, 15]) {
+      const lan = new THREE.Mesh(lanternGeo, lanternMat);
+      lan.scale.set(1, 1.32, 1);
+      lan.position.set(lx, 5.7, -19.55);
+      group.add(lan);
     }
   }
 

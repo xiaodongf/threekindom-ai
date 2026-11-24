@@ -92,11 +92,11 @@ export function createDuelPostFx(
   const dpr = renderer.getPixelRatio();
   const target = new THREE.WebGLRenderTarget(width * dpr, height * dpr, {
     type: THREE.HalfFloatType,
-    samples: 4,
+    samples: renderer.capabilities.isWebGL2 ? 4 : 0,
   });
   const composer = new EffectComposer(renderer, target);
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.42, 0.65, 1.0);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.28, 0.55, 1.18);
   composer.addPass(bloom);
   const grade = new ShaderPass(GradeShader);
   composer.addPass(grade);

@@ -20,7 +20,14 @@ export const FINALE_DURATION = 2.8;
 export const IDLE_X = 3.5;
 /** Strike blend at which the blade arrives — must match the rig's pose library */
 const STRIKE_CONTACT = 0.7;
-const RESET = 0.7;
+const RESET = 0.95;
+
+function lerpAngle(a: number, b: number, t: number): number {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return a + d * clamp01(t);
+}
 
 const IDLE_CAM = { y: 3.0, z: 10.6, lookY: 2.2, fov: 34 };
 
@@ -407,6 +414,7 @@ export function buildExchangePlan(
     }
   }
 
+  duration += 0.25;
   const contacts = [...left.strikes, ...right.strikes].sort((a, b) => a - b);
   const reach =
     focus === 'left'
@@ -620,14 +628,50 @@ function sampleSide(
       rider.rearAngle = Math.sin(p * Math.PI) * 0.46;
     }
   } else {
-    const p = ease((t - resetStart) / RESET);
-    dist = lerp(endDist, IDLE_X, p);
-    z = cz * (1 - p);
-    rider.gait = 'trot';
+    // Pass-through & banked teardrop wheel-around (错马盘回) so horses never trot backward in reverse
+    const u = clamp01((t - resetStart) / RESET);
+    const sideSign = me === 'left' ? 1 : -1;
+    const baseYaw = me === 'left' ? 0 : Math.PI;
+    const x0 = me === 'left' ? -endDist : endDist;
+    const x1 = me === 'left' ? -IDLE_X : IDLE_X;
+    const loopScale = mine.knock > 1.2 ? 0.45 : 1.0;
+
+    const p0x = x0;
+    const p0z = cz;
+    const p1x = x0 + sideSign * 0.35 * loopScale;
+    const p1z = cz + sideSign * 1.28 * loopScale;
+    const p2x = x1 - sideSign * 0.78 * loopScale;
+    const p2z = -sideSign * 0.45 * loopScale;
+    const p3x = x1;
+    const p3z = 0;
+
+    const s = ease(u);
+    const m = 1 - s;
+    const bx =
+      m * m * m * p0x + 3 * m * m * s * p1x + 3 * m * s * s * p2x + s * s * s * p3x;
+    const bz =
+      m * m * m * p0z + 3 * m * m * s * p1z + 3 * m * s * s * p2z + s * s * s * p3z;
+
+    const dx =
+      3 * m * m * (p1x - p0x) + 6 * m * s * (p2x - p1x) + 3 * s * s * (p3x - p2x);
+    const dz =
+      3 * m * m * (p1z - p0z) + 6 * m * s * (p2z - p1z) + 3 * s * s * (p3z - p2z);
+    const tangentYaw = Math.atan2(-dz, dx);
+
+    rider.x = bx;
+    rider.z = bz;
+    const enterBlend = ease(u / 0.16);
+    const exitBlend = ease((u - 0.78) / 0.22);
+    const midYaw = lerpAngle(baseYaw, tangentYaw, enterBlend);
+    rider.yaw = lerpAngle(midYaw, baseYaw, exitBlend);
+    rider.gait = u < 0.78 ? 'gallop' : 'trot';
+    rider.gaitSpeed = 0.92;
   }
 
-  rider.x = me === 'left' ? -dist : dist;
-  rider.z = z;
+  if (t < resetStart) {
+    rider.x = me === 'left' ? -dist : dist;
+    rider.z = z;
+  }
 
   if (t >= resetStart + 0.2) return;
 

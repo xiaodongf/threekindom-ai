@@ -1105,39 +1105,30 @@ export function TacticalBattleModal({
                             </span>
                           )}
                           {tile.type === 'gate' && !visibleUnit && (
-                            <div className="pointer-events-none relative z-10 flex flex-col items-center">
-                              <div
-                                className={`w-5 h-5 rounded-t-full shadow border ${
-                                  gateBreached
-                                    ? 'bg-transparent border-dashed border-rose-400/80'
-                                    : 'bg-slate-950/85 border-amber-300/75'
-                                }`}
-                              />
+                            <div className="pointer-events-none relative z-10 flex flex-col items-center justify-end h-full pb-2.5">
                               <span
-                                className={`text-[7.5px] font-black px-1 rounded -mt-0.5 ${
+                                className={`text-[7.5px] font-black px-1.5 py-0.2 rounded border shadow ${
                                   gateBreached
-                                    ? 'bg-rose-950/90 text-rose-200'
-                                    : 'bg-slate-950/85 text-amber-200'
+                                    ? 'bg-rose-950/90 border-rose-400/70 text-rose-200'
+                                    : 'bg-[#2a1510]/90 border-amber-400/75 text-amber-200'
                                 }`}
                               >
                                 {gateBreached
                                   ? lang === 'zh'
-                                    ? '已破'
+                                    ? '城门已破'
                                     : 'BREACHED'
-                                  : lang === 'zh'
-                                    ? '城门'
-                                    : 'GATE'}
+                                  : `${lang === 'zh' ? '城门' : 'GATE'} ${tile.gateHp}/${tile.gateMaxHp}`}
                               </span>
                             </div>
                           )}
-                          {/* Gate hit points (shown even while a squad holds the gateway) */}
+                          {/* Gate hit points (shown cleanly even while a squad holds the gateway) */}
                           {gateIntact && (
                             <div
-                              className="pointer-events-none absolute bottom-0 inset-x-0 z-20 h-1 bg-slate-950/90"
+                              className="pointer-events-none absolute top-0.5 inset-x-1.5 z-20 h-[5px] rounded-sm bg-black/90 border border-amber-400/55 overflow-hidden shadow"
                               title={`${tile.gateHp} / ${tile.gateMaxHp}`}
                             >
                               <div
-                                className="h-full bg-amber-400"
+                                className="h-full bg-gradient-to-r from-amber-500 to-amber-300 transition-all duration-300"
                                 style={{
                                   width: `${Math.round(((tile.gateHp ?? 0) / Math.max(1, tile.gateMaxHp ?? 1)) * 100)}%`,
                                 }}

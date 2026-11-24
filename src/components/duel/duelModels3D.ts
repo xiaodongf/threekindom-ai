@@ -7,6 +7,7 @@ import type { DisposeBag, LoftRing } from './duelGeometry3D.js';
 import { buildLoft, limbBetween, mergeRigid, shadowMesh } from './duelGeometry3D.js';
 import {
   createCaparisonTexture,
+  createHeroFaceTexture,
   createHorseCoatTextures,
   createLamellarArmorTextures,
 } from './duelTextures3D.js';
@@ -85,6 +86,9 @@ export interface MountedGeneralRig3D {
   trailTip: THREE.Object3D;
   /** Rider's chest, used to aim impact effects */
   chest: THREE.Object3D;
+  /** Bridle bit anchors on left/right of the horse's mouth + dynamic 3D leather reins */
+  bitAnchors: [THREE.Object3D, THREE.Object3D];
+  reins: [THREE.BufferGeometry, THREE.BufferGeometry];
   style: WeaponStyle;
   profile: HeroDuelProfile;
   flashMats: Array<{ mat: THREE.MeshStandardMaterial; base: THREE.Color; baseIntensity: number }>;
@@ -93,6 +97,7 @@ export interface MountedGeneralRig3D {
     ready: boolean;
     px: number;
     pz: number;
+    prevYaw: number;
     speed: number;
     phase: number;
     bounce: number;
@@ -191,8 +196,16 @@ function buildHeadgear(
     head.add(mesh);
     return mesh;
   };
-  const dome = (r: number, mat: THREE.Material, y: number, phi = 0.56) =>
-    put(shadowMesh(bag.add(new THREE.SphereGeometry(r, 16, 10, 0, Math.PI * 2, 0, Math.PI * phi)), mat), 0, y);
+  const dome = (r: number, mat: THREE.Material, y: number, phi = 0.52) => {
+    const m = put(
+      shadowMesh(bag.add(new THREE.SphereGeometry(r, 16, 10, 0, Math.PI * 2, 0, Math.PI * phi)), mat),
+      0,
+      y
+    );
+    // Tilt cap back slightly so the front brow opens cleanly above the hero's eyes
+    m.rotation.z = 0.24;
+    return m;
+  };
 
   const tasselMat = bag.add(new THREE.MeshStandardMaterial({ color: profile.tasselColor }));
   tasselMat.userData.palette = 'matte';
@@ -241,9 +254,10 @@ function buildHeadgear(
       break;
     }
     case 'green_hood': {
-      dome(0.158, mats.cape, 0.02, 0.6);
-      const band = put(shadowMesh(bag.add(new THREE.TorusGeometry(0.15, 0.022, 6, 16)), mats.trim), 0, 0.06);
+      dome(0.158, mats.cape, 0.025, 0.52);
+      const band = put(shadowMesh(bag.add(new THREE.TorusGeometry(0.15, 0.02, 6, 16)), mats.trim), 0, 0.068);
       band.rotation.x = Math.PI * 0.5;
+      band.rotation.y = -0.22;
       const peak = put(shadowMesh(bag.add(new THREE.ConeGeometry(0.1, 0.2, 8)), mats.cape), -0.04, 0.2);
       peak.rotation.z = 0.5;
       chain(-0.13, 0.04, 0, 3, 0.16, 0.07, mats.cape, 2.3, 0.2);
@@ -288,11 +302,12 @@ function buildHeadgear(
     }
     default: {
       // Crested war helm with cheek guards, neck guard and a horsehair plume
-      dome(0.168, mats.armor, 0.02, 0.56);
-      const brim = put(shadowMesh(bag.add(new THREE.TorusGeometry(0.165, 0.02, 6, 18)), mats.trim), 0, 0.045);
+      dome(0.168, mats.armor, 0.025, 0.52);
+      const brim = put(shadowMesh(bag.add(new THREE.TorusGeometry(0.165, 0.02, 6, 18)), mats.trim), 0, 0.065);
       brim.rotation.x = Math.PI * 0.5;
-      const visor = put(shadowMesh(bag.add(new THREE.BoxGeometry(0.1, 0.03, 0.2)), mats.trim), 0.15, 0.07);
-      visor.rotation.z = -0.25;
+      brim.rotation.y = -0.22;
+      const visor = put(shadowMesh(bag.add(new THREE.BoxGeometry(0.1, 0.03, 0.2)), mats.trim), 0.145, 0.088);
+      visor.rotation.z = -0.22;
       for (const side of [-1, 1]) {
         const cheek = put(
           shadowMesh(bag.add(new THREE.BoxGeometry(0.11, 0.17, 0.02)), mats.armor),
@@ -362,10 +377,28 @@ export function buildMountedGeneralRig3D(
   const trimMat = std({ color: profile.armorTrim, roughness: 0.26, metalness: 1 });
   const capeMat = std({ color: profile.capeColor, roughness: 0.72, side: THREE.DoubleSide });
   const robeMat = std({ color: profile.isScholarRobe ? profile.armorPrimary : profile.capeColor, roughness: 0.78 });
-  const skinMat = std({ color: '#d9a47e', roughness: 0.62 });
-  const hairMat = std({ color: '#15131a', roughness: 0.85 });
+  const skinColor =
+    hero.id === 'guanyu'
+      ? '#b84c3e'
+      : profile.isHeroine
+        ? '#ecc3a8'
+        : hero.id === 'zhangfei' || hero.id === 'menghuo' || hero.id === 'yanbaihu'
+          ? '#be825c'
+          : '#d69e78';
+  const skinMat = std({ color: skinColor, roughness: 0.62 });
+  const faceMat = std({ map: createHeroFaceTexture(hero, profile, bag), roughness: 0.58, metalness: 0.02 });
+  const reinMat = std({ color: '#381d12', roughness: 0.58, side: THREE.DoubleSide });
+  const hairMat = std({
+    color:
+      hero.id === 'huangzhong' || hero.id === 'yanyan' || hero.id === 'huatuo'
+        ? '#d8dee6'
+        : hero.id === 'caozhang'
+          ? '#c78824'
+          : '#15131a',
+    roughness: 0.85,
+  });
   const darkMat = std({ color: '#0b0b0e', roughness: 0.25, metalness: 0.3 });
-  const tasselMat = std({ color: profile.tasselColor, roughness: 0.7, emissive: profile.tasselColor, emissiveIntensity: 0.3 });
+  const tasselMat = std({ color: profile.tasselColor, roughness: 0.7, emissive: profile.tasselColor, emissiveIntensity: 0.22 });
 
   // Plain materials are baked into two shared vertex-coloured palettes when the rig is merged
   const matte = std({ vertexColors: true, roughness: 0.68, metalness: 0.02 });
@@ -376,7 +409,8 @@ export function buildMountedGeneralRig3D(
   }
   trimMat.userData.palette = 'metal';
 
-  const flashMats = [coatMat, armorMat, bardingMat, capeMat, matte, metal].map((mat) => ({
+  // Restrict impact hit-flash to armour & metallic trim so horse coats never wash out pink
+  const flashMats = [armorMat, metal].map((mat) => ({
     mat,
     base: mat.emissive.clone(),
     baseIntensity: mat.emissiveIntensity,
@@ -563,6 +597,17 @@ export function buildMountedGeneralRig3D(
   headTassel.rotation.z = Math.PI - HEAD_REST * 0.5;
   headGroup.add(headTassel);
 
+  // Bronze bridle bit rings & rein attachment anchors on both corners of the mouth
+  const bitAnchors: [THREE.Object3D, THREE.Object3D] = [new THREE.Object3D(), new THREE.Object3D()];
+  for (let si = 0; si < 2; si++) {
+    const side = si === 0 ? -1 : 1;
+    const bitRing = shadowMesh(bag.add(new THREE.TorusGeometry(0.028, 0.007, 6, 10)), trimMat);
+    bitRing.position.set(0.45, -0.055, side * 0.095);
+    headGroup.add(bitRing);
+    bitAnchors[si].position.set(0.45, -0.06, side * 0.1);
+    headGroup.add(bitAnchors[si]);
+  }
+
   // ---------------------------------------------------------------- tail
   const tail: THREE.Group[] = [];
   let tailParent: THREE.Object3D = body;
@@ -641,12 +686,33 @@ export function buildMountedGeneralRig3D(
       hem.rotation.copy(plate.rotation);
       riderRoot.add(hem);
     }
-    // Stirrup
+    // Stirrup & leather stirrup strap hanging from the saddle tree
+    riderRoot.add(
+      limbBetween(
+        bag,
+        new THREE.Vector3(0.22, -0.06, side * 0.37),
+        new THREE.Vector3(0.3, -0.59, side * 0.44),
+        0.015,
+        0.013,
+        leatherMat
+      )
+    );
     const stirrup = shadowMesh(bag.add(new THREE.TorusGeometry(0.075, 0.014, 6, 12)), trimMat);
     stirrup.position.set(0.3, -0.66, side * 0.44);
     stirrup.rotation.y = Math.PI * 0.5;
     riderRoot.add(stirrup);
   }
+
+  // Dynamic 3D leather reins connecting both bridle bit rings to the rider's rein hand
+  const makeReinStrap = () => {
+    const geo = bag.add(new THREE.PlaneGeometry(1, 0.026, 6, 1));
+    const mesh = shadowMesh(geo, reinMat, true, false);
+    mesh.frustumCulled = false;
+    mesh.userData.keep = true;
+    riderRoot.add(mesh);
+    return geo;
+  };
+  const reins: [THREE.BufferGeometry, THREE.BufferGeometry] = [makeReinStrap(), makeReinStrap()];
 
   const torso = new THREE.Group();
   torso.position.set(0, 0.06, 0);
@@ -715,25 +781,22 @@ export function buildMountedGeneralRig3D(
   capeMesh.userData.keep = true;
   torso.add(capeMesh);
 
-  // Head
+  // Head with procedurally painted expressive hero face texture
   const head = new THREE.Group();
   head.position.set(0.02, 0.88, 0);
   torso.add(head);
-  const face = shadowMesh(bag.add(new THREE.SphereGeometry(0.135, 16, 14)), skinMat);
+  const face = shadowMesh(bag.add(new THREE.SphereGeometry(0.135, 18, 16)), faceMat);
   face.scale.set(0.98, 1.1, 0.92);
   head.add(face);
-  const nose = shadowMesh(bag.add(new THREE.ConeGeometry(0.022, 0.06, 6)), skinMat);
-  nose.position.set(0.135, -0.01, 0);
+  const nose = shadowMesh(bag.add(new THREE.ConeGeometry(0.02, 0.056, 6)), skinMat);
+  nose.position.set(0.134, -0.012, 0);
   nose.rotation.z = -Math.PI * 0.5 - 0.3;
   head.add(nose);
-  for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(bag.add(new THREE.SphereGeometry(0.017, 6, 6)), darkMat);
-    eye.position.set(0.118, 0.02, side * 0.05);
-    head.add(eye);
-    const brow = new THREE.Mesh(bag.add(new THREE.BoxGeometry(0.02, 0.014, 0.06)), hairMat);
-    brow.position.set(0.122, 0.052, side * 0.05);
-    brow.rotation.x = side * 0.35;
-    head.add(brow);
+  if (hero.id === 'xiahoudun') {
+    const patch = shadowMesh(bag.add(new THREE.SphereGeometry(0.032, 8, 6)), darkMat);
+    patch.position.set(0.126, 0.004, -0.056);
+    patch.scale.set(0.45, 0.85, 1.1);
+    head.add(patch);
   }
   const plumes = buildHeadgear(bag, hero, profile, head, {
     armor: armorMat,
@@ -817,6 +880,8 @@ export function buildMountedGeneralRig3D(
     trailBase: built.trailBase,
     trailTip: built.trailTip,
     chest,
+    bitAnchors,
+    reins,
     style: weaponStyleOf(profile),
     profile,
     flashMats,
@@ -825,6 +890,7 @@ export function buildMountedGeneralRig3D(
       ready: false,
       px: 0,
       pz: 0,
+      prevYaw: 0,
       speed: 0,
       phase: 0,
       bounce: 0,
@@ -1070,19 +1136,26 @@ export function applyRigPose3D(
     s.ready = true;
     s.px = frame.x;
     s.pz = frame.z;
+    s.prevYaw = frame.yaw;
   }
 
   rig.root.position.set(frame.x, 0, frame.z);
   rig.root.rotation.y = frame.yaw;
 
-  // Signed ground speed along the horse's own heading
+  // Signed ground speed along the horse's own heading + yaw-rate banking into turns
   const fwdX = Math.cos(frame.yaw);
   const fwdZ = -Math.sin(frame.yaw);
+  let yawRate = 0;
   if (dt > 0.002) {
     const v = ((frame.x - s.px) * fwdX + (frame.z - s.pz) * fwdZ) / dt;
     s.speed = damp(s.speed, Math.max(-12, Math.min(12, v)), 14, dt);
+    let dyaw = frame.yaw - s.prevYaw;
+    while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+    while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+    yawRate = dyaw / dt;
     s.px = frame.x;
     s.pz = frame.z;
+    s.prevYaw = frame.yaw;
   }
   const absSpeed = Math.abs(s.speed);
 
@@ -1149,6 +1222,7 @@ export function applyRigPose3D(
 
   const direction = s.speed < -0.2 ? -1 : 1;
   s.phase += dt * freq * direction;
+  rollT += Math.max(-0.22, Math.min(0.22, -yawRate * 0.065 * Math.min(1, absSpeed / 2.2)));
 
   const pitchTarget = frame.rearAngle + frame.bodyPitch + pitchT;
   const quick = first ? 1e6 : 1;
@@ -1282,6 +1356,7 @@ export function applyRigPose3D(
   vS.copy(SHOULDER);
   vS.z = -vS.z;
   vS.applyEuler(rig.torso.rotation).add(rig.torso.position);
+  const reinPommel = vPole.set(0.3, 0.24 + s.bounce * 0.35, -0.03);
   if (rig.offWeapon) {
     vH.set(s.hand.x * 0.92, s.hand.y * 0.94, -s.hand.z);
     solveArm(rig.armL, vS, vH, -0.35, -0.75, -0.6);
@@ -1293,6 +1368,29 @@ export function applyRigPose3D(
     vH.copy(s.hand).addScaledVector(s.dir, s.grip);
     vH.lerpVectors(rein, vH, frame.disarmed ? 0 : s.gripOn);
     solveArm(rig.armL, vS, vH, -0.35, -0.75, -0.6);
+    reinPommel.lerpVectors(vH, reinPommel, frame.disarmed ? 1 : s.gripOn);
+  }
+
+  // Update 3D leather reins from the horse's bit rings to the rein hand / saddle pommel
+  rig.headGroup.updateWorldMatrix(true, false);
+  rig.riderRoot.updateWorldMatrix(true, false);
+  for (let ri = 0; ri < 2; ri++) {
+    const rGeo = rig.reins[ri];
+    const pos = rGeo.attributes.position as THREE.BufferAttribute;
+    rig.bitAnchors[ri].getWorldPosition(vTmp);
+    rig.riderRoot.worldToLocal(vTmp);
+    const sideOff = ri === 0 ? -0.035 : 0.035;
+    const sag = 0.09 + Math.max(0, 0.12 - absSpeed * 0.015);
+    for (let c = 0; c <= 6; c++) {
+      const u = c / 6;
+      const rx = vTmp.x + (reinPommel.x - vTmp.x) * u;
+      const ry = vTmp.y + (reinPommel.y - vTmp.y) * u - Math.sin(u * Math.PI) * sag;
+      const rz = vTmp.z + (reinPommel.z + sideOff - vTmp.z) * u;
+      pos.setXYZ(c, rx, ry + 0.012, rz);
+      pos.setXYZ(c + 7, rx, ry - 0.012, rz);
+    }
+    pos.needsUpdate = true;
+    rGeo.computeVertexNormals();
   }
 
   // ------------------------------------------------------------ cloak, plumes
@@ -1343,8 +1441,8 @@ export function applyRigPose3D(
     rig.flashLevel = Math.max(0, rig.flashLevel - dt * 7);
     const f = rig.flashLevel;
     for (const entry of rig.flashMats) {
-      entry.mat.emissive.setRGB(entry.base.r + f * 0.8, entry.base.g + f * 0.28, entry.base.b + f * 0.14);
-      entry.mat.emissiveIntensity = Math.max(entry.baseIntensity, f > 0.001 ? 1 : entry.baseIntensity);
+      entry.mat.emissive.setRGB(entry.base.r + f * 0.48, entry.base.g + f * 0.22, entry.base.b + f * 0.08);
+      entry.mat.emissiveIntensity = Math.max(entry.baseIntensity, f > 0.001 ? 0.72 : entry.baseIntensity);
     }
     if (rig.flashLevel <= 0.001) {
       for (const entry of rig.flashMats) {

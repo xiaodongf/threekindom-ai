@@ -29,8 +29,10 @@ function reliefOf(metres: number): number {
 export interface MapWorld {
   /** RG half-float: R = world height, G = metres / 6500. Row 0 is the northern edge. */
   heightTex: THREE.DataTexture;
-  /** RGBA8: R land, G coast proximity (0.5 at the shore), B rivers and lakes, A roads. */
+  /** RGBA8: R land, G coast proximity (0.5 at the shore), B rivers, A roads. */
   maskTex: THREE.DataTexture;
+  /** RG8: R crisp lake fill, G soft interior lake shelf for watercolour wash & ripples. */
+  lakeTex: THREE.DataTexture;
   /** RG8, nearest: R = index of the city that holds this ground, G = index across the nearest border. */
   provinceTex: THREE.DataTexture;
   /**
@@ -123,15 +125,31 @@ export async function buildMapWorld(cities: City[], bag: DisposeBag): Promise<Ma
 
   const [waterC, waterCtx] = channelCanvas(texW, texH);
   waterCtx.strokeStyle = '#fff';
-  waterCtx.fillStyle = '#fff';
   waterCtx.lineCap = 'round';
   waterCtx.lineJoin = 'round';
   for (const river of RIVER_FEATURES) {
     waterCtx.lineWidth = river.width * 1.15 + 0.6;
     waterCtx.stroke(new Path2D(river.d));
   }
-  for (const lake of LAKE_FEATURES) waterCtx.fill(new Path2D(lake.d));
   const water = readChannel(waterC);
+
+  const [lakeC, lakeCtx] = channelCanvas(texW, texH);
+  lakeCtx.fillStyle = '#fff';
+  for (const lake of LAKE_FEATURES) lakeCtx.fill(new Path2D(lake.d));
+  const lakeRaw = readChannel(lakeC);
+  const lakeF = new Float32Array(texW * texH);
+  for (let i = 0; i < lakeF.length; i++) lakeF[i] = lakeRaw[i] / 255;
+  const lakeEdge = boxBlur(Float32Array.from(lakeF), texW, texH, 1, 1);
+  const lakeShelf = boxBlur(Float32Array.from(lakeF), texW, texH, 5, 2);
+  const lakeData = new Uint8Array(texW * texH * 2);
+  for (let i = 0; i < lakeF.length; i++) {
+    lakeData[i * 2] = Math.round(lakeEdge[i] * 255);
+    lakeData[i * 2 + 1] = Math.round(lakeShelf[i] * 255);
+  }
+  const lakeTex = bag.add(new THREE.DataTexture(lakeData, texW, texH, THREE.RGFormat));
+  lakeTex.magFilter = THREE.LinearFilter;
+  lakeTex.minFilter = THREE.LinearFilter;
+  lakeTex.needsUpdate = true;
 
   const [roadC, roadCtx] = channelCanvas(texW, texH);
   roadCtx.strokeStyle = '#fff';
@@ -278,6 +296,7 @@ export async function buildMapWorld(cities: City[], bag: DisposeBag): Promise<Ma
   return {
     heightTex,
     maskTex,
+    lakeTex,
     provinceTex,
     borderTex,
     texW,
