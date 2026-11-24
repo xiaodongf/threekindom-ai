@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
-  Anchor,
   Bomb,
   Bot,
   Box,
   Compass,
-  Crosshair,
   Crown,
+  FastForward,
   Flame,
   Footprints,
   Shield,
@@ -42,6 +41,8 @@ import {
   getReachableTiles,
   getStratagemTargetCoords,
   isIntactGate,
+  getUnitEffectiveAttackRange,
+  getUnitEffectiveMove,
   manhattan,
   moveTacticalUnit,
   previewAttack,
@@ -63,20 +64,13 @@ import type { FactionId, GameState, Language, LocalizedText } from '../game/type
 import { tLoc } from '../i18n/translations.js';
 import { battleAudio } from '../utils/battleAudio.js';
 import { DuelModal } from './DuelModal.js';
+import { TacticalBoardCanvas } from './tactical/TacticalBoardCanvas.js';
+import { ThreatLines, type ThreatLine } from './tactical/ThreatLines.js';
+import { UnitToken } from './tactical/UnitToken.js';
 import { TacticalVfxCanvas, type TacticalVfxEvent } from './TacticalVfxCanvas.js';
 import { Art } from './ui/Art.js';
-
-const TILE_TEXTURE_ART: Record<TacticalTileType, string> = {
-  plains: '/art/tile_plains.jpg',
-  forest: '/art/tile_forest.jpg',
-  water: '/art/tile_water.jpg',
-  bridge: '/art/tile_bridge.jpg',
-  ford: '/art/tile_ford.jpg',
-  hill: '/art/tile_hill.jpg',
-  wall: '/art/tile_wall.jpg',
-  gate: '/art/tile_wall.jpg',
-  citadel: '/art/tile_citadel.jpg',
-};
+import { CountUp } from './ui/CountUp.js';
+import { Seal } from './ui/Seal.js';
 
 interface TacticalBattleModalProps {
   gameState: GameState;
@@ -243,9 +237,47 @@ export function TacticalBattleModal({
     defUnit: TacticalUnit;
   } | null>(null);
 
-  const triggerBoardShake = () => {
-    setBoardShaking(true);
-    window.setTimeout(() => setBoardShaking(false), 380);
+  const [shakeAmp, setShakeAmp] = useState(5);
+  const [aiSpeed, setAiSpeed] = useState<1 | 2 | 4>(1);
+  /** One blow in flight: who lunges, who is struck, and along which direction. */
+  const [impact, setImpact] = useState<{
+    key: string;
+    attackerId?: string;
+    targetIds: string[];
+    dx: number;
+    dy: number;
+  } | null>(null);
+
+  /** Shake scales with the blow: `amp` is the travel in pixels. */
+  const triggerBoardShake = (amp = 6) => {
+    setShakeAmp(amp);
+    setBoardShaking(false);
+    window.requestAnimationFrame(() => setBoardShaking(true));
+    window.setTimeout(() => setBoardShaking(false), 360);
+  };
+
+  /** Lunge, hit-stop and recoil for one exchange; `weight` is the share of the target's strength lost. */
+  const triggerImpact = (
+    attacker: { id: string; row: number; col: number } | undefined,
+    targets: Array<{ id: string; row: number; col: number }>,
+    weight: number
+  ) => {
+    if (targets.length === 0) return;
+    const first = targets[0];
+    let dx = 0;
+    let dy = 0;
+    if (attacker) {
+      const len = Math.hypot(first.col - attacker.col, first.row - attacker.row) || 1;
+      dx = (first.col - attacker.col) / len;
+      dy = (first.row - attacker.row) / len;
+    }
+    const key = `imp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setImpact({ key, attackerId: attacker?.id, targetIds: targets.map((t) => t.id), dx, dy });
+    window.setTimeout(() => setImpact((cur) => (cur?.key === key ? null : cur)), 440);
+    if (weight > 0.06) {
+      // The shake lands with the blow, after the lunge has closed the distance
+      window.setTimeout(() => triggerBoardShake(Math.min(11, 2.5 + weight * 16)), 120);
+    }
   };
 
   const spawnPopup = (
@@ -308,7 +340,7 @@ export function TacticalBattleModal({
     const shouldRunAI = battle.activeSide !== playerSide || aiAutoPlay;
     if (!shouldRunAI) return;
 
-    const delay = aiAutoPlay ? 180 : 420;
+    const delay = (aiAutoPlay ? 180 : 420) / aiSpeed;
     const timer = window.setTimeout(() => {
       // The step rolls dice and plays sounds, so it runs here - exactly once per tick - rather than
       // inside a setState updater (which React may invoke twice). `battle` is the state this
@@ -333,11 +365,33 @@ export function TacticalBattleModal({
       if (next.winner) {
         battleAudio.playOutcomeHorn(next.winner === playerSide, 0.2);
       }
+      // Show what the step did: every squad that lost men is struck and its loss is named
+      const hurt = next.units
+        .map((u) => ({ u, before: battle.units.find((b) => b.id === u.id) }))
+        .filter((x) => x.before && x.u.troops < x.before.troops);
+      if (hurt.length > 0) {
+        const actor = next.units.find((u) => {
+          const b = battle.units.find((x) => x.id === u.id);
+          return b && !b.hasActed && u.hasActed && u.side === battle.activeSide;
+        });
+        const struck = hurt.filter((x) => x.u.id !== actor?.id);
+        for (const x of hurt.slice(0, 4)) {
+          spawnPopup(x.before!.row, x.before!.col, `-${(x.before!.troops - x.u.troops).toLocaleString()}`, 'dmg');
+        }
+        const worst = Math.max(
+          ...hurt.map((x) => (x.before!.troops - x.u.troops) / Math.max(1, x.before!.maxTroops))
+        );
+        triggerImpact(
+          actor ? battle.units.find((b) => b.id === actor.id) : undefined,
+          (struck.length > 0 ? struck : hurt).map((x) => x.before!),
+          worst
+        );
+      }
       setBattle(next);
     }, delay);
 
     return () => window.clearTimeout(timer);
-  }, [battle, aiAutoPlay, playerSide, activeGridDuel]);
+  }, [battle, aiAutoPlay, aiSpeed, playerSide, activeGridDuel]);
 
   const reachableTiles = useMemo(() => {
     if (!isPlayerTurn || !selectedUnit || selectedUnit.side !== playerSide || commandMode !== 'move') {
@@ -593,7 +647,7 @@ export function TacticalBattleModal({
         toRow: occupant.row,
         toCol: occupant.col,
       });
-      if (prev.estimatedDamage >= 1100) triggerBoardShake();
+      triggerImpact(selectedUnit, [occupant], prev.estimatedDamage / Math.max(1, occupant.maxTroops));
       const topPrinciple = prev.principles.find((p) => p.positive);
       spawnPopup(
         occupant.row,
@@ -712,6 +766,13 @@ export function TacticalBattleModal({
     setBattle(next);
   }
 
+  // What each side brought to the field, for the count-down in the verdict
+  const atkFielded = battle.units
+    .filter((u) => u.side === 'attacker')
+    .reduce((sum, u) => sum + u.maxTroops, 0);
+  const defFielded = battle.units
+    .filter((u) => u.side === 'defender')
+    .reduce((sum, u) => sum + u.maxTroops, 0);
   const atkTotalTroops = battle.units
     .filter((u) => u.side === 'attacker' && !u.defeated)
     .reduce((s, u) => s + u.troops, 0);
@@ -723,6 +784,28 @@ export function TacticalBattleModal({
     playerSide === 'attacker'
       ? battle.attackerHasBalloon || battle.attackerHasSpyglass
       : battle.defenderHasBalloon || battle.defenderHasSpyglass;
+
+  const threatLines = useMemo<ThreatLine[]>(() => {
+    if (!isPlayerTurn || !hoveredCoord || !selectedUnit || commandMode !== 'move') return [];
+    const onOwnTile = selectedUnit.row === hoveredCoord.row && selectedUnit.col === hoveredCoord.col;
+    const canStandThere =
+      onOwnTile || reachableTiles.some((p) => p.row === hoveredCoord.row && p.col === hoveredCoord.col);
+    if (!canStandThere) return [];
+    const lines: ThreatLine[] = [];
+    for (const enemy of battle.units) {
+      if (enemy.defeated || enemy.side === playerSide) continue;
+      if (enemy.isHiddenAmbush && !revealsEnemyAmbush) continue;
+      const dist = manhattan(enemy.row, enemy.col, hoveredCoord.row, hoveredCoord.col);
+      const range = getUnitEffectiveAttackRange(battle, enemy);
+      if (dist <= range) {
+        lines.push({ fromRow: enemy.row, fromCol: enemy.col, toRow: hoveredCoord.row, toCol: hoveredCoord.col, direct: true });
+      } else if (dist <= range + getUnitEffectiveMove(enemy)) {
+        lines.push({ fromRow: enemy.row, fromCol: enemy.col, toRow: hoveredCoord.row, toCol: hoveredCoord.col, direct: false });
+      }
+    }
+    return lines;
+  }, [battle, commandMode, hoveredCoord, isPlayerTurn, playerSide, reachableTiles, revealsEnemyAmbush, selectedUnit]);
+
 
   const atkShort = tLoc(gameState.factions[battle.config.attackerFaction].shortName, lang);
   const defShort =
@@ -737,7 +820,7 @@ export function TacticalBattleModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/92 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="ink-panel gold-border-glow rounded-2xl max-w-[1260px] w-full overflow-hidden shadow-[0_24px_80px_rgba(6,4,2,0.95)] flex flex-col max-h-[96vh]">
+      <div className="ink-panel gold-border-glow rounded-2xl max-w-[1400px] w-full overflow-hidden shadow-[0_24px_80px_rgba(6,4,2,0.95)] flex flex-col max-h-[96vh]">
         {/* TOP TACTICAL HUD */}
         <div className="px-4 py-2.5 bg-slate-950/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-3">
@@ -843,6 +926,16 @@ export function TacticalBattleModal({
 
             <button
               type="button"
+              onClick={() => setAiSpeed((v) => (v === 1 ? 2 : v === 2 ? 4 : 1))}
+              title={lang === 'zh' ? '敌军与托管回合的播放速度' : 'Playback speed of enemy and auto-played turns'}
+              className="px-2.5 py-1.5 rounded-lg border border-slate-600 bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-100 flex items-center gap-1 cursor-pointer"
+            >
+              <FastForward className="w-3.5 h-3.5" />
+              <span>{aiSpeed}×</span>
+            </button>
+
+            <button
+              type="button"
               disabled={Boolean(battle.winner)}
               onClick={() => setAiAutoPlay((v) => !v)}
               className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-40 ${
@@ -877,7 +970,7 @@ export function TacticalBattleModal({
         {/* MAIN BODY: 8x8 GRID + ART OF WAR COMMAND DRAWER */}
         <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 gap-3 p-3 bg-slate-950/70">
           {/* LEFT: 8x8 TACTICAL BATTLEFIELD */}
-          <div className="lg:col-span-7 flex flex-col gap-2">
+          <div className="lg:col-span-7 xl:col-span-8 flex flex-col gap-2">
             {/* Sun Tzu Quote / Seen-Through / Skill Callout Banner. Always rendered at a fixed height
                 (it shows the objective until the first callout) so the board never jumps under the cursor. */}
             {battle.lastCallout ? (
@@ -930,16 +1023,21 @@ export function TacticalBattleModal({
             )}
 
             {/* 8x8 Interactive Painted Battlefield + 60fps Canvas VFX Container */}
-            <div className="relative rounded-2xl p-2 bg-slate-950/90 border border-cyan-500/35 shadow-inner tactical-25d-stage overflow-hidden">
+            <div className="relative p-2 tactical-25d-stage overflow-hidden">
               <div
-                className={`relative aspect-square w-full max-w-[580px] mx-auto tactical-25d-board ${
-                  boardShaking ? 'animate-board-shake' : ''
-                }`}
+                className="relative aspect-square w-full max-w-[min(680px,calc(100vh-15.5rem))] mx-auto tactical-25d-board"
                 style={{
                   transform: tilt25D ? 'rotateX(18deg) scale(0.95)' : 'rotateX(0deg) scale(1)',
                 }}
               >
-                <div className="grid grid-cols-8 grid-rows-8 gap-1 w-full h-full">
+              <div
+                className={`relative w-full h-full scroll-mount overflow-hidden ${
+                  boardShaking ? 'anim-board-shake' : ''
+                }`}
+                style={{ '--shake': `${shakeAmp}px` } as CSSProperties}
+              >
+                <TacticalBoardCanvas grid={battle.grid} />
+                <div className="relative grid grid-cols-8 grid-rows-8 w-full h-full">
                   {battle.grid.map((rowArr, r) =>
                     rowArr.map((tile, c) => {
                       const occupant = battle.units.find(
@@ -979,44 +1077,23 @@ export function TacticalBattleModal({
                           onClick={() => handleTileClick(r, c)}
                           onMouseEnter={() => setHoveredCoord({ row: r, col: c })}
                           onMouseLeave={() => setHoveredCoord(null)}
-                          className={`relative min-w-0 min-h-0 rounded-lg overflow-hidden border transition-all flex items-center justify-center cursor-pointer shadow-inner ${
+                          className={`relative min-w-0 min-h-0 flex items-center justify-center cursor-pointer ${
                             isSelectedTile
-                              ? 'ring-2 ring-cyan-300 border-cyan-200 z-10 shadow-[0_0_20px_rgba(208,167,79,0.65)]'
+                              ? 'tile-selected z-10'
                               : isStratTarget
-                                ? 'ring-2 ring-orange-400 border-amber-300 shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+                                ? 'tile-stratagem'
                                 : isBombTarget
-                                  ? 'ring-2 ring-amber-400 border-yellow-300'
+                                  ? 'tile-bomb'
                                   : isSkillTarget
-                                    ? 'ring-2 ring-fuchsia-400 border-fuchsia-300'
+                                    ? 'tile-skill'
                                     : isAttackable
-                                      ? 'ring-2 ring-rose-500 border-rose-300 shadow-[0_0_16px_rgba(244,63,94,0.55)]'
+                                      ? 'tile-attack'
                                       : isReachable
-                                        ? 'border-cyan-300/90 ring-1 ring-cyan-400/65'
-                                        : 'border-slate-900/75 hover:border-amber-300/70'
+                                        ? 'tile-move'
+                                        : 'hover:shadow-[inset_0_0_0_2px_rgba(243,230,195,0.55)]'
                           }`}
                         >
-                          {/* Studio-Painted Top-Down Terrain Texture */}
-                          <Art thumb
-                            src={TILE_TEXTURE_ART[tile.type]}
-                            alt={tile.type}
-                            className={`pointer-events-none absolute inset-0 w-full h-full object-cover theme-art-grade ${
-                              tile.type === 'gate' ? 'brightness-90' : ''
-                            }`}
-                          />
-                          {/* Subtle Vignette & Interactive Highlight Tint */}
-                          <div
-                            className={`pointer-events-none absolute inset-0 ${
-                              isReachable
-                                ? 'bg-cyan-400/22'
-                                : isAttackable
-                                  ? 'bg-rose-500/25'
-                                  : isStratTarget
-                                    ? 'bg-orange-500/22'
-                                    : 'bg-slate-950/18'
-                            }`}
-                          />
-
-                          {/* Crisp Minimal Semantic Markers for Special Tactical Tiles */}
+                          {/* Markers for the tiles that carry rules */}
                           {tile.type === 'ford' && !visibleUnit && (
                             <span className="pointer-events-none relative z-10 text-[8px] font-black px-1 py-0.2 rounded bg-cyan-950/80 border border-cyan-400/50 text-cyan-100">
                               {lang === 'zh' ? '浅滩' : 'FORD'}
@@ -1086,11 +1163,6 @@ export function TacticalBattleModal({
                             </div>
                           )}
 
-                          {/* Reachable Move Indicator Orb */}
-                          {isReachable && !visibleUnit && (
-                            <div className="pointer-events-none relative z-10 w-3 h-3 rounded-full bg-cyan-300/90 border border-white shadow-[0_0_12px_#38bdf8]" />
-                          )}
-
                           {/* Live INT Success % Pill on Stratagem-Targetable Tiles! */}
                           {stratOdds !== null && (
                             <div
@@ -1106,91 +1178,45 @@ export function TacticalBattleModal({
                             </div>
                           )}
 
-                          {/* Tactical Unit Token */}
+                          {/* Squad token: bust on a plinth */}
                           {visibleUnit && (
-                            <div
-                              className={`relative z-10 w-full h-full flex flex-col items-center justify-center p-0.5 ${
-                                visibleUnit.hasActed && visibleUnit.side === playerSide
-                                  ? 'opacity-70'
-                                  : ''
-                              }`}
-                            >
-                              <div
-                                className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden border-2 shadow-[0_4px_12px_rgba(0,0,0,0.85)] flex items-center justify-center shrink-0"
-                                style={{
-                                  borderColor: FACTION_RING[visibleUnit.faction].ring,
-                                  backgroundColor: FACTION_RING[visibleUnit.faction].bg,
-                                }}
-                              >
-                                {visibleUnit.portrait ? (
-                                  <Art thumb
-                                    src={visibleUnit.portrait}
-                                    alt={tLoc(visibleUnit.name, lang)}
-                                    className="w-full h-full object-cover object-top"
-                                  />
-                                ) : (
-                                  <span className="font-seal font-bold text-white text-sm">
-                                    {FACTION_RING[visibleUnit.faction].badge}
-                                  </span>
-                                )}
-
-                                {/* Unit Class Mini-Badge */}
-                                <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-slate-950/95 border border-slate-500 flex items-center justify-center text-[8px] text-cyan-200">
-                                  {visibleUnit.unitClass === 'naval' ? (
-                                    <Anchor className="w-2.5 h-2.5" />
-                                  ) : visibleUnit.unitClass === 'archer' ? (
-                                    <Crosshair className="w-2.5 h-2.5" />
-                                  ) : visibleUnit.unitClass === 'cavalry' ? (
-                                    <Wind className="w-2.5 h-2.5" />
-                                  ) : (
-                                    <Shield className="w-2.5 h-2.5" />
-                                  )}
-                                </span>
-                              </div>
-
-                              {/* Name & Compact HP Bar with High-Contrast Pill */}
-                              <div className="w-full px-0.5 mt-0.5 space-y-0.5">
-                                <div className="h-1.5 w-full bg-slate-950/95 rounded-full overflow-hidden border border-slate-700/80">
-                                  <div
-                                    className={`h-full ${
-                                      visibleUnit.side === playerSide
-                                        ? 'bg-emerald-400'
-                                        : 'bg-rose-400'
-                                    }`}
-                                    style={{
-                                      width: `${Math.max(
-                                        6,
-                                        Math.round((visibleUnit.troops / visibleUnit.maxTroops) * 100)
-                                      )}%`,
-                                    }}
-                                  />
-                                </div>
-                                <div className="text-[8.5px] leading-tight font-extrabold text-white text-center truncate bg-slate-950/75 rounded px-0.5">
-                                  {tLoc(visibleUnit.name, lang)}
-                                </div>
-                              </div>
-
-                              {/* Status Effect Badges */}
-                              {(visibleUnit.isHiddenAmbush ||
-                                visibleUnit.disorderedTurns > 0 ||
-                                visibleUnit.deathGroundTurns > 0 ||
-                                visibleUnit.wffmStance) && (
-                                <div className="absolute top-0.5 right-0.5 flex gap-0.5 text-[9px] bg-slate-950/85 px-1 rounded">
-                                  {visibleUnit.isHiddenAmbush && <span title="Ambush">🌲</span>}
-                                  {visibleUnit.disorderedTurns > 0 && <span title="Disordered">💫</span>}
-                                  {visibleUnit.deathGroundTurns > 0 && <span title="Death Ground">🩸</span>}
-                                  {visibleUnit.wffmStance === 'wind' && <span title="Wind">🌪️</span>}
-                                  {visibleUnit.wffmStance === 'fire' && <span title="Fire">🔥</span>}
-                                  {visibleUnit.wffmStance === 'mountain' && <span title="Mountain">⛰️</span>}
-                                </div>
-                              )}
-                            </div>
+                            <UnitToken
+                              unit={visibleUnit}
+                              lang={lang}
+                              ally={visibleUnit.side === playerSide}
+                              spent={visibleUnit.hasActed && visibleUnit.side === playerSide}
+                              motion={
+                                impact?.attackerId === visibleUnit.id
+                                  ? { kind: 'lunge', dx: impact.dx, dy: impact.dy, key: impact.key }
+                                  : impact?.targetIds.includes(visibleUnit.id)
+                                    ? { kind: 'hit', dx: impact.dx, dy: impact.dy, key: impact.key }
+                                    : null
+                              }
+                              previewRatio={
+                                hoverAttackPreview?.target.id === visibleUnit.id
+                                  ? (visibleUnit.troops - hoverAttackPreview.preview.estimatedDamage) /
+                                    Math.max(1, visibleUnit.maxTroops)
+                                  : hoverAttackPreview && selectedUnit?.id === visibleUnit.id
+                                    ? (visibleUnit.troops - hoverAttackPreview.preview.counterDamage) /
+                                      Math.max(1, visibleUnit.maxTroops)
+                                    : null
+                              }
+                              previewLoss={
+                                hoverAttackPreview?.target.id === visibleUnit.id
+                                  ? hoverAttackPreview.preview.estimatedDamage
+                                  : hoverAttackPreview && selectedUnit?.id === visibleUnit.id
+                                    ? hoverAttackPreview.preview.counterDamage
+                                    : null
+                              }
+                            />
                           )}
                         </button>
                       );
                     })
                   )}
                 </div>
+
+                <ThreatLines lines={threatLines} />
 
                 {/* 60fps Live Canvas VFX Layer: Wind Ribbons, Volumetric Downwind Fire, Projectiles & Explosions */}
                 <TacticalVfxCanvas
@@ -1223,6 +1249,7 @@ export function TacticalBattleModal({
                   ))}
                 </div>
               </div>
+              </div>
 
               {/* KOEI-Style Diagonal Hero Portrait Cut-In Slash Overlay! */}
               {skillCutIn && (
@@ -1250,42 +1277,54 @@ export function TacticalBattleModal({
                 </div>
               )}
 
-              {/* Victory / Defeat Overlay */}
+              {/* Verdict: the same seal that closes every battle */}
               {battle.winner && (
-                <div className="absolute inset-0 z-30 rounded-2xl bg-slate-950/78 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-center space-y-4">
-                  <div
-                    className={`px-6 py-2.5 rounded-2xl border-2 font-display text-2xl sm:text-3xl font-black flex items-center gap-2.5 shadow-2xl ${
-                      battle.winner === playerSide
-                        ? 'bg-emerald-950/90 border-emerald-400 text-emerald-200'
-                        : 'bg-rose-950/90 border-rose-400 text-rose-200'
-                    }`}
-                  >
-                    {battle.winner === playerSide ? (
-                      <Crown className="w-7 h-7 text-amber-300" />
-                    ) : (
-                      <Shield className="w-7 h-7 text-rose-400" />
-                    )}
+                <div className="absolute inset-0 z-30 bg-[#0a0806]/78 flex flex-col items-center justify-center p-6 text-center">
+                  <div className="anim-rise flex items-center gap-5">
+                    <Seal
+                      char={battle.winner === playerSide ? '勝' : '敗'}
+                      size={84}
+                      stamped
+                      color={battle.winner === playerSide ? undefined : '#3a342c'}
+                    />
+                    <div className="text-left">
+                      <div className="brush-heading font-brush text-3xl sm:text-4xl font-bold text-slate-50 leading-none">
+                        {battle.winner === playerSide
+                          ? lang === 'zh'
+                            ? '沙盘决战大捷'
+                            : 'The field is yours'
+                          : lang === 'zh'
+                            ? '阵前受挫'
+                            : 'The field is lost'}
+                      </div>
+                      {battle.victoryReason && (
+                        <p className="mt-4 text-sm text-slate-200 max-w-md leading-relaxed">
+                          {tLoc(battle.victoryReason, lang)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="anim-rise [animation-delay:160ms] mt-5 flex items-center gap-6 text-xs text-slate-400">
                     <span>
-                      {battle.winner === playerSide
-                        ? lang === 'zh'
-                          ? '沙盘决战大捷！'
-                          : 'TACTICAL VICTORY!'
-                        : lang === 'zh'
-                          ? '阵前受挫'
-                          : 'TACTICAL DEFEAT'}
+                      {atkShort}{' '}
+                      <span className="text-lg font-bold text-slate-50">
+                        <CountUp value={atkTotalTroops} from={atkFielded} />
+                      </span>
+                    </span>
+                    <span className="text-amber-300/70">·</span>
+                    <span>
+                      {defShort}{' '}
+                      <span className="text-lg font-bold text-slate-50">
+                        <CountUp value={defTotalTroops} from={defFielded} />
+                      </span>
                     </span>
                   </div>
-                  {battle.victoryReason && (
-                    <p className="text-sm text-slate-100 max-w-md bg-slate-900/90 border border-slate-700 rounded-xl px-4 py-2.5">
-                      {tLoc(battle.victoryReason, lang)}
-                    </p>
-                  )}
                   <button
                     type="button"
                     onClick={() => onComplete(extractTacticalBattleOutcome(battle))}
-                    className="px-6 py-2.5 rounded-xl btn-gold font-bold text-sm shadow-lg cursor-pointer"
+                    className="anim-rise [animation-delay:280ms] mt-5 px-7 py-2.5 rounded-md btn-gold text-sm cursor-pointer"
                   >
-                    {lang === 'zh' ? '结算战果与俘虏' : 'Continue to Battle Report'}
+                    {lang === 'zh' ? '结算战果与俘虏' : 'Continue to battle report'}
                   </button>
                 </div>
               )}
@@ -1293,7 +1332,7 @@ export function TacticalBattleModal({
           </div>
 
           {/* RIGHT: GENERAL COMMAND & ART OF WAR STRATAGEM PANEL */}
-          <div className="lg:col-span-5 flex flex-col gap-2.5">
+          <div className="lg:col-span-5 xl:col-span-4 flex flex-col gap-2.5">
             {/* Selected General Inspection Card */}
             {selectedUnit ? (
               <div className="rounded-xl p-3 bg-slate-900/90 border border-slate-700/80 space-y-2.5">

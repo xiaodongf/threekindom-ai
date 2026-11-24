@@ -30,7 +30,7 @@ import {
 import type { TacticalBattleState, TacticalUnit } from './tacticalTypes.js';
 import type { GameState } from './types.js';
 
-/** Shu marches from Jiangling on neutral Xiangyang (river map, walls Lv.3). */
+/** Shu marches from Jiangling on Wei's Xiangyang (river map, walls Lv.4, no general inside). */
 function xiangyangBattle(
   game: GameState = createNewGame('shu'),
   troops = 9000,
@@ -43,7 +43,7 @@ function xiangyangBattle(
       fromCityId: 'jiangling',
       toCityId: 'xiangyang',
       attackerFaction: 'shu',
-      defenderFaction: 'neutral',
+      defenderFaction: 'wei',
       playerSide: 'attacker',
       primaryTroops: troops,
       tactic: 'assault',
@@ -97,7 +97,7 @@ describe('8x8 Direct Tactical Grid Battle Engine — The Art of War Edition', ()
         fromCityId: 'jiangling',
         toCityId: 'xiangyang',
         attackerFaction: 'shu',
-        defenderFaction: 'neutral',
+        defenderFaction: 'wei',
         playerSide: 'attacker',
         primaryTroops: 9000,
         tactic: 'assault',
@@ -135,7 +135,7 @@ describe('8x8 Direct Tactical Grid Battle Engine — The Art of War Edition', ()
         fromCityId: 'jiangling',
         toCityId: 'xiangyang',
         attackerFaction: 'shu',
-        defenderFaction: 'neutral',
+        defenderFaction: 'wei',
         playerSide: 'attacker',
         primaryTroops: 9000,
         tactic: 'fire',
@@ -330,7 +330,7 @@ describe('8x8 Direct Tactical Grid Battle Engine — The Art of War Edition', ()
         fromCityId: 'jiangling',
         toCityId: 'xiangyang',
         attackerFaction: 'shu',
-        defenderFaction: 'neutral',
+        defenderFaction: 'wei',
         playerSide: 'attacker',
         primaryTroops: 18000,
         tactic: 'fire',
@@ -352,7 +352,7 @@ describe('8x8 Direct Tactical Grid Battle Engine — The Art of War Edition', ()
     if (outcome.attackerWon) {
       expect(synced.cities.xiangyang.owner).toBe('shu');
     } else {
-      expect(synced.cities.xiangyang.owner).toBe('neutral');
+      expect(synced.cities.xiangyang.owner).toBe('wei');
     }
   });
 });
@@ -378,7 +378,13 @@ describe('8x8 Tactical Grid — balance rules that tie the grid to the campaign'
   });
 
   it('scales morale loss by the share of the squad that falls, not by the number of hits', () => {
-    const base = xiangyangBattle(createNewGame('shu'), 9000);
+    // The striker is a plain garrison squad, so Xiangyang's commander is posted elsewhere.
+    const fresh = createNewGame('shu');
+    const leaderless = {
+      ...fresh,
+      generals: { ...fresh.generals, caoren: { ...fresh.generals.caoren, cityId: 'xuchang' } },
+    };
+    const base = xiangyangBattle(leaderless, 9000);
     const striker = base.units.find((u) => u.id === 'def-0')!;
     const small = place(base, {
       'def-0': { row: 3, col: 3 },
@@ -523,11 +529,11 @@ describe('8x8 Tactical Grid — balance rules that tie the grid to the campaign'
     const adjacent = place(locked, { 'atk-lead': { row: 3, col: 5 } });
     expect(executeHeroSignatureSkill(adjacent, 'atk-lead', 3, 6)).toBe(adjacent);
 
-    // Wei assaults Jiangling; only the DEFENDER (Guan Yu) uses his signature skill.
+    // Wei assaults Hanzhong from Chang'an; only a DEFENDING hero uses a signature skill.
     const weiGame = createNewGame('wei');
     const battle = createTacticalBattle(
       weiGame,
-      buildAssaultConfig(weiGame, 'wei', 'xuchang', 'xiangyang', 9000, 'assault', undefined, true, {
+      buildAssaultConfig(weiGame, 'wei', 'changan', 'hanzhong', 9000, 'assault', undefined, true, {
         useSignatureSkill: true,
       })!,
       () => 0.1
@@ -578,7 +584,7 @@ describe('8x8 Tactical Grid — balance rules that tie the grid to the campaign'
     let failures = 0;
     for (let i = 0; i < 10; i++) {
       const res = performAttackCity(strong, 'shu', 'jiangling', 'xiangyang', 3000, 'siege', 'guanyu');
-      if (res.cities.xiangyang.owner === 'neutral') failures += 1;
+      if (res.cities.xiangyang.owner === 'wei') failures += 1;
       // Survivors of a failed assault come home; the staging city never gains troops from a defeat.
       expect(res.cities.jiangling.troops).toBeLessThanOrEqual(strong.cities.jiangling.troops);
     }
@@ -586,9 +592,9 @@ describe('8x8 Tactical Grid — balance rules that tie the grid to the campaign'
   });
 
   it('lets the survivors of a fallen garrison withdraw to a friendly neighbouring city', () => {
-    // Wu takes Jiangling from Shu: Shu still holds neighbouring Hanzhong and Chengdu.
+    // Wu takes Jiangling from Shu: Shu still holds neighbouring Yong'an and Wuling.
     const game = createNewGame('wu');
-    const config = buildAssaultConfig(game, 'wu', 'chaisang', 'jiangling', 9000, 'fire', undefined, true, {
+    const config = buildAssaultConfig(game, 'wu', 'jiangxia', 'jiangling', 7000, 'fire', undefined, true, {
       useSignatureSkill: true,
     })!;
     const battle = createTacticalBattle(game, config, () => 0.1);
@@ -599,7 +605,7 @@ describe('8x8 Tactical Grid — balance rules that tie the grid to the campaign'
 
     const after = applyTacticalBattleOutcome(game, outcome, () => 0.99);
     expect(after.cities.jiangling.owner).toBe('wu');
-    const shuNeighbours = ['hanzhong', 'chengdu'];
+    const shuNeighbours = ['yongan', 'wuling'];
     const gained = shuNeighbours.reduce(
       (sum, id) => sum + (after.cities[id].troops - game.cities[id].troops),
       0

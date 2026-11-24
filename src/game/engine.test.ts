@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { PROVINCES, VICTORY_CITY_TARGET, isWithinRiverStrike } from './data.js';
+import { HERO_BONDS } from './heroes.js';
 import {
   advanceSeason,
   applyDiplomacyOutcome,
@@ -9,6 +11,7 @@ import {
   executeAITurnAction,
   getActiveBondsForHeroes,
   getChronoInsightBonus,
+  getEligibleStagingCities,
   getFactionCities,
   getRelation,
   performAttackCity,
@@ -23,29 +26,117 @@ import {
   performSowDiscord,
   resolveDuelRound,
 } from './engine.js';
+import type { GameState } from './types.js';
 
 describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
-  it('initializes 214 AD map with 36 heroes (27 faction + 9 wandering), player profile, and 3 AP', () => {
+  it('initializes the 214 AD map with 32 cities, 55 heroes (9 wandering) and orders scaled to the realm', () => {
     const state = createNewGame('shu');
     expect(state.year).toBe(214);
     expect(state.season).toBe('spring');
     expect(state.playerFaction).toBe('shu');
     expect(state.playerProfile.portrait).toBe('/portraits/traveler_male.jpg');
-    expect(state.actionPoints).toBe(3);
-    expect(Object.keys(state.generals).length).toBe(36);
+    // Seven cities: the base three orders plus one for the first six cities.
+    expect(state.actionPoints).toBe(4);
+    expect(createNewGame('wei').actionPoints).toBe(5);
+    expect(Object.keys(state.generals).length).toBe(55);
     expect(
       Object.values(state.generals).filter((g) => g.status === 'wandering').length
     ).toBe(9);
     expect(state.generals.lubu.war).toBe(100);
     expect(state.generals.zhouyu.faction).toBe('wu');
-    expect(getFactionCities(state, 'wei').length).toBe(5);
-    expect(getFactionCities(state, 'shu').length).toBe(3);
-    expect(getFactionCities(state, 'wu').length).toBe(3);
-    expect(getFactionCities(state, 'neutral').length).toBe(2);
+    expect(Object.keys(state.cities).length).toBe(32);
+    expect(getFactionCities(state, 'wei').length).toBe(14);
+    expect(getFactionCities(state, 'shu').length).toBe(7);
+    expect(getFactionCities(state, 'wu').length).toBe(7);
+    expect(getFactionCities(state, 'neutral').length).toBe(4);
+  });
+
+  it('lays out a connected map: every road runs both ways, every province has its seat, every hero a city', () => {
+    const state = createNewGame('shu');
+    const cities = Object.values(state.cities);
+    for (const city of cities) {
+      expect(city.neighbors.length).toBeGreaterThan(0);
+      expect(new Set(city.neighbors).size).toBe(city.neighbors.length);
+      for (const nid of city.neighbors) {
+        expect(state.cities[nid]).toBeDefined();
+        expect(state.cities[nid].neighbors).toContain(city.id);
+      }
+    }
+    // Every city can be reached from Luoyang by road.
+    const reached = new Set(['luoyang']);
+    const queue = ['luoyang'];
+    while (queue.length > 0) {
+      for (const nid of state.cities[queue.shift()!].neighbors) {
+        if (!reached.has(nid)) {
+          reached.add(nid);
+          queue.push(nid);
+        }
+      }
+    }
+    expect(reached.size).toBe(cities.length);
+
+    for (const province of Object.values(PROVINCES)) {
+      expect(state.cities[province.seatCityId]?.province).toBe(province.id);
+    }
+    expect(new Set(cities.map((c) => c.province)).size).toBe(Object.keys(PROVINCES).length);
+    for (const hero of Object.values(state.generals)) {
+      expect(state.cities[hero.cityId]).toBeDefined();
+    }
+    // No two cities stand closer than the map can draw them apart.
+    for (const a of cities) {
+      for (const b of cities) {
+        if (a.id < b.id) expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(50);
+      }
+    }
+    expect(VICTORY_CITY_TARGET).toBeLessThan(cities.length);
+  });
+
+  it('opens with a named commander in every city, and bonds that only name real heroes', () => {
+    const state = createNewGame('wu');
+    for (const city of Object.values(state.cities)) {
+      const commanders = Object.values(state.generals).filter(
+        (g) => g.cityId === city.id && g.faction === city.owner && g.status === 'active'
+      );
+      expect(commanders.length, `${city.id} has no commander`).toBeGreaterThan(0);
+    }
+    for (const bond of Object.values(HERO_BONDS)) {
+      for (const id of bond.memberIds) {
+        expect(state.generals[id], `${bond.id} names unknown hero ${id}`).toBeDefined();
+        expect(state.generals[id].bondIds).toContain(bond.id);
+      }
+    }
+    for (const hero of Object.values(state.generals)) {
+      for (const bondId of hero.bondIds) expect(HERO_BONDS[bondId]).toBeDefined();
+    }
+    expect(new Set(Object.values(state.generals).map((g) => g.signatureSkill.id)).size).toBe(
+      Object.keys(state.generals).length
+    );
+    expect(getActiveBondsForHeroes(['caoren', 'xiahouyuan']).map((b) => b.id)).toContain('cao_xiahou');
+  });
+
+  it('takes the lord of a free city prisoner or leaves him masterless when the city falls', () => {
+    const base = createNewGame('shu');
+    const strong: GameState = {
+      ...base,
+      cities: { ...base.cities, chengdu: { ...base.cities.chengdu, troops: 40000 } },
+    };
+    expect(strong.generals.menghuo.faction).toBe('neutral');
+    expect(strong.generals.menghuo.status).toBe('active');
+
+    const taken = performAttackCity(strong, 'shu', 'chengdu', 'jianning', 30000, 'fire', 'zhaoyun', true, () => 0.5);
+    expect(taken.cities.jianning.owner).toBe('shu');
+    expect(taken.generals.menghuo.status).toBe('captured');
+    expect(taken.generals.menghuo.capturedBy).toBe('shu');
+
+    const escaped = performAttackCity(strong, 'shu', 'chengdu', 'jianning', 30000, 'fire', 'zhaoyun', true, () => 0.7);
+    expect(escaped.cities.jianning.owner).toBe('shu');
+    expect(escaped.generals.menghuo.status).toBe('wandering');
+    expect(escaped.generals.menghuo.cityId).toBe('jianning');
   });
 
   it('spends 1 AP for strategic hero relocation and domestic orders', () => {
-    let state = createNewGame('wei');
+    // Wei's fourteen cities give five orders; three are enough to show the ledger runs dry.
+    let state: GameState = { ...createNewGame('wei'), actionPoints: 3 };
     const startGold = state.factions.wei.gold;
     const startTroops = state.cities.xuchang.troops;
 
@@ -162,6 +253,7 @@ describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
 
   it('recruits wandering hero via encounter and resolves duel rounds cleanly', () => {
     let state = createNewGame('shu');
+    const startOrders = state.actionPoints;
     const duelLog = resolveDuelRound(
       state.generals.guanyu,
       state.generals.zhangliao,
@@ -185,7 +277,7 @@ describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
     );
     expect(state.generals.machao.faction).toBe('shu');
     expect(state.generals.machao.status).toBe('active');
-    expect(state.actionPoints).toBe(2);
+    expect(state.actionPoints).toBe(startOrders - 1);
 
     // Diplomacy truce tick verification
     state = applyDiplomacyOutcome(state, 'shu', 'wei', 25, 3, 250, false, {
@@ -198,13 +290,20 @@ describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
   });
 
   it('executes Joint Pincer Assault, Night Raid, Gunpowder Bombard, Sow Discord defection, and Yangtze River Strike', () => {
-    // 1. Joint Pincer Attack by Wei (Luoyang + Xuchang -> Xiangyang) + Live Battle Preview
+    // 1. Joint Pincer Attack by Wei (Luoyang + Xuchang -> a Wan that has slipped out of its hands)
     let weiState = createNewGame('wei');
+    weiState = {
+      ...weiState,
+      cities: {
+        ...weiState.cities,
+        wan: { ...weiState.cities.wan, owner: 'neutral', troops: 8500 },
+      },
+    };
     const soloPreview = estimateBattlePreview(
       weiState,
       'wei',
       'luoyang',
-      'xiangyang',
+      'wan',
       8000,
       'assault',
       'simayi'
@@ -213,7 +312,7 @@ describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
       weiState,
       'wei',
       'luoyang',
-      'xiangyang',
+      'wan',
       8000,
       'assault',
       'simayi',
@@ -226,7 +325,7 @@ describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
       weiState,
       'wei',
       'luoyang',
-      'xiangyang',
+      'wan',
       8000,
       'assault',
       'simayi',
@@ -234,7 +333,7 @@ describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
       () => 0.5,
       { pincerFromCityId: 'xuchang', pincerTroops: 6000 }
     );
-    expect(afterPincer.cities.xiangyang.owner).toBe('wei');
+    expect(afterPincer.cities.wan.owner).toBe('wei');
     expect(afterPincer.cities.xuchang.troops).toBeLessThan(weiState.cities.xuchang.troops);
 
     // 2. Night Raid (plunders gold/food and cuts enemy garrison)
@@ -276,20 +375,26 @@ describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
     expect(afterDisc.lastOperation?.defectedHeroId).toBe('weiyan');
     expect(afterDisc.generals.weiyan.faction).toBe('wei');
 
-    // 5. Yangtze Amphibious River Strike (Wu attacks non-adjacent Chengdu directly from Jianye!)
+    // 5. Yangtze River Strike: Wu sails from Chaisang past Jiangxia to strike Jiangling, two ports
+    //    upriver and not joined to Chaisang by any road.
     let wuState = createNewGame('wu');
     wuState = {
       ...wuState,
       cities: {
         ...wuState.cities,
+        chaisang: { ...wuState.cities.chaisang, troops: 26000 },
         jianye: { ...wuState.cities.jianye, troops: 26000 },
       },
     };
+    expect(wuState.cities.chaisang.neighbors).not.toContain('jiangling');
+    expect(getEligibleStagingCities(wuState, 'wu', 'jiangling', 'river').map((c) => c.id)).toEqual(
+      expect.arrayContaining(['chaisang', 'jiangxia'])
+    );
     const afterRiver = performAttackCity(
       wuState,
       'wu',
-      'jianye',
-      'chengdu',
+      'chaisang',
+      'jiangling',
       22000,
       'fire',
       'zhouyu',
@@ -297,8 +402,27 @@ describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
       () => 0.5,
       { isRiverStrike: true }
     );
-    expect(afterRiver.lastBattle?.toCityId).toBe('chengdu');
+    expect(afterRiver.lastBattle?.toCityId).toBe('jiangling');
     expect(afterRiver.recentMarches[0].type).toBe('river_strike');
+
+    // A fleet reaches two ports along the river and no farther: Jianye cannot strike Jiangzhou.
+    expect(isWithinRiverStrike('jianye', 'chaisang')).toBe(true);
+    expect(isWithinRiverStrike('jianye', 'jiangzhou')).toBe(false);
+    expect(isWithinRiverStrike('xiangyang', 'chaisang')).toBe(true);
+    expect(isWithinRiverStrike('luoyang', 'jianye')).toBe(false);
+    const tooFar = performAttackCity(
+      wuState,
+      'wu',
+      'jianye',
+      'jiangzhou',
+      22000,
+      'fire',
+      'sunquan',
+      true,
+      () => 0.5,
+      { isRiverStrike: true }
+    );
+    expect(tooFar).toBe(wuState);
 
     // 6. AI Rival Bombardment via executeAITurnAction
     const aiBomb = executeAITurnAction(shuState, 'wei', {

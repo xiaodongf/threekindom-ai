@@ -16,6 +16,7 @@ import { MODERN_TECHS, TECH_ORDER } from '../game/tech.js';
 import type { GameState, Language, PlayableFactionId, TechId } from '../game/types.js';
 import { tLoc } from '../i18n/translations.js';
 import { Art } from './ui/Art.js';
+import { TechTree } from './ui/TechTree.js';
 
 interface TechLabPanelProps {
   state: GameState;
@@ -34,6 +35,18 @@ const TECH_ART: Record<TechId, string> = {
   steamship: '/art/tech_steamship.jpg',
 };
 
+/** One or two words per discovery: the tree is read at a glance, the card below has the detail. */
+const TECH_SHORT: Record<TechId, { en: string; zh: string }> = {
+  stirrups: { en: 'Stirrups', zh: '马镫' },
+  medicine: { en: 'Antiseptics', zh: '医术' },
+  agriculture: { en: 'Crop rotation', zh: '轮作' },
+  gunpowder: { en: 'Black powder', zh: '火药' },
+  spyglass: { en: 'Spyglass', zh: '望远镜' },
+  printing: { en: 'Printing', zh: '活字' },
+  balloon: { en: 'Balloon', zh: '热气球' },
+  steamship: { en: 'Steamship', zh: '轮船' },
+};
+
 export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps) {
   const player = state.playerFaction;
   const faction = state.factions[player];
@@ -42,6 +55,9 @@ export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps)
     .sort((a, b) => Math.max(b.intellect, b.politics) - Math.max(a.intellect, a.politics));
 
   const [researcherId, setResearcherId] = useState<string>(myActiveHeroes[0]?.id || '');
+  const [selectedTech, setSelectedTech] = useState<TechId>(
+    () => TECH_ORDER.find((tid) => !state.chrono.unlockedTechs.includes(tid)) ?? TECH_ORDER[0]
+  );
   const selectedResearcher = myActiveHeroes.find((h) => h.id === researcherId) || myActiveHeroes[0];
 
   const rivals = (['wei', 'shu', 'wu'] as PlayableFactionId[]).filter((f) => f !== player);
@@ -52,14 +68,14 @@ export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps)
   return (
     <div className="p-3.5 space-y-3 overflow-y-auto h-full">
       {/* Top Status Banner */}
-      <div className="rounded-xl bg-slate-950/80 border border-cyan-500/30 p-3 space-y-2">
+      <div className="rounded-xl bg-slate-950/80 border border-chrono-500/30 p-3 space-y-2">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-200">
-            <FlaskConical className="w-4 h-4 text-cyan-400" />
+          <div className="flex items-center gap-1.5 text-xs font-bold text-chrono-200">
+            <FlaskConical className="w-4 h-4 text-chrono-400" />
             <span>{lang === 'zh' ? '穿越者格物工坊' : 'Chrono Modern Tech Lab'}</span>
           </div>
-          <div className="flex items-center gap-1 text-xs font-bold text-cyan-200 bg-cyan-500/15 border border-cyan-400/40 px-2.5 py-0.5 rounded-full">
-            <Lightbulb className="w-3.5 h-3.5 text-cyan-300" />
+          <div className="flex items-center gap-1 text-xs font-bold text-chrono-200 bg-chrono-500/15 border border-chrono-400/40 px-2.5 py-0.5 rounded-full">
+            <Lightbulb className="w-3.5 h-3.5 text-chrono-300" />
             <span>
               {state.chrono.innovationPoints}{' '}
               {lang === 'zh' ? '灵感' : 'Innovation'}
@@ -113,9 +129,45 @@ export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps)
         )}
       </div>
 
-      {/* Tech Cards */}
-      <div className="space-y-2.5">
-        {TECH_ORDER.map((tid) => {
+      {/* All of it as one picture: a plum branch whose blossoms are what has been built */}
+      <div className="paper-sheet rounded-sm px-2 pt-1 pb-0.5">
+        <TechTree
+          selected={selectedTech}
+          onSelect={setSelectedTech}
+          nodes={TECH_ORDER.map((tid) => {
+            const tech = MODERN_TECHS[tid];
+            const unlocked = state.chrono.unlockedTechs.includes(tid);
+            const affordable =
+              state.chrono.techFrozenTurns === 0 &&
+              state.chrono.innovationPoints >= tech.innovationCost &&
+              faction.gold >= getTechEffectiveGoldCost(tid, selectedResearcher);
+            return {
+              id: tid,
+              tier: tech.tier,
+              label: TECH_SHORT[tid][lang === 'zh' ? 'zh' : 'en'],
+              state: unlocked ? 'bloomed' : affordable ? 'ready' : 'bud',
+            };
+          })}
+        />
+        <div className="flex items-center justify-center gap-4 pb-1 text-[10px] text-[#3a2b14]">
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#e18a77] border border-[#a53323]" />
+            {lang === 'zh' ? '已研造' : 'Built'}
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#c2432f] ring-1 ring-[#b98d38] ring-offset-1 ring-offset-[#e6dbc0]" />
+            {lang === 'zh' ? '可研造' : 'Within reach'}
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#6b2a22]" />
+            {lang === 'zh' ? '尚不可及' : 'Out of reach'}
+          </span>
+        </div>
+      </div>
+
+      {/* The discovery in hand */}
+      <div key={selectedTech} className="anim-rise space-y-2.5">
+        {[selectedTech].map((tid) => {
           const tech = MODERN_TECHS[tid];
           const unlocked = state.chrono.unlockedTechs.includes(tid);
           const goldCost = getTechEffectiveGoldCost(tid, selectedResearcher);
@@ -131,7 +183,7 @@ export function TechLabPanel({ state, lang, onResearchTech }: TechLabPanelProps)
               className={`rounded-xl border overflow-hidden transition ${
                 unlocked
                   ? 'bg-emerald-950/25 border-emerald-500/50 shadow-[0_0_16px_rgba(16,185,129,0.14)]'
-                  : 'bg-[#12100d]/90 border-white/10 hover:border-cyan-400/35'
+                  : 'bg-[#12100d]/90 border-white/10 hover:border-chrono-400/35'
               }`}
             >
               {/* Studio-Painted 16:9 Tech Illustration Banner */}

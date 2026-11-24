@@ -5,6 +5,7 @@ import type {
   Language,
   PlayableFactionId,
 } from '../../src/game/types.js';
+import { VICTORY_CITY_TARGET } from '../../src/game/data.js';
 
 const RULER_PERSONAS: Record<PlayableFactionId, { en: string; zh: string }> = {
   wei: {
@@ -29,7 +30,7 @@ export function summarizeGameStateForAI(state: GameState, lang: Language): strin
     const cityList = owned
       .map(
         (c) =>
-          `${lang === 'zh' ? c.name.zh : c.name.en}(id:${c.id}, troops:${c.troops}, def:${c.defense}, dev:${c.development}, terrain:${c.terrain}, neighbors:[${c.neighbors.join(',')}])`
+          `${lang === 'zh' ? c.name.zh : c.name.en}(id:${c.id}, province:${c.province}, troops:${c.troops}, def:${c.defense}, dev:${c.development}, terrain:${c.terrain}, neighbors:[${c.neighbors.join(',')}])`
       )
       .join('; ');
     const rivalTechs =
@@ -43,7 +44,7 @@ export function summarizeGameStateForAI(state: GameState, lang: Language): strin
     .filter((c) => c.owner === 'neutral')
     .map(
       (c) =>
-        `${lang === 'zh' ? c.name.zh : c.name.en}(id:${c.id}, troops:${c.troops}, def:${c.defense}, neighbors:[${c.neighbors.join(',')}])`
+        `${lang === 'zh' ? c.name.zh : c.name.en}(id:${c.id}, province:${c.province}, troops:${c.troops}, def:${c.defense}, neighbors:[${c.neighbors.join(',')}])`
     )
     .join('; ');
 
@@ -66,6 +67,7 @@ export function summarizeGameStateForAI(state: GameState, lang: Language): strin
 
   return [
     `Turn ${state.turn} (${state.year} AD, ${state.season}). Player is a Time-Traveler ("Chrono-Strategist") advising ${state.playerFaction.toUpperCase()}.`,
+    `Map: ${Object.keys(state.cities).length} cities in 11 Han provinces; a realm that holds ${VICTORY_CITY_TARGET} unifies the land. Armies move only between neighbouring cities.`,
     `Chrono Status: LordTrust=${state.chrono.trust}/100, CourtSuspicion=${state.chrono.suspicion}/100, TimelineDivergence=${state.chrono.divergence}%, CoalitionActive=${state.chrono.coalitionActive}, PlayerModernTech=[${state.chrono.unlockedTechs.join(',') || 'none'}].`,
     `Wandering Heroes: ${wandering || 'none'}.`,
     `Factions:`,

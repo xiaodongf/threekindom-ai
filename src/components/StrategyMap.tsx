@@ -64,6 +64,13 @@ interface StrategyMapProps {
   onInspectHero?: (heroId: string) => void;
   /** True while a battle or duel covers the map, so the 3D view can stop drawing. */
   paused?: boolean;
+  /** A march being planned, to be drawn before it is ordered. */
+  previewRoute?: {
+    fromCityId: string;
+    toCityId: string;
+    pincerFromCityId?: string;
+    coverRightPx?: number;
+  } | null;
 }
 
 const FACTION_PALETTE: Record<
@@ -118,6 +125,9 @@ const ELEVATION_STYLE: Record<
   hills: { fill: '#16423c', opacity: 0.46 },
 };
 
+/** City markers on the flat drawing are shrunk so thirty-two of them stand clear of each other. */
+const FLAT_CITY_SCALE = 0.7;
+
 function getQuadraticBezierControl(a: City, b: City, extraCurve = false): { cx: number; cy: number } {
   const mx = (a.x + b.x) / 2;
   const my = (a.y + b.y) / 2;
@@ -164,6 +174,7 @@ export function StrategyMap({
   onQuickTargetEnemy,
   onInspectHero,
   paused = false,
+  previewRoute = null,
 }: StrategyMapProps) {
   const cities = Object.values(state.cities);
   const selectedCity = selectedCityId ? state.cities[selectedCityId] : null;
@@ -463,6 +474,7 @@ export function StrategyMap({
             viewMode={viewMode}
             showRealms={showTerritory}
             paused={paused}
+            previewRoute={previewRoute}
             onWebGLFallback={() => setMapMode('2d')}
           />
         ) : (
@@ -722,7 +734,7 @@ export function StrategyMap({
                           key={`wash3d-${city.id}`}
                           cx={city.x}
                           cy={city.y}
-                          r={city.isCapital ? 135 : 110}
+                          r={city.isCapital ? 104 : 84}
                           fill={`url(#wash-${city.owner})`}
                         />
                       ))}
@@ -1009,7 +1021,7 @@ export function StrategyMap({
                 return (
                   <g
                     key={city.id}
-                    transform={`translate(${city.x}, ${city.y})`}
+                    transform={`translate(${city.x}, ${city.y}) scale(${FLAT_CITY_SCALE})`}
                     onClick={() => {
                       if (dragStart.current.moved) return;
                       if (isStrikeTarget) {

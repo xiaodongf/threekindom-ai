@@ -1,8 +1,9 @@
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
   Anchor,
   Bomb,
   Bot,
+  ChevronRight,
   Coins,
   Eye,
   Flame,
@@ -57,6 +58,12 @@ export interface ExecuteMilitaryPayload {
   battleMode?: BattleCommandMode;
 }
 
+export interface OrderRoutePreview {
+  fromCityId: string;
+  toCityId: string;
+  pincerFromCityId?: string;
+}
+
 interface MilitaryModalProps {
   state: GameState;
   lang: Language;
@@ -65,6 +72,8 @@ interface MilitaryModalProps {
   initialAction?: MilitaryActionType;
   onCancel: () => void;
   onExecute: (payload: ExecuteMilitaryPayload) => void;
+  /** Called with the march being planned (and with null on close), so the map can show it. */
+  onPreviewRoute?: (route: OrderRoutePreview | null) => void;
 }
 
 export function MilitaryModal({
@@ -75,6 +84,7 @@ export function MilitaryModal({
   initialAction,
   onCancel,
   onExecute,
+  onPreviewRoute,
 }: MilitaryModalProps) {
   const player = state.playerFaction;
   const playerFaction = state.factions[player];
@@ -127,6 +137,24 @@ export function MilitaryModal({
     usePincer && actionType === 'assault' && activePincerCity && maxPincerTroops >= 1000
       ? Math.min(Math.max(1000, pincerTroops), maxPincerTroops)
       : 0;
+
+  // The route under consideration is drawn on the map while the sheet is open
+  const previewFromId = activeFromCity?.id;
+  const previewPincerId =
+    usePincer && actionType === 'assault' && clampedPincerTroops > 0 ? activePincerCity?.id : undefined;
+  useEffect(() => {
+    onPreviewRoute?.(
+      previewFromId
+        ? { fromCityId: previewFromId, toCityId: targetCityId, pincerFromCityId: previewPincerId }
+        : null
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewFromId, previewPincerId, targetCityId]);
+  useEffect(
+    () => () => onPreviewRoute?.(null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   const [tactic, setTactic] = useState<TacticId>(
     targetCity.terrain === 'river'
@@ -288,8 +316,14 @@ export function MilitaryModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4">
-      <div className="ink-panel gold-border-glow rounded-2xl max-w-2xl w-full p-5 sm:p-6 space-y-4 max-h-[93vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <button
+        type="button"
+        aria-label={lang === 'zh' ? '取消' : 'Cancel'}
+        onClick={onCancel}
+        className="flex-1 cursor-default bg-gradient-to-r from-transparent via-black/10 to-black/50"
+      />
+      <div className="anim-sheet-in ink-panel border-y-0 border-r-0 h-full w-[min(600px,100vw)] p-5 sm:p-6 space-y-4 overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-700/70 pb-3">
           <div className="flex items-center gap-2.5">
@@ -590,10 +624,10 @@ export function MilitaryModal({
               <div className="rounded-xl bg-slate-900/75 border border-slate-700/80 p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5">
-                    <HeroAvatar hero={leadHero} size="sm" showLevel />
-                    {deputyHero && <HeroAvatar hero={deputyHero} size="sm" showLevel />}
+                    <HeroAvatar hero={leadHero} size="lg" showLevel />
+                    {deputyHero && <HeroAvatar hero={deputyHero} size="md" showLevel />}
                     <div>
-                      <div className="text-xs font-bold text-white">
+                      <div className="font-brush text-lg font-bold text-slate-50 leading-tight">
                         {tLoc(leadHero.name, lang)}
                         {deputyHero ? ` + ${tLoc(deputyHero.name, lang)}` : ''}
                       </div>
@@ -760,6 +794,46 @@ export function MilitaryModal({
                     style={{ width: `${preview.estimatedWinChance}%` }}
                   />
                 </div>
+                {activeFromCity && (
+                  <div className="border-y border-amber-400/15 divide-y divide-amber-400/10 text-[12px]">
+                    {(
+                      [
+                        [
+                          lang === 'zh'
+                            ? `${activeFromCity.name.zh}留守`
+                            : `${activeFromCity.name.en} garrison`,
+                          activeFromCity.troops,
+                          Math.max(0, activeFromCity.troops - clampedTroops),
+                          'text-slate-50',
+                        ],
+                        [
+                          lang === 'zh' ? '出征之师' : 'Your army',
+                          clampedTroops + clampedPincerTroops,
+                          Math.max(
+                            0,
+                            clampedTroops + clampedPincerTroops - (preview.expectedAttackerLosses ?? 0)
+                          ),
+                          'text-emerald-300',
+                        ],
+                        [
+                          lang === 'zh' ? `${targetCity.name.zh}守军` : `${targetCity.name.en} defenders`,
+                          targetCity.troops,
+                          Math.max(0, targetCity.troops - (preview.expectedDefenderLosses ?? 0)),
+                          'text-rose-300',
+                        ],
+                      ] as Array<[string, number, number, string]>
+                    ).map(([label, before, after, tone]) => (
+                      <div key={label} className="flex items-baseline justify-between gap-3 py-1">
+                        <span className="text-slate-300">{label}</span>
+                        <span className="flex items-baseline gap-2 tabular-nums">
+                          <span className="text-slate-500">{before.toLocaleString()}</span>
+                          <ChevronRight className="w-3 h-3 self-center text-amber-300/70" />
+                          <span className={`text-sm font-bold ${tone}`}>{after.toLocaleString()}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {preview.samples ? (
                   <p className="text-[10px] text-slate-400 leading-snug">
                     {lang === 'zh'

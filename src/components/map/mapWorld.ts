@@ -16,7 +16,6 @@ export const WORLD_H = 66;
 const HEIGHT_MAX_M = 6500;
 /** World height of the tallest relief; real scale would read as noise, so relief is exaggerated. */
 const RELIEF_TOP = 7.4;
-export const MAX_CITIES = 24;
 
 export function mapToWorld(x: number, y: number): { wx: number; wz: number } {
   return { wx: (x / MAP_WIDTH - 0.5) * WORLD_W, wz: (y / MAP_HEIGHT - 0.5) * WORLD_H };
@@ -34,12 +33,17 @@ export interface MapWorld {
   maskTex: THREE.DataTexture;
   /** RG8, nearest: R = index of the city that holds this ground, G = index across the nearest border. */
   provinceTex: THREE.DataTexture;
-  /** R8, linear: distance to the nearest province border (1 = 48 map units or more). */
+  /**
+   * RG8, linear, 1 = 48 map units or more: R = distance to the nearest border between two cities,
+   * G = distance to the nearest border between two provinces (州).
+   */
   borderTex: THREE.DataTexture;
   texW: number;
   texH: number;
-  /** City order used by the province texture and the shader's city arrays. */
+  /** City order used by the province texture and the shader's city table. */
   cityIds: string[];
+  /** Index of the city whose ground a map coordinate falls on. */
+  cityIndexAt(mapX: number, mapY: number): number;
   /** World height of the terrain at a map coordinate (before any paper-mode flattening). */
   heightAt(mapX: number, mapY: number): number;
   /** Metres above sea level at a map coordinate. */
@@ -201,14 +205,15 @@ export async function buildMapWorld(cities: City[], bag: DisposeBag): Promise<Ma
   heightTex.minFilter = THREE.LinearFilter;
   heightTex.needsUpdate = true;
 
-  // --- provinces: each piece of ground belongs to its nearest city
-  const cityIds = cities.slice(0, MAX_CITIES).map((c) => c.id);
+  // --- each piece of ground belongs to its nearest city, and through the city to a province
+  const cityIds = cities.map((c) => c.id);
   const pw = 512;
   const ph = Math.round((pw * MAP_HEIGHT) / MAP_WIDTH);
   const province = new Uint8Array(pw * ph * 2);
-  const border = new Uint8Array(pw * ph);
-  const cx = cities.slice(0, MAX_CITIES).map((c) => c.x);
-  const cy = cities.slice(0, MAX_CITIES).map((c) => c.y);
+  const border = new Uint8Array(pw * ph * 2);
+  const cx = cities.map((c) => c.x);
+  const cy = cities.map((c) => c.y);
+  const cprov = cities.map((c) => c.province);
   for (let j = 0; j < ph; j++) {
     const my = ((j + 0.5) / ph) * MAP_HEIGHT;
     for (let i = 0; i < pw; i++) {
@@ -223,8 +228,10 @@ export async function buildMapWorld(cities: City[], bag: DisposeBag): Promise<Ma
         }
       }
       // Distance to the bisector with every other city; the smallest is the nearest border.
+      // The nearest bisector with a city of another province is the nearest province border.
       let nb = best;
       let nbDist = Infinity;
+      let provDist = Infinity;
       for (let k = 0; k < cx.length; k++) {
         if (k === best) continue;
         const dk = (mx - cx[k]) ** 2 + (my - cy[k]) ** 2;
@@ -234,18 +241,20 @@ export async function buildMapWorld(cities: City[], bag: DisposeBag): Promise<Ma
           nbDist = dist;
           nb = k;
         }
+        if (cprov[k] !== cprov[best] && dist < provDist) provDist = dist;
       }
       const o = j * pw + i;
       province[o * 2] = best;
       province[o * 2 + 1] = nb;
-      border[o] = Math.round(Math.min(1, nbDist / 48) * 255);
+      border[o * 2] = Math.round(Math.min(1, nbDist / 48) * 255);
+      border[o * 2 + 1] = Math.round(Math.min(1, provDist / 48) * 255);
     }
   }
   const provinceTex = bag.add(new THREE.DataTexture(province, pw, ph, THREE.RGFormat));
   provinceTex.magFilter = THREE.NearestFilter;
   provinceTex.minFilter = THREE.NearestFilter;
   provinceTex.needsUpdate = true;
-  const borderTex = bag.add(new THREE.DataTexture(border, pw, ph, THREE.RedFormat));
+  const borderTex = bag.add(new THREE.DataTexture(border, pw, ph, THREE.RGFormat));
   borderTex.magFilter = THREE.LinearFilter;
   borderTex.minFilter = THREE.LinearFilter;
   borderTex.needsUpdate = true;
@@ -274,6 +283,11 @@ export async function buildMapWorld(cities: City[], bag: DisposeBag): Promise<Ma
     texW,
     texH,
     cityIds,
+    cityIndexAt: (x, y) => {
+      const i = Math.max(0, Math.min(pw - 1, Math.floor((x / MAP_WIDTH) * pw)));
+      const j = Math.max(0, Math.min(ph - 1, Math.floor((y / MAP_HEIGHT) * ph)));
+      return province[(j * pw + i) * 2];
+    },
     heightAt: (x, y) => bilinear(worldY, x, y),
     metresAt: (x, y) => bilinear(metres, x, y),
     isLand: (x, y) => bilinear(landSoft, x, y) > 0.5,

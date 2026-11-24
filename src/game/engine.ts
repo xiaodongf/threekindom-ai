@@ -1,9 +1,12 @@
 import {
   ACTION_COSTS,
-  MAX_ACTION_POINTS,
+  COALITION_CITY_THRESHOLD,
+  NEUTRAL_GARRISON_CAP,
   TACTICS,
   VICTORY_CITY_TARGET,
   YANGTZE_PORT_IDS,
+  isWithinRiverStrike,
+  ordersForRealmSize,
   createInitialCities,
   createInitialDiplomacy,
   createInitialFactions,
@@ -109,14 +112,18 @@ export function createNewGame(
     },
   };
 
+  const startingOrders = ordersForRealmSize(
+    Object.values(cities).filter((c) => c.owner === playerFaction).length
+  );
+
   return {
     turn: 1,
     year: 214,
     season: 'spring',
     playerFaction,
     playerProfile,
-    actionPoints: MAX_ACTION_POINTS,
-    maxActionPoints: MAX_ACTION_POINTS,
+    actionPoints: startingOrders,
+    maxActionPoints: startingOrders,
     factions,
     cities,
     generals,
@@ -151,8 +158,11 @@ export function canSeeHeroWeakness(state: GameState): boolean {
   );
 }
 
+/** Orders the player may give in a season: realm size, the lord's trust and signal balloons. */
 export function getEffectiveMaxAP(state: GameState): number {
-  let ap = MAX_ACTION_POINTS;
+  let ap = ordersForRealmSize(
+    Object.values(state.cities).filter((c) => c.owner === state.playerFaction).length
+  );
   if (state.chrono.trust >= 80) ap += 1;
   if (state.chrono.unlockedTechs.includes('balloon')) ap += 1;
   return ap;
@@ -184,23 +194,38 @@ export function getFactionPrisoners(state: GameState, faction: PlayableFactionId
   );
 }
 
-export function getFactionIncome(
+/** Seasonal income city by city, so the interface can explain the total it shows. */
+export function getFactionIncomeBreakdown(
   state: GameState,
   faction: PlayableFactionId
-): { gold: number; food: number } {
+): Array<{ cityId: string; gold: number; food: number; governorBonus: number }> {
   const cities = getFactionCities(state, faction);
   const multiplier = faction === 'wei' ? 1.2 : faction === 'wu' ? 1.1 : 1.0;
   const foodTechMult = factionHasTech(state, faction, 'agriculture') ? 1.35 : 1.0;
   const goldTechMult = factionHasTech(state, faction, 'printing') ? 1.1 : 1.0;
 
-  let gold = 0;
-  let food = 0;
-  for (const city of cities) {
+  return cities.map((city) => {
     const stationed = getCityGenerals(state, city.id);
     const bestPol = stationed.reduce((max, g) => Math.max(max, g.politics), 50);
     const govBonus = 1 + Math.max(0, bestPol - 60) / 260; // up to +15% from top statesman!
-    gold += Math.round((city.baseGold + city.development * 45) * multiplier * govBonus * goldTechMult);
-    food += Math.round((city.baseFood + city.development * 40) * multiplier * govBonus * foodTechMult);
+    return {
+      cityId: city.id,
+      gold: Math.round((city.baseGold + city.development * 45) * multiplier * govBonus * goldTechMult),
+      food: Math.round((city.baseFood + city.development * 40) * multiplier * govBonus * foodTechMult),
+      governorBonus: govBonus - 1,
+    };
+  });
+}
+
+export function getFactionIncome(
+  state: GameState,
+  faction: PlayableFactionId
+): { gold: number; food: number } {
+  let gold = 0;
+  let food = 0;
+  for (const row of getFactionIncomeBreakdown(state, faction)) {
+    gold += row.gold;
+    food += row.food;
   }
   return { gold, food };
 }
@@ -999,7 +1024,7 @@ export interface AttackOptions {
 }
 
 export function isYangtzePort(cityId: string): boolean {
-  return (YANGTZE_PORT_IDS as readonly string[]).includes(cityId);
+  return YANGTZE_PORT_IDS.includes(cityId);
 }
 
 export function canLaunchRiverStrike(
@@ -1022,7 +1047,7 @@ export function getEligibleStagingCities(
   if (mode === 'river') {
     if (!isYangtzePort(targetCityId) || !canLaunchRiverStrike(state, factionId)) return [];
     return owned
-      .filter((c) => isYangtzePort(c.id) && c.id !== targetCityId && c.troops > 2000)
+      .filter((c) => isWithinRiverStrike(c.id, targetCityId) && c.troops > 2000)
       .sort((a, b) => b.troops - a.troops);
   }
 
@@ -1049,7 +1074,9 @@ export function getStrikeableEnemyCityIds(
         (nid) => state.cities[nid]?.owner === factionId
       );
       if (hasAdjacentStaging) return true;
-      if (riverCapable && ownedPorts.length > 0 && isYangtzePort(city.id)) return true;
+      if (riverCapable && ownedPorts.some((port) => isWithinRiverStrike(port.id, city.id))) {
+        return true;
+      }
       return false;
     })
     .map((c) => c.id);
@@ -1081,8 +1108,7 @@ export function buildAssaultConfig(
 
   const isValidRiver =
     Boolean(options.isRiverStrike) &&
-    isYangtzePort(fromCityId) &&
-    isYangtzePort(toCityId) &&
+    isWithinRiverStrike(fromCityId, toCityId) &&
     canLaunchRiverStrike(state, attackerFaction) &&
     state.factions[attackerFaction].food >= ACTION_COSTS.riverStrikeFood;
 
@@ -1499,17 +1525,30 @@ export function applyTacticalBattleOutcome(
     updatedGenerals[d.id] = d;
   }
 
-  if (captured && defenderFaction !== 'neutral') {
+  if (captured) {
+    // The lord of a free city has no realm to fall back on: he is taken, or left masterless in
+    // his old city where he can be recruited.
     const fallbackCity =
-      withdrawCity ??
-      Object.values(updatedCities).find((c) => c.owner === defenderFaction && c.id !== toCity.id);
+      defenderFaction === 'neutral'
+        ? undefined
+        : (withdrawCity ??
+          Object.values(updatedCities).find(
+            (c) => c.owner === defenderFaction && c.id !== toCity.id
+          ));
     const defendersInCity = Object.values(updatedGenerals).filter(
-      (g) => g.faction === defenderFaction && g.cityId === toCity.id && g.status === 'active'
+      (g) =>
+        g.faction === defenderFaction &&
+        g.cityId === toCity.id &&
+        (g.status === 'active' || g.status === 'wounded')
     );
 
     for (const defHero of defendersInCity) {
       const encircledOrSurrendered = outcome.surrenderedOrEncircledHeroIds.includes(defHero.id);
-      const captureChance = !fallbackCity
+      const captureChance = defenderFaction === 'neutral'
+        ? encircledOrSurrendered
+          ? 0.82
+          : 0.55
+        : !fallbackCity
         ? 0.9
         : encircledOrSurrendered
           ? 0.82
@@ -2471,7 +2510,7 @@ export function advanceSeason(state: GameState): GameState {
     !coalitionActive &&
     rivals.length === 2 &&
     (state.chrono.divergence >= 60 ||
-      playerCityCount >= 6 ||
+      playerCityCount >= COALITION_CITY_THRESHOLD ||
       state.chrono.unlockedTechs.length >= 3)
   ) {
     coalitionActive = true;
@@ -2504,7 +2543,7 @@ export function advanceSeason(state: GameState): GameState {
   // 6. Natural neutral garrison replenishment
   const nextCities = { ...state.cities };
   for (const city of Object.values(nextCities)) {
-    if (city.owner === 'neutral' && city.troops < 9000) {
+    if (city.owner === 'neutral' && city.troops < NEUTRAL_GARRISON_CAP) {
       nextCities[city.id] = { ...city, troops: city.troops + 300 };
     }
   }

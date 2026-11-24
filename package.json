@@ -13,6 +13,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "optimize:art": "node scripts/optimize-art.mjs",
+    "portraits:standin": "tsx scripts/make-standin-portraits.ts",
     "build:terrain": "node scripts/build-terrain.mjs"
   },
   "dependencies": {

@@ -26,6 +26,35 @@ function pickBestTactic(target: City, factionId: PlayableFactionId): TacticId {
   return 'assault';
 }
 
+/**
+ * Roads between each of a realm's cities and its nearest border: 0 for a city that touches
+ * ground the realm does not hold, 1 for the city behind it, and so on.
+ */
+function frontDistances(state: GameState, factionId: PlayableFactionId): Map<string, number> {
+  const dist = new Map<string, number>();
+  let frontier: string[] = [];
+  for (const city of Object.values(state.cities)) {
+    if (city.owner !== factionId) continue;
+    if (city.neighbors.some((n) => state.cities[n] && state.cities[n].owner !== factionId)) {
+      dist.set(city.id, 0);
+      frontier.push(city.id);
+    }
+  }
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const nid of state.cities[id].neighbors) {
+        const other = state.cities[nid];
+        if (!other || other.owner !== factionId || dist.has(nid)) continue;
+        dist.set(nid, (dist.get(id) ?? 0) + 1);
+        next.push(nid);
+      }
+    }
+    frontier = next;
+  }
+  return dist;
+}
+
 export function generateHeuristicAdvisorReply(
   state: GameState,
   question: string,
@@ -380,29 +409,43 @@ export function generateHeuristicAITurn(
     };
   }
 
-  let bestAttack: { from: City; to: City; score: number } | null = null;
+  // 1. March on a neighbour when the odds are good, but never strip a border city bare: enough
+  //    men stay behind to hold the walls against the strongest enemy garrison in reach.
+  const mayAttack = (owner: City['owner']): boolean => {
+    if (owner === factionId) return false;
+    if (owner === 'neutral') return true;
+    const rel = getRelationBetween(state, factionId, owner);
+    return !(rel && rel.truceTurnsLeft > 0);
+  };
+
+  let bestAttack: { from: City; to: City; score: number; ratio: number } | null = null;
   for (const from of owned) {
     if (from.troops < 5500) continue;
     for (const nid of from.neighbors) {
       const to = state.cities[nid];
-      if (!to || to.owner === factionId) continue;
+      if (!to || !mayAttack(to.owner)) continue;
 
-      if (to.owner !== 'neutral') {
-        const rel = getRelationBetween(state, factionId, to.owner);
-        if (rel && rel.truceTurnsLeft > 0) continue;
+      let threat = 0;
+      for (const oid of from.neighbors) {
+        const other = state.cities[oid];
+        if (!other || other.id === to.id || other.owner === 'neutral') continue;
+        if (mayAttack(other.owner)) threat = Math.max(threat, other.troops);
       }
+      const guard = Math.max(1800, threat * 0.5);
+      const ratio = Math.min(0.7, (from.troops - guard) / from.troops);
+      if (ratio < 0.45) continue;
 
-      const sendTroops = from.troops * 0.68;
+      const sendTroops = from.troops * ratio;
       const defStrength = to.troops * (1 + to.defense * 0.11);
-      const ratio = sendTroops / Math.max(1000, defStrength);
+      const odds = sendTroops / Math.max(1000, defStrength);
 
       const neutralBonus = to.owner === 'neutral' ? 0.18 : 0;
       const coalitionFocus =
         state.chrono.coalitionActive && to.owner === state.playerFaction ? 0.28 : 0;
-      const score = ratio + neutralBonus + coalitionFocus;
+      const score = odds + neutralBonus + coalitionFocus;
 
       if (score >= 1.04 && (!bestAttack || score > bestAttack.score)) {
-        bestAttack = { from, to, score };
+        bestAttack = { from, to, score, ratio };
       }
     }
   }
@@ -417,7 +460,7 @@ export function generateHeuristicAITurn(
         cityId: bestAttack.from.id,
         targetCityId: bestAttack.to.id,
         tactic,
-        troopsRatio: 0.68,
+        troopsRatio: Number(bestAttack.ratio.toFixed(2)),
       },
       proclamation:
         lang === 'zh'
@@ -479,9 +522,41 @@ export function generateHeuristicAITurn(
     };
   }
 
+  // 2. Rear garrisons march toward the border: a city with no enemy in reach keeps a guard and
+  //    sends the rest one road closer to the front.
+  const toFront = frontDistances(state, factionId);
+  const rearSurplus = owned
+    .filter((c) => (toFront.get(c.id) ?? 0) >= 1 && c.troops >= 6500)
+    .sort((a, b) => b.troops - a.troops)[0];
+
+  if (rearSurplus) {
+    const here = toFront.get(rearSurplus.id) ?? 0;
+    const forward = rearSurplus.neighbors
+      .map((id) => state.cities[id])
+      .filter((c): c is City => Boolean(c && c.owner === factionId))
+      .filter((c) => (toFront.get(c.id) ?? 0) < here)
+      .sort((a, b) => a.troops - b.troops)[0];
+    if (forward) {
+      return {
+        action: {
+          type: 'reinforce',
+          cityId: rearSurplus.id,
+          targetCityId: forward.id,
+          troopsRatio: 0.45,
+        },
+        proclamation:
+          lang === 'zh'
+            ? `调遣${cityName(rearSurplus, lang)}偏师星夜驰援${cityName(forward, lang)}！`
+            : `Dispatch reserves from ${cityName(rearSurplus, lang)} to reinforce ${cityName(forward, lang)}!`,
+        reasoning: 'Move a rear garrison one road closer to the border.',
+      };
+    }
+  }
+
+  // 3. Levy where the border is thinnest
   const recruitGold = factionId === 'wei' ? 153 : 180;
   const frontline = owned
-    .filter((c) => c.neighbors.some((n) => state.cities[n]?.owner !== factionId))
+    .filter((c) => (toFront.get(c.id) ?? 0) === 0)
     .sort((a, b) => a.troops - b.troops);
 
   if (faction.gold >= recruitGold && faction.food >= 140 && frontline.length > 0) {
@@ -494,36 +569,6 @@ export function generateHeuristicAITurn(
           : `Levy fresh regiments in ${cityName(targetCity, lang)} — war draws near!`,
       reasoning: `Bolster frontline garrison in ${cityName(targetCity, lang)}.`,
     };
-  }
-
-  const interiorSurplus = owned
-    .filter(
-      (c) =>
-        c.troops >= 9500 &&
-        c.neighbors.every((n) => state.cities[n]?.owner === factionId)
-    )
-    .sort((a, b) => b.troops - a.troops)[0];
-
-  if (interiorSurplus) {
-    const needyNeighbor = interiorSurplus.neighbors
-      .map((id) => state.cities[id])
-      .filter((c): c is City => Boolean(c && c.owner === factionId))
-      .sort((a, b) => a.troops - b.troops)[0];
-    if (needyNeighbor) {
-      return {
-        action: {
-          type: 'reinforce',
-          cityId: interiorSurplus.id,
-          targetCityId: needyNeighbor.id,
-          troopsRatio: 0.45,
-        },
-        proclamation:
-          lang === 'zh'
-            ? `调遣${cityName(interiorSurplus, lang)}偏师星夜驰援${cityName(needyNeighbor, lang)}！`
-            : `Dispatch reserves from ${cityName(interiorSurplus, lang)} to reinforce ${cityName(needyNeighbor, lang)}!`,
-        reasoning: 'Redistribute rear garrison to forward base.',
-      };
-    }
   }
 
   const developable = [...owned]

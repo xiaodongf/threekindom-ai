@@ -11,6 +11,7 @@ import type {
   TravelerAvatarId,
 } from '../game/types.js';
 import { UI_TEXT, tLoc } from '../i18n/translations.js';
+import { parallaxProps } from '../utils/parallax.js';
 import { HeroAvatar } from './HeroAvatar.js';
 import { Seal } from './ui/Seal.js';
 import { Art } from './ui/Art.js';
@@ -123,6 +124,7 @@ export function FactionSelect({
               key={fid}
               type="button"
               onClick={() => onSelectFaction(fid, currentProfile)}
+              {...parallaxProps}
               style={{ animationDelay: `${idx * 90}ms` }}
               className="anim-rise group scroll-mount relative min-h-[540px] md:min-h-0 overflow-hidden text-left cursor-pointer hover:-translate-y-1 hover:border-amber-300/80 focus-visible:-translate-y-1"
             >
@@ -130,7 +132,7 @@ export function FactionSelect({
               <Art
                 src={FACTION_ART[fid]}
                 alt=""
-                className="absolute inset-0 w-full h-full object-cover object-center opacity-40 theme-art-grade"
+                className="parallax-far absolute inset-0 w-full h-full object-cover object-center opacity-40 theme-art-grade"
               />
 
               {/* The lord: face first, waist-up */}
@@ -138,7 +140,7 @@ export function FactionSelect({
                 <Art
                   src={ruler.portrait}
                   alt={tLoc(ruler.name, lang)}
-                  className="absolute inset-x-0 top-0 w-full h-[66%] object-cover object-top theme-art-grade transition-transform duration-700 ease-out group-hover:scale-[1.035]"
+                  className="parallax absolute inset-x-0 top-0 w-full h-[66%] object-cover object-top theme-art-grade"
                   style={{
                     maskImage: 'linear-gradient(to bottom, #000 58%, transparent 100%)',
                     WebkitMaskImage: 'linear-gradient(to bottom, #000 58%, transparent 100%)',

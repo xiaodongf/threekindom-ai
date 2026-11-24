@@ -1,3 +1,4 @@
+import { createExpansionHeroes } from './heroesExpansion.js';
 import type { General, HeroBond } from './types.js';
 
 export const HERO_BONDS: Record<string, HeroBond> = {
@@ -111,9 +112,93 @@ export const HERO_BONDS: Record<string, HeroBond> = {
     combatBonus: 0.25,
     loyaltyBonus: 8,
   },
+  cao_xiahou: {
+    id: 'cao_xiahou',
+    name: { en: 'Blood of Cao & Xiahou', zh: '诸夏侯曹' },
+    desc: {
+      en: 'Two or more of Cao Cao, Xiahou Dun, Xiahou Yuan, Cao Ren, Cao Hong and Cao Zhang together: +16% combat power.',
+      zh: '曹操、夏侯惇、夏侯渊、曹仁、曹洪、曹彰任意两人以上同阵：宗亲同心，战力 +16%。',
+    },
+    memberIds: ['caocao', 'xiahoudun', 'xiahouyuan', 'caoren', 'caohong', 'caozhang'],
+    combatBonus: 0.16,
+    loyaltyBonus: 4,
+  },
+  five_elite: {
+    id: 'five_elite',
+    name: { en: 'Five Elite Generals', zh: '五子良将' },
+    desc: {
+      en: 'Two or more of Zhang Liao, Yue Jin, Yu Jin, Zhang He and Xu Huang together: +15% combat power.',
+      zh: '张辽、乐进、于禁、张郃、徐晃任意两人以上联手：战力 +15%。',
+    },
+    memberIds: ['zhangliao', 'yuejin', 'yujin', 'zhanghe', 'xuhuang'],
+    combatBonus: 0.15,
+    loyaltyBonus: 3,
+  },
+  tiger_vassals: {
+    id: 'tiger_vassals',
+    name: { en: 'Tiger Vassals of Jiangdong', zh: '江表虎臣' },
+    desc: {
+      en: 'Two or more of Cheng Pu, Huang Gai, Zhou Tai, Gan Ning and Ling Tong together: +16% combat power.',
+      zh: '程普、黄盖、周泰、甘宁、凌统任意两人以上并肩：战力 +16%。',
+    },
+    memberIds: ['chengpu', 'huanggai', 'zhoutai', 'ganning', 'lingtong'],
+    combatBonus: 0.16,
+    loyaltyBonus: 3,
+  },
+  jing_army: {
+    id: 'jing_army',
+    name: { en: 'Army of Jing', zh: '荆州军团' },
+    desc: {
+      en: 'Two or more of Guan Yu, Guan Ping and Liao Hua together: +15% combat power.',
+      zh: '关羽、关平、廖化任意两人以上同阵：战力 +15%。',
+    },
+    memberIds: ['guanyu', 'guanping', 'liaohua'],
+    combatBonus: 0.15,
+    loyaltyBonus: 4,
+  },
+  gates_of_shu: {
+    id: 'gates_of_shu',
+    name: { en: 'Gates of Shu', zh: '巴蜀门户' },
+    desc: {
+      en: 'Two or more of Yan Yan, Li Yan and Huo Jun together: +14% combat power.',
+      zh: '严颜、李严、霍峻任意两人以上协守：战力 +14%。',
+    },
+    memberIds: ['yanyan', 'liyan', 'huojun'],
+    combatBonus: 0.14,
+    loyaltyBonus: 3,
+  },
+  liang_riders: {
+    id: 'liang_riders',
+    name: { en: 'Riders of Liang', zh: '西凉铁骑' },
+    desc: {
+      en: 'Ma Chao & Han Sui riding together, as at Tong Pass: +18% combat power.',
+      zh: '马超与韩遂重修旧好、并辔而战，一如潼关：战力 +18%。',
+    },
+    memberIds: ['machao', 'hansui'],
+    combatBonus: 0.18,
+    loyaltyBonus: 3,
+  },
 };
 
+/**
+ * The full roster: the original thirty-six plus the commanders of the cities added with the
+ * 32-city map. Every general's `bondIds` is completed from HERO_BONDS, so a bond only has to be
+ * declared once.
+ */
 export function createInitialHeroes(): Record<string, General> {
+  const roster: Record<string, General> = { ...createCoreHeroes(), ...createExpansionHeroes() };
+  for (const bond of Object.values(HERO_BONDS)) {
+    for (const id of bond.memberIds) {
+      const hero = roster[id];
+      if (hero && !hero.bondIds.includes(bond.id)) {
+        roster[id] = { ...hero, bondIds: [...hero.bondIds, bond.id] };
+      }
+    }
+  }
+  return roster;
+}
+
+function createCoreHeroes(): Record<string, General> {
   return {
     // ===================== WEI (6) =====================
     caocao: {
@@ -1049,7 +1134,7 @@ export function createInitialHeroes(): Record<string, General> {
       politics: 46,
       charisma: 80,
       specialty: 'assault',
-      cityId: 'jianye',
+      cityId: 'lujiang',
       seal: '宁',
       level: 1,
       xp: 0,
@@ -1417,7 +1502,7 @@ export function createInitialHeroes(): Record<string, General> {
       politics: 66,
       charisma: 79,
       specialty: 'siege',
-      cityId: 'luoyang',
+      cityId: 'wan',
       seal: '晃',
       level: 1,
       xp: 0,
@@ -1478,7 +1563,7 @@ export function createInitialHeroes(): Record<string, General> {
       politics: 62,
       charisma: 88,
       specialty: 'assault',
-      cityId: 'kuaiji',
+      cityId: 'beihai',
       seal: '慈',
       level: 2,
       xp: 0,
@@ -1664,7 +1749,7 @@ export function createInitialHeroes(): Record<string, General> {
       politics: 68,
       charisma: 80,
       specialty: 'ambush',
-      cityId: 'changan',
+      cityId: 'chencang',
       seal: '郃',
       level: 2,
       xp: 0,
@@ -2158,7 +2243,7 @@ export function createInitialHeroes(): Record<string, General> {
       politics: 26,
       charisma: 60,
       specialty: 'assault',
-      cityId: 'luoyang',
+      cityId: 'xiapi',
       seal: '布',
       level: 3,
       xp: 0,
@@ -2219,7 +2304,7 @@ export function createInitialHeroes(): Record<string, General> {
       politics: 92,
       charisma: 72,
       specialty: 'ambush',
-      cityId: 'changan',
+      cityId: 'wuwei',
       seal: '诩',
       level: 2,
       xp: 0,

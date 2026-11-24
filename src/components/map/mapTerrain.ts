@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { MAP_HEIGHT, MAP_WIDTH } from '../../game/mapGeo.js';
 import type { FactionId } from '../../game/types.js';
 import type { DisposeBag } from '../duel/duelGeometry3D.js';
-import { MAX_CITIES, WORLD_H, WORLD_W, type MapWorld } from './mapWorld.js';
+import { WORLD_H, WORLD_W, type MapWorld } from './mapWorld.js';
 
 /** How much relief survives when the map is shown as a paper sheet. */
 export const PAPER_RELIEF = 0.16;
@@ -44,10 +44,12 @@ uniform float uTime;
 uniform float uPaper;
 uniform float uRealms;
 uniform float uSelected;
-uniform vec2 uCityPos[${MAX_CITIES}];
-uniform float uCityOwner[${MAX_CITIES}];
-uniform float uCityPrev[${MAX_CITIES}];
-uniform float uCityFlip[${MAX_CITIES}];
+// One column per city. Row 0: map x, map y, owner, previous owner. Row 1: time the owner
+// changed, province index. A table instead of uniform arrays, so the map can hold any number.
+uniform sampler2D uCities;
+// 0 = looking at cities, 1 = pulled back to the provinces
+uniform float uLevel;
+uniform float uFocusProvince;
 uniform vec3 uFaction[4];
 
 varying vec2 vUv;
@@ -174,32 +176,52 @@ void main() {
   vec2 pr = texture2D(uProvince, uv + warp).rg * 255.0;
   int me = int(pr.r + 0.5);
   int nb = int(pr.g + 0.5);
-  float bd = texture2D(uBorder, uv + warp).r;
-  float dCity = distance(mapXY, uCityPos[me]);
+  vec2 bdv = texture2D(uBorder, uv + warp).rg;
+  float bd = bdv.r;
+  float pbd = bdv.g;
+  vec4 meA = texelFetch(uCities, ivec2(me, 0), 0);
+  vec4 meB = texelFetch(uCities, ivec2(me, 1), 0);
+  vec4 nbA = texelFetch(uCities, ivec2(nb, 0), 0);
+  float dCity = distance(mapXY, meA.xy);
 
-  // A captured province takes its new colour as ink soaking outward from the city
-  float since = uTime - uCityFlip[me];
+  // A captured city's ground takes its new colour as ink soaking outward from the city
+  float since = uTime - meB.x;
   float front = since * 62.0;
   float soak = smoothstep(front - 22.0, front, dCity + (mottle - 0.5) * 36.0);
-  float ownMe = uCityOwner[me];
-  float prevMe = uCityPrev[me];
+  float ownMe = meA.z;
+  float prevMe = meA.w;
   vec3 realmCol = mix(factionColor(ownMe), factionColor(prevMe), soak);
   float held = mix(step(0.5, ownMe), step(0.5, prevMe), soak);
-  float ownNb = uCityOwner[nb];
+  float ownNb = nbA.z;
+  float frontier = step(0.5, abs(ownMe - ownNb));
 
-  float reach = (1.0 - smoothstep(105.0, 185.0, dCity)) * land * uRealms;
-  float rim = 1.0 - smoothstep(0.0, 0.34, bd);
+  // Seen from afar the washes run together into whole provinces
+  float reachLand = (1.0 - smoothstep(mix(105.0, 150.0, uLevel), mix(185.0, 250.0, uLevel), dCity)) * land;
+  float reach = reachLand * uRealms;
+  float rimCity = 1.0 - smoothstep(0.0, 0.34, bd);
+  float rimProvince = 1.0 - smoothstep(0.0, 0.34, pbd);
+  float rim = mix(rimCity, max(rimProvince, rimCity * frontier), uLevel);
   float fill = mix(0.1, 0.3, uPaper) + rim * mix(0.34, 0.4, uPaper);
   col = mix(col, mix(col, realmCol, 0.85) * (0.85 + 0.3 * shade * (1.0 - uPaper) + 0.15 * uPaper),
     fill * reach * mix(0.35, 1.0, held));
 
-  float frontier = step(0.5, abs(ownMe - ownNb));
+  // City borders are fine lines that fade when the view pulls back, unless two realms meet there
   float line = 1.0 - smoothstep(0.012, 0.05, bd);
   vec3 lineCol = mix(vec3(0.12, 0.11, 0.10), realmCol * 0.55, 0.5);
-  col = mix(col, lineCol, line * reach * mix(0.22, 0.85, frontier));
+  col = mix(col, lineCol, line * reach * mix(0.22, 0.85, frontier) * mix(1.0, mix(0.2, 1.0, frontier), uLevel));
+
+  // Province borders: one heavy brush line with a pale edge, strongest on the province map
+  float pline = 1.0 - smoothstep(0.022, 0.07, pbd);
+  float pedge = (1.0 - smoothstep(0.07, 0.15, pbd)) * (1.0 - pline);
+  float pstrength = mix(0.3, 0.92, uLevel) * reachLand * (0.86 + grain * 0.28);
+  col = mix(col, vec3(0.93, 0.88, 0.74), pedge * 0.2 * uLevel * reachLand);
+  col = mix(col, vec3(0.10, 0.085, 0.07), clamp(pline * pstrength, 0.0, 1.0));
 
   if (abs(float(me) - uSelected) < 0.5) {
-    col += vec3(0.10, 0.08, 0.02) * reach * (0.6 + 0.4 * rim);
+    col += vec3(0.10, 0.08, 0.02) * reach * (0.6 + 0.4 * rimCity) * (1.0 - 0.6 * uLevel);
+  }
+  if (abs(meB.y - uFocusProvince) < 0.5) {
+    col += vec3(0.085, 0.066, 0.02) * reachLand * uLevel * (0.55 + 0.45 * rimProvince);
   }
 
   // Distance haze quietens the far edge in the terrain view
@@ -222,9 +244,13 @@ export interface MapTerrain {
   setOwners(owners: FactionId[], time: number, animate: boolean): void;
 }
 
+/**
+ * `cities` are in the order of `world.cityIds`; `provinceIndex` is the number the shader knows
+ * each city's province by.
+ */
 export function buildMapTerrain(
   world: MapWorld,
-  cityPositions: Array<{ x: number; y: number }>,
+  cities: Array<{ x: number; y: number; provinceIndex: number }>,
   bag: DisposeBag
 ): MapTerrain {
   const geo = bag.add(new THREE.PlaneGeometry(WORLD_W, WORLD_H, 320, 211));
@@ -236,11 +262,20 @@ export function buildMapTerrain(
   );
   geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 4, 0), 62);
 
-  const pos: THREE.Vector2[] = [];
-  for (let i = 0; i < MAX_CITIES; i++) {
-    const c = cityPositions[i];
-    pos.push(new THREE.Vector2(c ? c.x : -9999, c ? c.y : -9999));
+  const count = Math.max(1, cities.length);
+  const table = new Float32Array(count * 2 * 4);
+  for (let i = 0; i < cities.length; i++) {
+    table[i * 4] = cities[i].x;
+    table[i * 4 + 1] = cities[i].y;
+    table[(count + i) * 4] = -1000;
+    table[(count + i) * 4 + 1] = cities[i].provinceIndex;
   }
+  const cityTex = bag.add(
+    new THREE.DataTexture(table, count, 2, THREE.RGBAFormat, THREE.FloatType)
+  );
+  cityTex.magFilter = THREE.NearestFilter;
+  cityTex.minFilter = THREE.NearestFilter;
+  cityTex.needsUpdate = true;
 
   const material = bag.add(
     new THREE.ShaderMaterial({
@@ -256,10 +291,9 @@ export function buildMapTerrain(
         uPaper: { value: 0 },
         uRealms: { value: 1 },
         uSelected: { value: -1 },
-        uCityPos: { value: pos },
-        uCityOwner: { value: new Array<number>(MAX_CITIES).fill(0) },
-        uCityPrev: { value: new Array<number>(MAX_CITIES).fill(0) },
-        uCityFlip: { value: new Array<number>(MAX_CITIES).fill(-1000) },
+        uCities: { value: cityTex },
+        uLevel: { value: 0 },
+        uFocusProvince: { value: -1 },
         uFaction: {
           value: (['neutral', 'wei', 'shu', 'wu'] as FactionId[]).map((f) =>
             new THREE.Color(FACTION_PIGMENT[f]).convertLinearToSRGB()
@@ -272,17 +306,20 @@ export function buildMapTerrain(
   const mesh = new THREE.Mesh(geo, material);
   mesh.frustumCulled = false;
 
+  let first = true;
   const setOwners = (owners: FactionId[], time: number, animate: boolean) => {
-    const cur = material.uniforms.uCityOwner.value as number[];
-    const prev = material.uniforms.uCityPrev.value as number[];
-    const flip = material.uniforms.uCityFlip.value as number[];
-    for (let i = 0; i < MAX_CITIES && i < owners.length; i++) {
+    let changed = false;
+    for (let i = 0; i < count && i < owners.length; i++) {
       const next = FACTION_INDEX[owners[i]];
-      if (cur[i] === next) continue;
-      prev[i] = animate ? cur[i] : next;
-      cur[i] = next;
-      flip[i] = animate ? time : -1000;
+      if (!first && table[i * 4 + 2] === next) continue;
+      const soak = animate && !first;
+      table[i * 4 + 3] = soak ? table[i * 4 + 2] : next;
+      table[i * 4 + 2] = next;
+      table[(count + i) * 4] = soak ? time : -1000;
+      changed = true;
     }
+    first = false;
+    if (changed) cityTex.needsUpdate = true;
   };
 
   return { mesh, material, setOwners };

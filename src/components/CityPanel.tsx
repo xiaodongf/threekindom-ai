@@ -13,7 +13,7 @@ import {
   Users,
   Wheat,
 } from 'lucide-react';
-import { ACTION_COSTS } from '../game/data.js';
+import { ACTION_COSTS, PROVINCES } from '../game/data.js';
 import {
   factionHasTech,
   getActiveBondsForHeroes,
@@ -124,7 +124,9 @@ export function CityPanel({
             <h3 className="font-display text-xl font-bold text-[#f7efe0]">
               {tLoc(city.name, lang)}
             </h3>
-            <span className="text-xs text-[#9ea3ae]">({tLoc(city.region, lang)})</span>
+            <span className="text-xs text-[#9ea3ae]">
+              ({tLoc(city.region, lang)} · {tLoc(PROVINCES[city.province].name, lang)})
+            </span>
           </div>
           <div className="flex items-center gap-2 mt-1">
             <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: ownerColor }} />
@@ -285,8 +287,8 @@ export function CityPanel({
                   ? '本季行动力已用尽，请点击右上角「结束本季」。'
                   : 'No Action Points remaining this season.'
                 : lang === 'zh'
-                  ? '需先占领邻接城池（或拥有水师/蒸汽战船袭击长江港口、或研造望远镜远程离间）。'
-                  : 'Capture an adjacent city first (or unlock Steam Warships for river raids / Spyglasses for remote espionage).'}
+                  ? '需先占领邻接城池（或以水师/蒸汽战船自沿江两站之内的港口奔袭、或研造望远镜远程离间）。'
+                  : 'Capture an adjacent city first (or send a river fleet from a port within two stops along the river, which needs Steam Warships unless you are Wu; Spyglasses allow remote espionage).'}
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-1.5">

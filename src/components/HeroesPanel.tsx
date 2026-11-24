@@ -23,6 +23,7 @@ import {
 import { HERO_BONDS } from '../game/heroes.js';
 import type { GameState, General, HeroEncounterMode, Language } from '../game/types.js';
 import { tLoc } from '../i18n/translations.js';
+import { parallaxProps } from '../utils/parallax.js';
 import { HeroAvatar } from './HeroAvatar.js';
 import { Seal } from './ui/Seal.js';
 import { Art } from './ui/Art.js';
@@ -82,7 +83,6 @@ export function HeroesPanel({
   const rivalHeroes = allHeroes.filter(
     (g) =>
       g.faction !== player &&
-      g.faction !== 'neutral' &&
       (g.status === 'active' || g.status === 'wounded')
   );
   const fallenHeroes = allHeroes.filter((g) => g.status === 'executed');
@@ -134,13 +134,14 @@ export function HeroesPanel({
             {/* The hero, painted large: face first, name in brush lettering */}
             <div
               onClick={() => onSelectFocusHero(null)}
+              {...parallaxProps}
               className="anim-rise relative -mx-3 -mt-3 h-72 overflow-hidden cursor-pointer group"
               title={lang === 'zh' ? '收起' : 'Collapse'}
             >
               <Art
                 src={hero.portrait}
                 alt={tLoc(hero.name, lang)}
-                className={`absolute inset-0 w-full h-full object-cover object-top theme-art-grade transition-transform duration-700 ease-out group-hover:scale-[1.03] ${
+                className={`parallax absolute inset-0 w-full h-full object-cover object-top theme-art-grade ${
                   hero.status === 'executed' ? 'grayscale opacity-70' : ''
                 }`}
                 style={{

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FastForward, Flame, Shield, SkipForward, Swords, Volume2, VolumeX } from 'lucide-react';
+import { FastForward, Flame, SkipForward, Swords, Volume2, VolumeX } from 'lucide-react';
 import { TACTICS } from '../game/data.js';
 import type {
   FactionId,
@@ -15,6 +15,8 @@ import { TERRAIN_TEXT, tLoc } from '../i18n/translations.js';
 import { battleAudio } from '../utils/battleAudio.js';
 import { HeroAvatar } from './HeroAvatar.js';
 import { Art } from './ui/Art.js';
+import { CountUp } from './ui/CountUp.js';
+import { Seal } from './ui/Seal.js';
 
 export interface WarSceneConfig {
   id: string;
@@ -55,7 +57,7 @@ interface WarSceneModalProps {
 const FACTION_COLOR: Record<FactionId, { main: string; light: string; dark: string }> = {
   wei: { main: '#4c78a8', light: '#b9d0e6', dark: '#1d4ed8' },
   shu: { main: '#438554', light: '#add4b6', dark: '#047857' },
-  wu: { main: '#f43f5e', light: '#fda4af', dark: '#be123c' },
+  wu: { main: '#c2432f', light: '#edb3a5', dark: '#84281c' },
   neutral: { main: '#a8a29e', light: '#e7e5e4', dark: '#57534e' },
 };
 
@@ -271,6 +273,27 @@ export function WarSceneModal({
         phase: (i * 1.91) % (Math.PI * 2),
       });
     }
+
+    // The smaller army fields fewer figures, and ranks thin as the casualties in the report mount.
+    const biggest = Math.max(1, scene.attackerStartTroops, scene.defenderStartTroops);
+    const sides = {
+      atk: units.filter((u) => u.side === 'atk'),
+      def: units.filter((u) => u.side === 'def'),
+    };
+    const fielded = {
+      atk: Math.max(4, Math.round(sides.atk.length * Math.max(0.35, scene.attackerStartTroops / biggest))),
+      def: Math.max(4, Math.round(sides.def.length * Math.max(0.35, scene.defenderStartTroops / biggest))),
+    };
+    for (const key of ['atk', 'def'] as const) {
+      sides[key].forEach((u, i) => {
+        if (i >= fielded[key]) u.alive = false;
+      });
+    }
+    const lossShare = {
+      atk: Math.min(0.94, scene.attackerLosses / Math.max(1, scene.attackerStartTroops)),
+      def: Math.min(0.94, scene.defenderLosses / Math.max(1, scene.defenderStartTroops)),
+    };
+    const fallen: Array<{ x: number; y: number; side: 'atk' | 'def'; life: number }> = [];
 
     const projectiles: Projectile[] = [];
     const particles: Particle[] = [];
@@ -495,6 +518,9 @@ export function WarSceneModal({
       const bob = Math.sin(t * (isRiver ? 5.5 : 13) + u.phase) * (isRiver ? 1.8 : 2.1);
       ctx.save();
       ctx.translate(u.x, u.y + bob);
+      // Figures are drawn large enough to read as ranks on a full-screen field
+      const figureScale = isRiver ? 1.3 : 1.6;
+      ctx.scale(figureScale, figureScale);
 
       if (isRiver) {
         // Detailed Chinese Lou-Chuan Tower Warship / Steam Ironclad Warship!
@@ -737,6 +763,34 @@ export function WarSceneModal({
         }
       }
 
+      // Thin the ranks: losses begin when the lines meet and are complete at the verdict
+      const lossT = Math.min(1, Math.max(0, (elapsed - 1.7) / 2.7));
+      for (const key of ['atk', 'def'] as const) {
+        const standing = sides[key].filter((u) => u.alive);
+        const shouldStand = Math.max(1, Math.round(fielded[key] * (1 - lossShare[key] * lossT)));
+        for (let n = standing.length; n > shouldStand; n--) {
+          // The front of the line falls first
+          let pick = 0;
+          let best = -Infinity;
+          for (let i = 0; i < standing.length; i++) {
+            if (!standing[i].alive) continue;
+            const front = (key === 'atk' ? standing[i].x : -standing[i].x) + Math.random() * 60;
+            if (front > best) {
+              best = front;
+              pick = i;
+            }
+          }
+          const u = standing[pick];
+          u.alive = false;
+          fallen.push({ x: u.x, y: u.y, side: key, life: 0 });
+          spawnBurst(u.x, u.y - 4, isRiver ? '#bae6fd' : '#c9bda2', 5, 0.4);
+        }
+      }
+      for (let i = fallen.length - 1; i >= 0; i--) {
+        fallen[i].life += dt;
+        if (fallen[i].life > 3.2) fallen.splice(i, 1);
+      }
+
       // Update projectiles
       for (let i = projectiles.length - 1; i >= 0; i--) {
         const p = projectiles[i];
@@ -778,6 +832,28 @@ export function WarSceneModal({
         ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
       }
       drawBackground(elapsed);
+
+      // Where a rank fell: a dropped banner on land, a ring on the water, fading
+      for (const f of fallen) {
+        const fade = 1 - f.life / 3.2;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, fade) * 0.75;
+        ctx.translate(f.x, f.y + 6);
+        if (isRiver) {
+          ctx.strokeStyle = 'rgba(224, 242, 254, 0.8)';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, 8 + f.life * 9, 2.5 + f.life * 2.5, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          ctx.rotate(f.side === 'atk' ? -1.25 : 1.25);
+          ctx.fillStyle = '#1c1712';
+          ctx.fillRect(-0.8, -11, 1.6, 13);
+          ctx.fillStyle = (f.side === 'atk' ? atkPal : defPal).main;
+          ctx.fillRect(0.8, -11, 6, 4.5);
+        }
+        ctx.restore();
+      }
 
       // Draw sorted units back-to-front by Y for crisp 2.5D depth
       units.sort((a, b) => a.y - b.y);
@@ -856,9 +932,14 @@ export function WarSceneModal({
     discord: { en: 'Covert Infiltration & Discord', zh: '离间策反' },
   };
 
+  const playerWon = scene.isPlayerDefending ? !scene.attackerWon : scene.attackerWon;
+  const atkName = tLoc(atkFaction.shortName, lang);
+  const atkCss = FACTION_COLOR[scene.attackerFaction].main;
+  const defCss = FACTION_COLOR[scene.defenderFaction].main;
+
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-5">
-      <div className="ink-panel gold-border-glow rounded-2xl max-w-4xl w-full overflow-hidden shadow-[0_24px_80px_rgba(6,4,2,0.9)]">
+    <div className="fixed inset-0 z-50 bg-[#0a0806] flex flex-col">
+      <div className="ink-panel border-x-0 border-t-0 w-full flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* Top Live Battlefield HUD */}
         <div className="px-4 py-3 bg-slate-950/85 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -942,7 +1023,11 @@ export function WarSceneModal({
         </div>
 
         {/* 60fps HTML5 2.5D Canvas War Theater with Studio-Painted Panoramic Backdrop */}
-        <div className="relative bg-slate-950 overflow-hidden">
+        <div className="flex-1 min-h-0 flex items-center justify-center bg-[#0a0806]">
+        <div
+          className="relative bg-slate-950 overflow-hidden"
+          style={{ width: 'min(100%, calc((100vh - 6.5rem) * 2.2))' }}
+        >
           <Art
             src={
               scene.mode === 'raid' || scene.mode === 'discord'
@@ -1013,50 +1098,107 @@ export function WarSceneModal({
             )}
           </div>
 
-          {/* Final Outcome Stamp Overlay */}
+          {/* Verdict: a seal comes down, then the ledger counts the cost */}
           {completed && (
-            <div className="absolute inset-0 z-30 bg-slate-950/55 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center space-y-3">
-              <div
-                className={`px-6 py-2 rounded-2xl border-2 font-display text-2xl sm:text-3xl font-black tracking-wide shadow-2xl flex items-center gap-2.5 ${
-                  scene.isPlayerDefending
-                    ? scene.attackerWon
-                      ? 'bg-rose-950/90 border-rose-400 text-rose-200'
-                      : 'bg-emerald-950/90 border-emerald-400 text-emerald-200'
-                    : scene.attackerWon
-                      ? 'bg-emerald-950/90 border-emerald-400 text-emerald-200'
-                      : 'bg-rose-950/90 border-rose-400 text-rose-200'
-                }`}
-              >
-                {scene.isPlayerDefending ? <Shield className="w-7 h-7" /> : <Swords className="w-7 h-7" />}
-                <span>
-                  {scene.isPlayerDefending
-                    ? scene.attackerWon
-                      ? lang === 'zh'
-                        ? '敌军破城！'
-                        : 'CITY BREACHED!'
-                      : lang === 'zh'
-                        ? '守城大捷！'
-                        : 'DEFENSE HELD!'
-                    : scene.attackerWon
-                      ? lang === 'zh'
-                        ? '大获全胜！'
-                        : 'GLORIOUS VICTORY!'
-                      : lang === 'zh'
-                        ? '攻势受挫'
-                        : 'ASSAULT REPELLED'}
-                </span>
+            <div className="absolute inset-0 z-30 bg-[#0a0806]/70 flex flex-col items-center justify-center p-4 text-center">
+              <div className="anim-rise flex items-center gap-5">
+                <Seal
+                  char={playerWon ? '勝' : '敗'}
+                  size={92}
+                  stamped
+                  color={playerWon ? undefined : '#3a342c'}
+                />
+                <div className="text-left">
+                  <div className="brush-heading font-brush text-4xl font-bold text-slate-50 leading-none">
+                    {scene.isPlayerDefending
+                      ? scene.attackerWon
+                        ? lang === 'zh'
+                          ? '城池失守'
+                          : 'The city has fallen'
+                        : lang === 'zh'
+                          ? '守城大捷'
+                          : 'The walls held'
+                      : scene.attackerWon
+                        ? lang === 'zh'
+                          ? '大获全胜'
+                          : 'Victory'
+                        : lang === 'zh'
+                          ? '攻势受挫'
+                          : 'The assault was thrown back'}
+                  </div>
+                  <p className="mt-4 text-sm text-slate-200 max-w-xl leading-relaxed">
+                    {tLoc(scene.summaryText, lang)}
+                  </p>
+                </div>
               </div>
-              <p className="text-xs sm:text-sm text-slate-100 max-w-xl bg-slate-950/85 border border-slate-700 rounded-xl px-4 py-2">
-                {tLoc(scene.summaryText, lang)}
-              </p>
+
+              <div className="anim-rise [animation-delay:180ms] mt-6 grid grid-cols-2 gap-px bg-amber-400/25 border border-amber-400/25 w-full max-w-2xl text-left">
+                {(
+                  [
+                    {
+                      name: atkName,
+                      color: atkCss,
+                      start: scene.attackerStartTroops,
+                      lost: scene.attackerLosses,
+                      won: scene.attackerWon,
+                    },
+                    {
+                      name: defName,
+                      color: defCss,
+                      start: scene.defenderStartTroops,
+                      lost: scene.defenderLosses,
+                      won: !scene.attackerWon,
+                    },
+                  ] as const
+                ).map((side, idx) => (
+                  <div key={idx} className="bg-[#14110d] px-4 py-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-2 font-display text-base font-bold text-slate-50">
+                        <span className="w-2.5 h-2.5 rotate-45" style={{ background: side.color }} />
+                        {side.name}
+                      </span>
+                      <span className={`text-[11px] font-bold ${side.won ? 'text-amber-200' : 'text-slate-400'}`}>
+                        {side.won ? (lang === 'zh' ? '胜' : 'Held the field') : lang === 'zh' ? '负' : 'Driven off'}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-baseline justify-between text-xs text-slate-400">
+                      <span>{lang === 'zh' ? '折损' : 'Lost'}</span>
+                      <span className="text-2xl font-bold text-rose-300">
+                        −<CountUp value={side.lost} from={0} />
+                      </span>
+                    </div>
+                    <div className="mt-1.5 h-1.5 bg-black/70 overflow-hidden">
+                      <div
+                        className="h-full"
+                        style={{
+                          width: `${Math.max(2, Math.round((1 - side.lost / Math.max(1, side.start)) * 100))}%`,
+                          background: side.color,
+                          transition: 'width 900ms cubic-bezier(0.22, 1, 0.36, 1)',
+                        }}
+                      />
+                    </div>
+                    <div className="mt-1.5 flex items-baseline justify-between text-xs text-slate-400">
+                      <span>
+                        {lang === 'zh' ? '出阵' : 'Fielded'} {side.start.toLocaleString()}
+                      </span>
+                      <span className="text-slate-200 font-semibold">
+                        {lang === 'zh' ? '余部' : 'Standing'}{' '}
+                        <CountUp value={Math.max(0, side.start - side.lost)} from={side.start} />
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               <button
                 onClick={onFinish}
-                className="px-6 py-2.5 rounded-xl btn-gold font-bold text-sm shadow-lg cursor-pointer"
+                className="anim-rise [animation-delay:320ms] mt-6 px-7 py-2.5 rounded-md btn-gold text-sm cursor-pointer"
               >
-                {lang === 'zh' ? '查看详细战报' : 'Continue to Report'}
+                {lang === 'zh' ? '查看详细战报' : 'Continue to report'}
               </button>
             </div>
           )}
+        </div>
         </div>
 
         {/* Bottom Timeline Progress Bar */}

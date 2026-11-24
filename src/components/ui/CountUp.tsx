@@ -3,6 +3,8 @@ import { prefersReducedMotion } from '../../utils/motion.js';
 
 interface CountUpProps {
   value: number;
+  /** Start the first count from this figure instead of showing the value at once. */
+  from?: number;
   /** Formats the number on screen; defaults to a grouped integer. */
   format?: (n: number) => string;
   /** Show a "+120" / "-80" marker that lifts off the number when it changes. */
@@ -16,15 +18,21 @@ const defaultFormat = (n: number) => Math.round(n).toLocaleString();
  * A number that counts to its new value instead of snapping, so a change in gold, grain or troops
  * is seen as well as read. The length of the count scales with the size of the change.
  */
-export function CountUp({ value, format = defaultFormat, showDelta = false, className = '' }: CountUpProps) {
-  const [shown, setShown] = useState(value);
+export function CountUp({
+  value,
+  from,
+  format = defaultFormat,
+  showDelta = false,
+  className = '',
+}: CountUpProps) {
+  const [shown, setShown] = useState(from ?? value);
   const [delta, setDelta] = useState<{ amount: number; key: number } | null>(null);
-  const shownRef = useRef(value);
+  const shownRef = useRef(from ?? value);
   const keyRef = useRef(0);
 
   useEffect(() => {
-    const from = shownRef.current;
-    const diff = value - from;
+    const origin = shownRef.current;
+    const diff = value - origin;
     if (diff === 0) return;
 
     if (showDelta) {
@@ -44,7 +52,7 @@ export function CountUp({ value, format = defaultFormat, showDelta = false, clas
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / duration);
       const eased = 1 - Math.pow(1 - t, 3);
-      const current = from + diff * eased;
+      const current = origin + diff * eased;
       shownRef.current = current;
       setShown(current);
       if (t < 1) raf = requestAnimationFrame(tick);

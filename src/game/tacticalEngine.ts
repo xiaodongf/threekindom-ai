@@ -67,6 +67,7 @@ export const ENCIRCLEMENT_SQUADS = 3;
 /** Squads on opposite sides of a sworn bond must fight within this many tiles to feel it. */
 export const BOND_RANGE = 2;
 
+/** Cities fought over across water even where their own ground is not river terrain. */
 export const WATER_ADJACENT_CITY_IDS = new Set([
   'xiangyang',
   'jiangling',
@@ -76,6 +77,15 @@ export const WATER_ADJACENT_CITY_IDS = new Set([
   'hefei',
   'changsha',
   'luoyang',
+  // Yangtze ports and river crossings added with the 32-city map
+  'jiangzhou',
+  'yongan',
+  'jiangxia',
+  'lujiang',
+  'wu',
+  'xiapi',
+  'puyang',
+  'tongguan',
 ]);
 
 export const WIND_DELTA: Record<WindDirection, { dr: number; dc: number; label: LocalizedText }> = {
@@ -312,7 +322,7 @@ export function generateCityTacticalGrid(
   if (hasWaterFeature) {
     // Winding river/lake channel running vertically down columns 2-4 with 2 bridges & 2 shallow fords
     const riverCols =
-      cityId === 'chaisang' || cityId === 'jianye' || isRiverStrike
+      cityId === 'chaisang' || cityId === 'jianye' || cityId === 'jiangxia' || isRiverStrike
         ? [
             [2, 3],
             [2, 3],

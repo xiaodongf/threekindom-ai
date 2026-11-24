@@ -120,14 +120,15 @@ export function buildMapArmy(
     const wz = a.wz + (dz / len) * s;
     // Far cameras get a bigger piece, so the army never shrinks to a speck
     const camDist = Math.hypot(camera.position.x - wx, camera.position.y, camera.position.z - wz);
-    const scale = ARMY_SCALE * Math.min(2.1, Math.max(1, camDist / 54));
+    const scale = ARMY_SCALE * Math.min(2.1, Math.max(0.72, camDist / 54));
     group.scale.setScalar(scale);
     frame.x = (s - startS) / scale;
     frame.gait = arrived ? 'rear' : 'gallop';
     frame.rearAngle = arrived ? 0.55 : 0;
     frame.pose = arrived ? 'victory_raise' : 'ready';
     frame.poseBlend = arrived ? 1 : 0;
-    applyRigPose3D(rig, frame, dt, elapsed);
+    // A zero-length frame would divide by zero inside the gait and cape simulation
+    applyRigPose3D(rig, frame, Math.max(dt, 1 / 240), elapsed);
 
     const mapX = (wx / 100 + 0.5) * 1000;
     const mapY = (wz / 66 + 0.5) * 660;

@@ -25,6 +25,7 @@ import { HeroRecruitModal } from './components/HeroRecruitModal.js';
 import { HeroesPanel } from './components/HeroesPanel.js';
 import {
   MilitaryModal,
+  type OrderRoutePreview,
   OperationReportModal,
   type ExecuteMilitaryPayload,
 } from './components/MilitaryModal.js';
@@ -32,9 +33,11 @@ import { SettingsModal } from './components/SettingsModal.js';
 import { StrategyMap, type ActiveMapMarch } from './components/StrategyMap.js';
 import { TacticalBattleModal } from './components/TacticalBattleModal.js';
 import { TechLabPanel } from './components/TechLabPanel.js';
+import { ProvinceRegister } from './components/ProvinceRegister.js';
 import { TopBar } from './components/TopBar.js';
 import { SeasonBanner } from './components/ui/SeasonBanner.js';
 import { WarSceneModal, type WarSceneConfig } from './components/WarSceneModal.js';
+import { rivalOrdersForRealmSize } from './game/data.js';
 import {
   advanceSeason,
   applyDiplomacyOutcome,
@@ -287,6 +290,16 @@ const DEFAULT_PROVIDERS: AIProviderStatus[] = [
   },
 ];
 
+/**
+ * One order a rival realm carries out at the end of a season. A realm's first order is decided by
+ * the configured AI ruler; the orders that follow are routine staff work decided by rule, so a
+ * larger map does not multiply the calls made to a language model.
+ */
+interface RivalOrder {
+  faction: PlayableFactionId;
+  byStaff: boolean;
+}
+
 export default function App() {
   const [lang, setLang] = useState<Language>(() => {
     const p = new URLSearchParams(window.location.search).get('lang');
@@ -320,6 +333,8 @@ export default function App() {
     }
     return 'heroes';
   });
+  // The march being planned in the orders sheet, drawn on the map while it is open
+  const [orderRoute, setOrderRoute] = useState<OrderRoutePreview | null>(null);
   // The side sheet is contextual: closed until a city, hero or council is asked for.
   const [sheetOpen, setSheetOpen] = useState<boolean>(
     () => new URLSearchParams(window.location.search).get('tab') !== null
@@ -398,7 +413,7 @@ export default function App() {
     action: AITurnAction;
     proclamation?: string;
     snapshotState: GameState;
-    remainingAiFactions: PlayableFactionId[];
+    remainingAiFactions: RivalOrder[];
     accumulatedWarItems: WarTheaterQueueItem[];
   } | null>(null);
 
@@ -452,8 +467,16 @@ export default function App() {
     }
 
     if (demoTactical === '1' && !activeTactical) {
+      // The preview shows a two-city pincer, so Shu is lent the second city the route needs:
+      // Chencang for the mountain fight at Tianshui, Shangyong for the river fight at Xiangyang.
+      const mountainDemo = demoTerrain === 'mountain';
+      const lentCityId = mountainDemo ? 'chencang' : 'shangyong';
       const upgraded: GameState = {
         ...gameState,
+        cities: {
+          ...gameState.cities,
+          [lentCityId]: { ...gameState.cities[lentCityId], owner: 'shu', troops: 9000 },
+        },
         chrono: {
           ...gameState.chrono,
           unlockedTechs: ['gunpowder', 'stirrups', 'balloon', 'steamship', 'spyglass'],
@@ -464,13 +487,13 @@ export default function App() {
       setActiveTactical({
         config: {
           id: 'demo-tactical',
-          fromCityId: 'jiangling',
-          toCityId: demoTerrain === 'mountain' ? 'hanzhong' : 'xiangyang',
+          fromCityId: mountainDemo ? 'hanzhong' : 'jiangling',
+          toCityId: mountainDemo ? 'tianshui' : 'xiangyang',
           attackerFaction: 'shu',
           defenderFaction: 'wei',
           playerSide: 'attacker',
           primaryTroops: 11000,
-          pincerFromCityId: 'hanzhong',
+          pincerFromCityId: lentCityId,
           pincerTroops: 4500,
           tactic: 'fire',
           attackerGeneralId: 'zhugeliang',
@@ -489,8 +512,8 @@ export default function App() {
         turn: gameState.turn,
         attackerFaction: 'shu',
         defenderFaction: 'wei',
-        fromCityId: 'jiangling',
-        toCityId: demoTerrain === 'plains' ? 'xuchang' : 'xiangyang',
+        fromCityId: demoTerrain === 'plains' ? 'xiangyang' : 'jiangling',
+        toCityId: demoTerrain === 'plains' ? 'wan' : 'xiangyang',
         attackerGeneralId: atkHero?.id,
         defenderGeneralId: defHero?.id,
         tactic: 'fire',
@@ -505,15 +528,23 @@ export default function App() {
           zh: '关羽统领多路合围大军携黑火药震天雷猛攻敌城，一举击溃魏军防线、夺下战略重镇！',
         },
       };
+      // Shu is lent the cities the previewed route starts from
+      const lentIds = demoTerrain === 'plains' ? ['xiangyang'] : ['shangyong'];
       const demoState: GameState = {
         ...gameState,
+        cities: {
+          ...gameState.cities,
+          ...Object.fromEntries(
+            lentIds.map((id) => [id, { ...gameState.cities[id], owner: 'shu' as const }])
+          ),
+        },
         chrono: {
           ...gameState.chrono,
           unlockedTechs: ['gunpowder', 'stirrups', 'balloon', 'steamship'],
         },
       };
       const item = buildBattleWarItem(demoState, sampleBattle, {
-        pincerFromCityId: 'hanzhong',
+        pincerFromCityId: demoTerrain === 'plains' ? undefined : 'shangyong',
       });
       setDemoElapsed(Number.isFinite(demoTime) && demoTime > 0 ? demoTime : 0);
       setWarQueue([item]);
@@ -915,7 +946,7 @@ export default function App() {
 
   async function runEndTurnPipeline(
     startState: GameState,
-    remainingAiFactions: PlayableFactionId[],
+    remainingAiFactions: RivalOrder[],
     accumulatedWarItems: WarTheaterQueueItem[]
   ) {
     setIsEndingTurn(true);
@@ -923,18 +954,24 @@ export default function App() {
       let current = startState;
       const warItems = [...accumulatedWarItems];
 
+      // A realm that chooses to hold has nothing more to order this season
+      const standingDown = new Set<PlayableFactionId>();
+
       for (let idx = 0; idx < remainingAiFactions.length; idx++) {
-        const fid = remainingAiFactions[idx];
+        const { faction: fid, byStaff } = remainingAiFactions[idx];
         if (current.winner || current.isPlayerDefeated) break;
-        if (current.factions[fid].isEliminated) continue;
+        if (current.factions[fid].isEliminated || standingDown.has(fid)) continue;
 
         try {
           const decision = await requestAITurnDecision({
             gameState: current,
             factionId: fid,
             language: lang,
-            aiConfig,
+            aiConfig: byStaff ? { provider: 'heuristic' } : aiConfig,
           });
+          if (decision.action.type === 'hold') standingDown.add(fid);
+          // Only the ruler's own order is proclaimed; staff orders speak through what they do
+          const proclamation = byStaff ? undefined : decision.proclamation;
 
           const targetId = decision.action.targetCityId;
           const originCity = current.cities[decision.action.cityId];
@@ -959,7 +996,7 @@ export default function App() {
               toCityId: targetCity.id,
               troops: sendTroops,
               action: decision.action,
-              proclamation: decision.proclamation,
+              proclamation,
               snapshotState: current,
               remainingAiFactions: remainingAiFactions.slice(idx + 1),
               accumulatedWarItems: warItems,
@@ -975,7 +1012,7 @@ export default function App() {
           const preFromTroops = originCity?.troops ?? 0;
           const preTargetTroops = targetCity?.troops ?? 0;
 
-          current = executeAITurnAction(current, fid, decision.action, decision.proclamation);
+          current = executeAITurnAction(current, fid, decision.action, proclamation);
 
           if (targetWasPlayer && current.lastBattle && current.lastBattle.id !== prevBattleId) {
             warItems.push(
@@ -1103,10 +1140,15 @@ export default function App() {
     ) {
       return;
     }
-    const aiFactions = (['wei', 'shu', 'wu'] as PlayableFactionId[]).filter(
-      (fid) => fid !== gameState.playerFaction && !gameState.factions[fid].isEliminated
-    );
-    await runEndTurnPipeline(gameState, aiFactions, []);
+    const rivalOrders: RivalOrder[] = [];
+    for (const fid of ['wei', 'shu', 'wu'] as PlayableFactionId[]) {
+      if (fid === gameState.playerFaction || gameState.factions[fid].isEliminated) continue;
+      const held = Object.values(gameState.cities).filter((c) => c.owner === fid).length;
+      for (let n = 0; n < rivalOrdersForRealmSize(held); n++) {
+        rivalOrders.push({ faction: fid, byStaff: n > 0 });
+      }
+    }
+    await runEndTurnPipeline(gameState, rivalOrders, []);
   }
 
   const providerLabel =
@@ -1207,6 +1249,7 @@ export default function App() {
               setAttackMode(false);
             }}
             onInspectHero={handleInspectHero}
+            previewRoute={orderRoute ? { ...orderRoute, coverRightPx: 600 } : null}
             paused={
               Boolean(activeDuel) ||
               Boolean(activeTactical) ||
@@ -1251,6 +1294,15 @@ export default function App() {
 
           <div className="relative flex-1 min-h-0">
           <div key={activeTab} className="anim-rise absolute inset-0 overflow-y-auto">
+            {activeTab === 'city' && (
+              <ProvinceRegister
+                key={selectedCityId ? 'chosen' : 'none'}
+                state={gameState}
+                lang={lang}
+                selectedCityId={selectedCityId}
+                onSelectCity={handleSelectCity}
+              />
+            )}
             {activeTab === 'city' && (
               <CityPanel
                 state={gameState}
@@ -1374,6 +1426,7 @@ export default function App() {
           initialAction={pendingMilitary.action}
           onCancel={() => setPendingMilitary(null)}
           onExecute={handleExecuteMilitary}
+          onPreviewRoute={setOrderRoute}
         />
       )}
 

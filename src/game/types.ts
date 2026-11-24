@@ -10,6 +10,19 @@ export type FactionId = PlayableFactionId | 'neutral';
 
 export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
 export type TerrainType = 'plains' | 'mountain' | 'river' | 'fortress';
+/** The Later Han provinces (州) that fall on the map, as listed in the Book of Later Han. */
+export type ProvinceId =
+  | 'sili'
+  | 'liang'
+  | 'bing'
+  | 'ji'
+  | 'yan'
+  | 'xu'
+  | 'qing'
+  | 'yu'
+  | 'jing'
+  | 'yang'
+  | 'yi';
 export type TacticId = 'assault' | 'fire' | 'ambush' | 'siege';
 
 export type AIProviderId = 'auto' | 'gemini' | 'openai' | 'anthropic' | 'heuristic';
@@ -183,6 +196,8 @@ export interface City {
   id: string;
   name: LocalizedText;
   region: LocalizedText;
+  /** The province (州) the city belongs to; the map groups cities by it when zoomed out. */
+  province: ProvinceId;
   x: number;
   y: number;
   owner: FactionId;
@@ -194,6 +209,15 @@ export interface City {
   terrain: TerrainType;
   neighbors: string[];
   isCapital?: boolean;
+}
+
+export interface Province {
+  id: ProvinceId;
+  name: LocalizedText;
+  /** The city that stands for the province on the zoomed-out map. */
+  seatCityId: string;
+  /** Where the province's name is written on the map, in map units. */
+  label: { x: number; y: number };
 }
 
 export interface FactionState {

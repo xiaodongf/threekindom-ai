@@ -21,9 +21,9 @@ import { createInitialHeroes } from './heroes.js';
 describe('3D Cavalry Duel Roster & Choreography', () => {
   const heroes = createInitialHeroes();
 
-  it('provides an explicit mounted Three Kingdoms visual profile for all 36 heroes', () => {
+  it('provides an explicit mounted Three Kingdoms visual profile for every hero', () => {
     const heroIds = Object.keys(heroes);
-    expect(heroIds.length).toBeGreaterThanOrEqual(36);
+    expect(heroIds.length).toBeGreaterThanOrEqual(55);
 
     for (const id of heroIds) {
       expect(HERO_DUEL_PROFILES[id], `Missing duel profile for ${id}`).toBeDefined();

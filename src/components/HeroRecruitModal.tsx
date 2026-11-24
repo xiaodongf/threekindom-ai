@@ -155,10 +155,10 @@ export function HeroRecruitModal({
               <Art thumb
                 src={state.playerProfile.portrait}
                 alt="Player"
-                className="w-14 h-14 rounded-xl object-cover object-top border-2 border-cyan-400 shadow-[0_0_16px_rgba(208,167,79,0.3)]"
+                className="w-14 h-14 rounded-md object-cover object-top border border-chrono-400/80 shadow-[0_0_14px_rgba(34,211,238,0.3)]"
               />
               <div>
-                <div className="text-[10px] font-bold uppercase text-cyan-400">
+                <div className="text-[10px] font-bold uppercase text-chrono-300">
                   {lang === 'zh' ? '你 · 穿越者' : 'YOU · 2026'}
                 </div>
                 <div className="font-display text-sm font-bold text-white">
@@ -169,21 +169,22 @@ export function HeroRecruitModal({
 
             <div className="text-xs font-bold text-cyan-300/70">⇄</div>
 
-            <div className="flex items-center gap-2.5 flex-row-reverse text-right">
-              <HeroAvatar hero={hero} size="md" showLevel />
+            {/* The hero you came to meet is the largest thing in the room */}
+            <div className="flex items-center gap-3 flex-row-reverse text-right">
+              <HeroAvatar hero={hero} size="xl" showLevel />
               <div>
-                <div className="text-[10px] font-semibold text-amber-300">
+                <div className="text-[11px] font-semibold text-amber-300">
                   {tLoc(hero.title, lang)}
                 </div>
-                <div className="font-display text-sm font-bold text-white">
+                <div className="font-brush text-2xl font-bold text-slate-50 leading-tight">
                   {tLoc(hero.name, lang)}
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="text-[11px] text-cyan-100 bg-cyan-950/40 border border-cyan-400/25 rounded-lg p-2 space-y-1">
-            <div className="flex items-center gap-1 text-[10px] font-bold uppercase text-cyan-300">
+          <div className="text-[11px] text-chrono-100 bg-chrono-950/40 border border-chrono-400/25 rounded-lg p-2 space-y-1">
+            <div className="flex items-center gap-1 text-[10px] font-bold uppercase text-chrono-300">
               <Eye className="w-3 h-3" />
               <span>{lang === 'zh' ? '穿越者攻略提示' : 'Time-Traveler Intel Hint'}</span>
             </div>

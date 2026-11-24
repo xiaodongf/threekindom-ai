@@ -347,7 +347,7 @@ export function buildDuelArena3D(
   const dummy = new THREE.Object3D();
   const populate = (side: 'left' | 'right', target: THREE.Group, bgHex: string) => {
     const rows = 3;
-    const perRow = 15;
+    const perRow = 26;
     const count = rows * perRow;
     const armorMat = bag.add(new THREE.MeshStandardMaterial({ color: bgHex, roughness: 0.6, metalness: 0.3 }));
     const bodies = new THREE.InstancedMesh(bodyGeo, armorMat, count);
@@ -357,8 +357,10 @@ export function buildDuelArena3D(
     for (let r = 0; r < rows; r++) {
       for (let i = 0; i < perRow; i++) {
         const f = (i + (r % 2) * 0.5) / perRow;
-        // Each army holds a quarter-circle behind and beside its champion
-        const ang = (side === 'left' ? Math.PI * 0.6 + f * Math.PI * 0.42 : Math.PI * 0.4 - f * Math.PI * 0.42);
+        // The two armies close a ring around the duel: each wraps from the far side, past its
+        // champion's flank, round toward the camera. Only the arc the camera stands in is left open.
+        const ang =
+          side === 'left' ? Math.PI * 0.52 + f * Math.PI * 0.78 : Math.PI * 0.48 - f * Math.PI * 0.78;
         const radius = 11.2 + r * 1.6 + Math.sin(i * 12.9898 + r * 4.1) * 0.25;
         const x = Math.cos(ang) * radius;
         const z = -Math.sin(ang) * radius * 0.86 + 0.8;
