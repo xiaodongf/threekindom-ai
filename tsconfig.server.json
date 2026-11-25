@@ -12,5 +12,6 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["server/**/*.ts", "src/game/types.ts"]
+  "include": ["server/**/*.ts", "src/game/types.ts"],
+  "exclude": ["server/**/*.test.ts"]
 }

@@ -339,6 +339,16 @@ export interface PlayerProfile {
   portrait: string;
 }
 
+export interface MultiplayerWorldMeta {
+  roomCode: string;
+  roomName: string;
+  humanFactions: PlayableFactionId[];
+  turnOrder: PlayableFactionId[];
+  activeFaction: PlayableFactionId;
+  factionChronos: Record<PlayableFactionId, ChronoState>;
+  factionProfiles: Record<PlayableFactionId, PlayerProfile>;
+}
+
 export interface GameState {
   turn: number;
   year: number;
@@ -359,6 +369,7 @@ export interface GameState {
   recentMarches: MarchEvent[];
   winner: PlayableFactionId | null;
   isPlayerDefeated: boolean;
+  multiplayer?: MultiplayerWorldMeta;
 }
 
 // --- AI API Types ---

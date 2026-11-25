@@ -1,8 +1,20 @@
-import { useState, type CSSProperties } from 'react';
-import { Castle, Coins, Cpu, Languages, Shield, Swords } from 'lucide-react';
+import { useEffect, useState, type CSSProperties } from 'react';
+import {
+  Archive,
+  Castle,
+  Coins,
+  Cpu,
+  Globe,
+  Languages,
+  Play,
+  Shield,
+  Swords,
+  UserCheck,
+} from 'lucide-react';
 import { createInitialCities, createInitialFactions } from '../game/data.js';
 import { createDefaultPlayerProfile } from '../game/engine.js';
 import { createInitialHeroes } from '../game/heroes.js';
+import type { SaveSlotSummary } from '../game/saveSystem.js';
 import type {
   AIProviderStatus,
   Language,
@@ -10,7 +22,8 @@ import type {
   PlayerProfile,
   TravelerAvatarId,
 } from '../game/types.js';
-import { UI_TEXT, tLoc } from '../i18n/translations.js';
+import { SEASONS_TEXT, UI_TEXT, tLoc } from '../i18n/translations.js';
+import type { ClientUser, MultiplayerRoomSummary } from '../services/persistenceClient.js';
 import { parallaxProps } from '../utils/parallax.js';
 import { HeroAvatar } from './HeroAvatar.js';
 import { Seal } from './ui/Seal.js';
@@ -23,6 +36,16 @@ interface FactionSelectProps {
   onOpenSettings: () => void;
   providers: AIProviderStatus[];
   selectedProviderMode: string;
+  user?: ClientUser | null;
+  resumeSoloSummary?: SaveSlotSummary | null;
+  resumeMpRoom?: MultiplayerRoomSummary | null;
+  totalSaveCount?: number;
+  activeMpCount?: number;
+  onResumeSolo?: () => void;
+  onResumeMpRoom?: (room: MultiplayerRoomSummary) => void;
+  onOpenSaves?: () => void;
+  onOpenMultiplayer?: () => void;
+  onOpenAuth?: () => void;
 }
 
 const FACTION_ART: Record<PlayableFactionId, string> = {
@@ -44,10 +67,31 @@ export function FactionSelect({
   onOpenSettings,
   providers,
   selectedProviderMode,
+  user,
+  resumeSoloSummary,
+  resumeMpRoom,
+  totalSaveCount = 0,
+  activeMpCount = 0,
+  onResumeSolo,
+  onResumeMpRoom,
+  onOpenSaves,
+  onOpenMultiplayer,
+  onOpenAuth,
 }: FactionSelectProps) {
-  const [avatar, setAvatar] = useState<TravelerAvatarId>('male');
-  const [playerName, setPlayerName] = useState('');
+  const [avatar, setAvatar] = useState<TravelerAvatarId>(() => user?.avatar ?? 'male');
+  const [playerName, setPlayerName] = useState(() =>
+    user && !user.isGuest ? user.displayName : ''
+  );
   const zh = lang === 'zh';
+
+  useEffect(() => {
+    if (!user) return;
+    setAvatar(user.avatar);
+    if (!user.isGuest && !playerName) {
+      setPlayerName(user.displayName);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.isGuest]);
 
   const factions = createInitialFactions();
   const cities = Object.values(createInitialCities());
@@ -87,7 +131,49 @@ export function FactionSelect({
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {onOpenMultiplayer && (
+            <button
+              type="button"
+              onClick={onOpenMultiplayer}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md ink-panel text-xs font-semibold text-amber-100 hover:border-amber-300/60 cursor-pointer"
+            >
+              <Globe className="w-3.5 h-3.5 text-amber-300" />
+              <span>{tLoc(UI_TEXT.multiplayer, lang)}</span>
+              {activeMpCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-400/25 text-amber-200 text-[10px] font-bold">
+                  {activeMpCount}
+                </span>
+              )}
+            </button>
+          )}
+          {onOpenSaves && (
+            <button
+              type="button"
+              onClick={onOpenSaves}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md ink-panel text-xs font-semibold text-slate-200 hover:border-amber-300/50 cursor-pointer"
+            >
+              <Archive className="w-3.5 h-3.5 text-amber-300" />
+              <span>{tLoc(UI_TEXT.archives, lang)}</span>
+              {totalSaveCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-white/10 text-slate-300 text-[10px] font-bold">
+                  {totalSaveCount}
+                </span>
+              )}
+            </button>
+          )}
+          {onOpenAuth && user && (
+            <button
+              type="button"
+              onClick={onOpenAuth}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md ink-panel text-xs font-semibold text-chrono-200 hover:border-chrono-400/60 cursor-pointer"
+            >
+              <UserCheck className="w-3.5 h-3.5 text-chrono-300" />
+              <span>
+                {user.isGuest ? (zh ? '游客 · 登录/绑定' : 'Guest · Sign In') : `@${user.username}`}
+              </span>
+            </button>
+          )}
           <button
             onClick={onOpenSettings}
             className="flex items-center gap-2 px-3 py-1.5 rounded-md ink-panel text-xs text-slate-200 hover:border-amber-300/50 cursor-pointer"
@@ -108,6 +194,93 @@ export function FactionSelect({
           </button>
         </div>
       </header>
+
+      {/* Continue Chronicle Bar (Solo Save or Active Multiplayer Room) */}
+      {(resumeSoloSummary || resumeMpRoom) && (
+        <div className="relative z-10 shrink-0 px-5 sm:px-8 pb-1 flex flex-wrap gap-2.5">
+          {resumeSoloSummary && onResumeSolo && (
+            <div className="flex-1 min-w-[290px] ink-panel gold-border-glow rounded-xl px-4 py-2 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <Seal
+                  char={factions[resumeSoloSummary.playerFaction].bannerChar}
+                  size={34}
+                  color={factions[resumeSoloSummary.playerFaction].color}
+                />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-amber-300">
+                    <span>{tLoc(UI_TEXT.continueChronicle, lang)}</span>
+                    {resumeSoloSummary.hasActiveBattle && (
+                      <span className="px-1.5 py-0.2 rounded bg-rose-500/25 text-rose-200 border border-rose-400/40 text-[10px]">
+                        {zh ? '⚔️ 8×8 沙盘激战中' : '⚔️ Mid-8×8 Battle'}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-200 truncate">
+                    <span className="font-bold text-slate-50">
+                      {tLoc(factions[resumeSoloSummary.playerFaction].name, lang)}
+                    </span>{' '}
+                    ·{' '}
+                    {zh
+                      ? `${resumeSoloSummary.year}年${SEASONS_TEXT[resumeSoloSummary.season].zh}（第 ${resumeSoloSummary.turn} 季）· ${resumeSoloSummary.citiesOwned}/${resumeSoloSummary.totalCities} 城`
+                      : `${resumeSoloSummary.year} AD ${SEASONS_TEXT[resumeSoloSummary.season].en} (T${resumeSoloSummary.turn}) · ${resumeSoloSummary.citiesOwned}/${resumeSoloSummary.totalCities} Cities`}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={onResumeSolo}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg btn-gold text-xs font-bold cursor-pointer"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  <span>{tLoc(UI_TEXT.resumeCampaign, lang)}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {resumeMpRoom && onResumeMpRoom && (
+            <div className="flex-1 min-w-[290px] ink-panel rounded-xl border border-chrono-400/40 px-4 py-2 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                {resumeMpRoom.myFaction && (
+                  <Seal
+                    char={factions[resumeMpRoom.myFaction].bannerChar}
+                    size={34}
+                    color={factions[resumeMpRoom.myFaction].color}
+                  />
+                )}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-chrono-200">
+                    <span>
+                      {zh ? `联机战局 #${resumeMpRoom.code}` : `Multiplayer #${resumeMpRoom.code}`}
+                    </span>
+                    {resumeMpRoom.myFaction === resumeMpRoom.activeFaction &&
+                      resumeMpRoom.status === 'active' && (
+                        <span className="px-1.5 py-0.2 rounded bg-amber-400/25 text-amber-100 border border-amber-300/60 text-[10px]">
+                          {zh ? '⚡ 轮到你下令' : '⚡ YOUR TURN'}
+                        </span>
+                      )}
+                  </div>
+                  <div className="text-xs text-slate-200 truncate">
+                    <span className="font-bold text-slate-50">{resumeMpRoom.name}</span> ·{' '}
+                    {zh
+                      ? `${resumeMpRoom.year}年${SEASONS_TEXT[resumeMpRoom.season].zh}（第 ${resumeMpRoom.turn} 季）`
+                      : `${resumeMpRoom.year} AD ${SEASONS_TEXT[resumeMpRoom.season].en} (T${resumeMpRoom.turn})`}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onResumeMpRoom(resumeMpRoom)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg btn-gold text-xs font-bold cursor-pointer shrink-0"
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>{zh ? '进入联机' : 'Enter Room'}</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Three hanging scrolls: one lord each, painted large */}
       <main className="relative z-10 flex-1 min-h-0 px-5 sm:px-8 py-3 grid grid-cols-1 md:grid-cols-3 gap-5">

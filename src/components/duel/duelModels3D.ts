@@ -1066,6 +1066,7 @@ const vE = new THREE.Vector3();
 const vDir = new THREE.Vector3();
 const vPole = new THREE.Vector3();
 const vTmp = new THREE.Vector3();
+const vRein = new THREE.Vector3();
 const vX = new THREE.Vector3();
 const vZ = new THREE.Vector3();
 const mBasis = new THREE.Matrix4();
@@ -1356,7 +1357,7 @@ export function applyRigPose3D(
   vS.copy(SHOULDER);
   vS.z = -vS.z;
   vS.applyEuler(rig.torso.rotation).add(rig.torso.position);
-  const reinPommel = vPole.set(0.3, 0.24 + s.bounce * 0.35, -0.03);
+  const reinPommel = vRein.set(0.3, 0.24 + s.bounce * 0.35, -0.03);
   if (rig.offWeapon) {
     vH.set(s.hand.x * 0.92, s.hand.y * 0.94, -s.hand.z);
     solveArm(rig.armL, vS, vH, -0.35, -0.75, -0.6);

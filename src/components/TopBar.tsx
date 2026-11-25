@@ -1,17 +1,21 @@
 import type { ReactNode } from 'react';
 import {
   AlertTriangle,
+  Archive,
+  Check,
   Clock,
   Coins,
   Cpu,
   Crown,
   Eye,
   FastForward,
+  Globe,
   HeartHandshake,
   Languages,
   Loader2,
   RotateCcw,
   Shield,
+  UserCheck,
   Wheat,
 } from 'lucide-react';
 import {
@@ -27,8 +31,9 @@ import {
   getFactionTotalTroops,
   getTimelineStage,
 } from '../game/engine.js';
-import type { GameState, Language } from '../game/types.js';
+import type { GameState, Language, PlayableFactionId } from '../game/types.js';
 import { SEASONS_TEXT, UI_TEXT, tLoc } from '../i18n/translations.js';
+import type { ClientUser, MultiplayerRoomSummary } from '../services/persistenceClient.js';
 import { CountUp } from './ui/CountUp.js';
 import { Seal } from './ui/Seal.js';
 import { Tip } from './ui/Tip.js';
@@ -44,6 +49,13 @@ interface TopBarProps {
   onOpenSettings: () => void;
   onEndTurn: () => void;
   onNewGame: () => void;
+  user?: ClientUser | null;
+  saveIndicator?: 'idle' | 'saving' | 'saved' | 'offline';
+  activeMpRoom?: MultiplayerRoomSummary | null;
+  isMyTurnInMp?: boolean;
+  onOpenSaves?: () => void;
+  onOpenMultiplayer?: () => void;
+  onOpenAuth?: () => void;
 }
 
 const SEASON_CHAR = { spring: '春', summer: '夏', autumn: '秋', winter: '冬' } as const;
@@ -114,6 +126,13 @@ export function TopBar({
   onOpenSettings,
   onEndTurn,
   onNewGame,
+  user,
+  saveIndicator = 'idle',
+  activeMpRoom,
+  isMyTurnInMp = true,
+  onOpenSaves,
+  onOpenMultiplayer,
+  onOpenAuth,
 }: TopBarProps) {
   const faction = state.factions[state.playerFaction];
   const ownedCount = getFactionCities(state, state.playerFaction).length;
@@ -497,6 +516,86 @@ export function TopBar({
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
+        {activeMpRoom && onOpenMultiplayer ? (
+          <button
+            type="button"
+            onClick={onOpenMultiplayer}
+            title={
+              lang === 'zh'
+                ? `联机房间 #${activeMpRoom.code} · 点击查看房间状态`
+                : `Multiplayer Room #${activeMpRoom.code} · Click for room seats`
+            }
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-semibold cursor-pointer ${
+              isMyTurnInMp
+                ? 'border-amber-400/50 bg-amber-400/10 text-amber-100'
+                : 'border-white/15 bg-white/5 text-slate-300'
+            }`}
+          >
+            <Globe className="w-3.5 h-3.5 text-amber-300" />
+            <span className="font-mono text-[11px] hidden sm:inline">#{activeMpRoom.code}</span>
+            <span className="flex items-center gap-0.5">
+              {(['wei', 'shu', 'wu'] as PlayableFactionId[]).map((f) => {
+                const s = activeMpRoom.seats[f];
+                return (
+                  <span
+                    key={f}
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      s.seatType === 'ai'
+                        ? 'bg-indigo-400'
+                        : s.online
+                          ? 'bg-emerald-400'
+                          : 'bg-slate-600'
+                    }`}
+                  />
+                );
+              })}
+            </span>
+          </button>
+        ) : (
+          onOpenSaves && (
+            <button
+              type="button"
+              onClick={onOpenSaves}
+              title={
+                lang === 'zh'
+                  ? '打开墨卷存档录（Ctrl/Cmd + S）· 战局每步自动保存'
+                  : 'Open Imperial Archives (Ctrl/Cmd + S) · Auto-checkpoints active'
+              }
+              className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-semibold text-slate-300 hover:text-slate-50 hover:bg-white/5 cursor-pointer"
+            >
+              {saveIndicator === 'saving' ? (
+                <Loader2 className="w-3.5 h-3.5 text-amber-300 animate-spin" />
+              ) : (
+                <Archive className="w-3.5 h-3.5 text-amber-300" />
+              )}
+              <span className="hidden lg:inline">{tLoc(UI_TEXT.archives, lang)}</span>
+              {saveIndicator === 'saved' && (
+                <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+              )}
+            </button>
+          )
+        )}
+
+        {onOpenAuth && user && (
+          <button
+            type="button"
+            onClick={onOpenAuth}
+            title={
+              user.isGuest
+                ? lang === 'zh'
+                  ? '当前为游客会话，点击绑定账号跨设备保存'
+                  : 'Guest session — click to claim account & sync across devices'
+                : `@${user.username}`
+            }
+            className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs text-chrono-200 hover:text-white hover:bg-white/5 cursor-pointer"
+          >
+            <UserCheck className="w-3.5 h-3.5 text-chrono-300" />
+            <span className="hidden 2xl:inline max-w-[84px] truncate">
+              {user.isGuest ? (lang === 'zh' ? '游客' : 'Guest') : `@${user.username}`}
+            </span>
+          </button>
+        )}
+
         <button
           onClick={onOpenSettings}
           title={tLoc(UI_TEXT.aiSettings, lang)}
@@ -516,7 +615,11 @@ export function TopBar({
 
         <button
           onClick={onNewGame}
-          title={tLoc(UI_TEXT.newGame, lang)}
+          title={
+            lang === 'zh'
+              ? '返回主标题页（当前战局已自动封存）'
+              : 'Return to Title Screen (progress is saved)'
+          }
           className="p-1.5 rounded-md text-slate-400 hover:text-slate-50 hover:bg-white/5 cursor-pointer"
         >
           <RotateCcw className="w-3.5 h-3.5" />
@@ -524,18 +627,36 @@ export function TopBar({
 
         <button
           onClick={onEndTurn}
-          disabled={isEndingTurn || Boolean(state.winner) || state.isPlayerDefeated}
-          className="ml-1.5 flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs btn-gold cursor-pointer"
+          disabled={
+            isEndingTurn ||
+            Boolean(state.winner) ||
+            state.isPlayerDefeated ||
+            (Boolean(activeMpRoom) && !isMyTurnInMp)
+          }
+          className="ml-1.5 flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs btn-gold cursor-pointer disabled:opacity-50"
         >
           {isEndingTurn ? (
             <>
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
               <span>{tLoc(UI_TEXT.aiThinking, lang)}</span>
             </>
+          ) : activeMpRoom && !isMyTurnInMp ? (
+            <>
+              <Clock className="w-3.5 h-3.5" />
+              <span>
+                {lang === 'zh'
+                  ? `等待${state.factions[activeMpRoom.activeFaction].shortName.zh}`
+                  : `Waiting: ${state.factions[activeMpRoom.activeFaction].shortName.en}`}
+              </span>
+            </>
           ) : (
             <>
               <FastForward className="w-3.5 h-3.5" />
-              <span>{tLoc(UI_TEXT.endTurn, lang)}</span>
+              <span>
+                {activeMpRoom
+                  ? tLoc(UI_TEXT.endKingdomTurn, lang)
+                  : tLoc(UI_TEXT.endTurn, lang)}
+              </span>
             </>
           )}
         </button>

@@ -33,6 +33,10 @@ export function factionHasTech(
   techId: TechId
 ): boolean {
   if (faction === 'neutral') return false;
+  const mpChrono = state.multiplayer?.factionChronos?.[faction];
+  if (mpChrono) {
+    return mpChrono.unlockedTechs.includes(techId);
+  }
   if (faction === state.playerFaction) {
     return state.chrono.unlockedTechs.includes(techId);
   }

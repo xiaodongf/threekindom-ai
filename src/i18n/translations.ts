@@ -102,6 +102,11 @@ export const UI_TEXT = {
   victoryBanner: { en: 'Mandate of Heaven Achieved!', zh: '天下一统 · 功垂竹帛！' },
   defeatBanner: { en: 'Your Dynasty Has Fallen', zh: '社稷倾覆 · 霸业未竟' },
   playAgain: { en: 'Start New Campaign', zh: '再战乱世' },
+  archives: { en: 'Archives', zh: '墨卷存档' },
+  multiplayer: { en: 'Multiplayer', zh: '联机天下' },
+  continueChronicle: { en: 'Continue Chronicle', zh: '继续征途' },
+  resumeCampaign: { en: 'Resume', zh: '继续大业' },
+  endKingdomTurn: { en: 'End Turn', zh: '结束本国回合' },
   statusLabels: {
     war: { en: 'At War', zh: '交战' },
     hostile: { en: 'Hostile', zh: '敌对' },

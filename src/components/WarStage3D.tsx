@@ -122,8 +122,22 @@ interface ShipSlot {
   phase: number;
 }
 
+/** A shell burst: the fire is gone in BLAST_FIRE seconds, its smoke lingers for BLAST_SMOKE. */
+const BLAST_FIRE = 0.6;
+const BLAST_SMOKE = 1.5;
+/** The losing side breaks here, early enough to be seen before the verdict card at 4.4 s. */
+const ROUT_AT = 3.7;
+/** Prime above the largest army drawn (64), so the casualty order never repeats in blocks. */
+const CASUALTY_STRIDE = 67;
+
 export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  // The parent re-renders every frame and passes a fresh callback each time; reading it
+  // through a ref keeps the scene effect from tearing down and rebuilding with it.
+  const onFallbackRef = useRef(onFallback);
+  useEffect(() => {
+    onFallbackRef.current = onFallback;
+  }, [onFallback]);
 
   useEffect(() => {
     const host = mountRef.current;
@@ -136,7 +150,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
         powerPreference: 'high-performance',
       });
     } catch {
-      onFallback?.();
+      onFallbackRef.current?.();
       return;
     }
 
@@ -155,7 +169,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = look.exposure;
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     host.appendChild(renderer.domElement);
 
     const world = new THREE.Scene();
@@ -553,7 +567,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
             clashZ = -5.2 + r * 1.5 + jitterZ * 0.5;
           }
           // Deterministic shuffle so casualties fall organically across front & middle ranks
-          const order = ((i * 19 + 7) % count) / Math.max(1, count);
+          const order = ((i * CASUALTY_STRIDE + 7) % count) / Math.max(1, count);
           const willFall = order < casualties / Math.max(1, count);
           const fallAt = willFall ? 0.28 + (order / Math.max(0.05, casualties / count)) * 0.52 : 9;
           target.push({
@@ -580,7 +594,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
         new THREE.MeshBasicMaterial({
           color: '#e5f8f4',
           transparent: true,
-          opacity: 0.52,
+          opacity: 0.3,
           depthWrite: false,
         })
       );
@@ -596,8 +610,27 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
             roughness: 0.78,
           })
         );
-        const hullGeo = bag.add(new THREE.BoxGeometry(4.4, 0.72, 1.38));
-        const prowGeo = bag.add(new THREE.ConeGeometry(0.72, 1.35, 4));
+        // Tapered hull seen from above: square stern, full waist, bow drawn to a point
+        const fwd = side === 'atk' ? 1 : -1;
+        const plan = new THREE.Shape();
+        plan.moveTo(-2.25 * fwd, -0.5);
+        plan.quadraticCurveTo(-0.2 * fwd, -0.78, 1.5 * fwd, -0.6);
+        plan.quadraticCurveTo(2.55 * fwd, -0.42, 3.25 * fwd, 0);
+        plan.quadraticCurveTo(2.55 * fwd, 0.42, 1.5 * fwd, 0.6);
+        plan.quadraticCurveTo(-0.2 * fwd, 0.78, -2.25 * fwd, 0.5);
+        plan.closePath();
+        const hullGeo = bag.add(
+          new THREE.ExtrudeGeometry(plan, { depth: 0.72, bevelEnabled: false, curveSegments: 8 })
+        );
+        hullGeo.rotateX(-Math.PI * 0.5);
+        // Narrow the keel and lift the bow, so the hull has flare and sheer
+        const hp = hullGeo.attributes.position as THREE.BufferAttribute;
+        for (let vi = 0; vi < hp.count; vi++) {
+          const along = Math.max(0, hp.getX(vi) * fwd - 1.2) / 2.05;
+          if (hp.getY(vi) < 0.1) hp.setZ(vi, hp.getZ(vi) * 0.66);
+          else hp.setY(vi, hp.getY(vi) + along * along * 0.42);
+        }
+        hullGeo.computeVertexNormals();
         const cabinGeo = bag.add(new THREE.BoxGeometry(2.2, 0.95, 1.08));
         const upperGeo = bag.add(new THREE.BoxGeometry(1.4, 0.78, 0.86));
         const roofGeo = bag.add(new THREE.ConeGeometry(1.35, 0.55, 4));
@@ -608,19 +641,13 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
           const dir = side === 'atk' ? 1 : -1;
 
           const hull = new THREE.Mesh(hullGeo, hullMat);
-          hull.position.y = 0.24;
+          hull.position.y = -0.12;
           hull.castShadow = true;
           rig.add(hull);
 
-          const prow = new THREE.Mesh(prowGeo, hullMat);
-          prow.rotation.z = -dir * Math.PI * 0.5;
-          prow.rotation.y = Math.PI * 0.25;
-          prow.position.set(dir * 2.65, 0.34, 0);
-          rig.add(prow);
-
           const ram = new THREE.Mesh(bag.add(new THREE.ConeGeometry(0.22, 0.65, 6)), bronzeMat);
           ram.rotation.z = -dir * Math.PI * 0.5;
-          ram.position.set(dir * 3.15, 0.14, 0);
+          ram.position.set(dir * 3.3, 0.14, 0);
           rig.add(ram);
 
           const cabin = new THREE.Mesh(cabinGeo, deckMat);
@@ -756,29 +783,78 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       : [];
     const bombGeo = bag.add(new THREE.SphereGeometry(0.24, 10, 8));
     const bombMat = bag.add(new THREE.MeshStandardMaterial({ color: '#231f1d', roughness: 0.6, metalness: 0.7 }));
+    const dustTex = createDustPuffTexture(bag);
+    const flareTex = createImpactFlareTexture(bag);
     const blastGeo = bag.add(new THREE.SphereGeometry(1, 16, 12));
+    const ringGeo = bag.add(new THREE.RingGeometry(0.8, 1, 40));
+    ringGeo.rotateX(-Math.PI * 0.5);
+    // Each burst is a hot core and flare (additive, so they glow instead of reading as a
+    // flat disc), a shock ring racing over the ground, and smoke that outlives the flash.
     const bombVisuals = bombSpecs.map(() => {
       const shell = new THREE.Mesh(bombGeo, bombMat);
       shell.visible = false;
-      const blast = new THREE.Mesh(
+      const core = new THREE.Mesh(
         blastGeo,
         bag.add(
           new THREE.MeshBasicMaterial({
-            color: new THREE.Color(3.4, 1.35, 0.32),
+            color: new THREE.Color(1.5, 0.5, 0.1),
             transparent: true,
             opacity: 0,
             depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            fog: false,
           })
         )
       );
-      blast.visible = false;
-      world.add(shell, blast);
-      return { shell, blast };
+      const flare = new THREE.Sprite(
+        bag.add(
+          new THREE.SpriteMaterial({
+            map: flareTex,
+            color: '#ff8232',
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            fog: false,
+          })
+        )
+      );
+      const ring = new THREE.Mesh(
+        ringGeo,
+        bag.add(
+          new THREE.MeshBasicMaterial({
+            color: isRiver ? '#e8fbf6' : '#ff9a4a',
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide,
+          })
+        )
+      );
+      const smoke = [0, 1, 2].map(() => {
+        const sp = new THREE.Sprite(
+          bag.add(
+            new THREE.SpriteMaterial({
+              map: dustTex,
+              color: isRiver ? '#6f8386' : '#2b221c',
+              transparent: true,
+              opacity: 0,
+              depthWrite: false,
+            })
+          )
+        );
+        sp.visible = false;
+        return sp;
+      });
+      core.visible = false;
+      flare.visible = false;
+      ring.visible = false;
+      world.add(shell, core, flare, ring, ...smoke);
+      return { shell, core, flare, ring, smoke };
     });
 
     // --- Battle Dust Plumes & Steel Clash Sparks (Billboard Sprites)
-    const dustTex = createDustPuffTexture(bag);
-    const flareTex = createImpactFlareTexture(bag);
     const dustSprites = Array.from({ length: 18 }, (_, i) => {
       const mat = bag.add(
         new THREE.SpriteMaterial({
@@ -865,8 +941,8 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       const progress = Math.min(1, Math.max(0, t / 5.4));
       const chargeT = Math.min(1, t / 1.85);
       const chargeEase = 1 - Math.pow(1 - chargeT, 2.2);
-      const inMelee = t >= 1.55 && t < 4.25;
-      const isClimax = t >= 4.25;
+      const inMelee = t >= 1.55 && t < ROUT_AT;
+      const isClimax = t >= ROUT_AT;
 
       // 1. Water undulation on River maps
       if (waterGeo && waterBase && !reducedMotion) {
@@ -903,14 +979,14 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       // 4. Mounted Commanders & Instanced Soldiers (Land) OR Warship Fleets (River)
       if (!isRiver) {
         if (atkRig && defRig) {
-          const atkRetreat = isClimax && !scene.attackerWon ? (t - 4.25) * 4.5 : 0;
-          const defRetreat = isClimax && scene.attackerWon ? (t - 4.25) * 4.5 : 0;
+          const atkRetreat = isClimax && !scene.attackerWon ? (t - ROUT_AT) * 4.5 : 0;
+          const defRetreat = isClimax && scene.attackerWon ? (t - ROUT_AT) * 4.5 : 0;
 
           atkFrame.x = -10.5 + chargeEase * 9.35 - atkRetreat;
           atkFrame.z = 0.45;
           atkFrame.yaw = atkRetreat > 0 ? Math.PI : 0;
           atkFrame.gait = isClimax && scene.attackerWon ? 'rear' : inMelee && atkRetreat === 0 ? 'trot' : 'gallop';
-          atkFrame.rearAngle = isClimax && scene.attackerWon ? Math.min(0.62, (t - 4.25) * 1.1) : 0;
+          atkFrame.rearAngle = isClimax && scene.attackerWon ? Math.min(0.62, (t - ROUT_AT) * 1.1) : 0;
           atkFrame.pose =
             isClimax && scene.attackerWon
               ? 'victory_raise'
@@ -928,7 +1004,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
           defFrame.z = -0.45;
           defFrame.yaw = defRetreat > 0 ? 0 : Math.PI;
           defFrame.gait = isClimax && !scene.attackerWon ? 'rear' : inMelee && defRetreat === 0 ? 'trot' : 'gallop';
-          defFrame.rearAngle = isClimax && !scene.attackerWon ? Math.min(0.62, (t - 4.25) * 1.1) : 0;
+          defFrame.rearAngle = isClimax && !scene.attackerWon ? Math.min(0.62, (t - ROUT_AT) * 1.1) : 0;
           defFrame.pose =
             isClimax && !scene.attackerWon
               ? 'victory_raise'
@@ -950,7 +1026,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
         ) => {
           if (!bodies || !irons || !woods) return;
           const lostBattle = side === 'atk' ? !scene.attackerWon : scene.attackerWon;
-          const retreatDist = isClimax && lostBattle ? (t - 4.25) * 4.8 : 0;
+          const retreatDist = isClimax && lostBattle ? (t - ROUT_AT) * 4.8 : 0;
 
           for (let i = 0; i < slots.length; i++) {
             const s = slots[i];
@@ -998,7 +1074,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       } else {
         for (const ship of ships) {
           const lost = ship.side === 'atk' ? !scene.attackerWon : scene.attackerWon;
-          const retreat = isClimax && lost ? (t - 4.25) * 3.2 : 0;
+          const retreat = isClimax && lost ? (t - ROUT_AT) * 3.2 : 0;
           const x =
             ship.startX +
             (ship.clashX - ship.startX) * chargeEase +
@@ -1060,24 +1136,44 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
             1.6 + 4 * b.peak * u * (1 - u),
             b.sz + (b.ez - b.sz) * u
           );
-          vis.blast.visible = false;
+          vis.core.visible = vis.flare.visible = vis.ring.visible = false;
+          for (const sp of vis.smoke) sp.visible = false;
         } else {
           vis.shell.visible = false;
           const after = t - (b.t0 + b.dur);
-          if (after >= 0 && after < 0.65) {
-            const k = after / 0.65;
-            vis.blast.visible = true;
-            vis.blast.position.set(b.ex, 1.35 + k * 0.9, b.ez);
-            vis.blast.scale.setScalar(0.6 + k * 3.4);
-            (vis.blast.material as THREE.MeshBasicMaterial).opacity = (1 - k) * 0.85;
+          const burning = after >= 0 && after < BLAST_FIRE;
+          vis.core.visible = vis.flare.visible = vis.ring.visible = burning;
+          if (burning) {
+            const k = after / BLAST_FIRE;
+            const out = 1 - Math.pow(1 - k, 3);
+            const fade = (1 - k) * (1 - k);
+            vis.core.position.set(b.ex, 1.1 + out * 0.7, b.ez);
+            vis.core.scale.setScalar(0.35 + out * 1.25);
+            (vis.core.material as THREE.MeshBasicMaterial).opacity = fade * 0.9;
+            vis.flare.position.set(b.ex, 1.3 + out * 0.6, b.ez);
+            vis.flare.scale.setScalar(2.2 + out * 4.6);
+            vis.flare.material.opacity = fade * 0.85;
+            vis.ring.position.set(b.ex, isRiver ? 0.12 : 0.06, b.ez);
+            vis.ring.scale.setScalar(0.6 + out * 4.8);
+            (vis.ring.material as THREE.MeshBasicMaterial).opacity = (1 - k) * (isRiver ? 0.5 : 0.32);
             const flash = (1 - k) * 34;
             if (flash > maxBlastFlash) {
               maxBlastFlash = flash;
               blastLight.position.set(b.ex, 3.0, b.ez);
             }
             camShake = Math.max(camShake, (1 - k) * 0.22);
-          } else {
-            vis.blast.visible = false;
+          }
+          const smoking = after >= 0.06 && after < BLAST_SMOKE;
+          for (let si = 0; si < vis.smoke.length; si++) {
+            const sp = vis.smoke[si];
+            sp.visible = smoking;
+            if (!smoking) continue;
+            const ks = (after - 0.06) / (BLAST_SMOKE - 0.06);
+            const drift = (si - 1) * 0.55;
+            sp.position.set(b.ex + drift * (0.4 + ks), 1.0 + ks * (2.6 + si * 0.5), b.ez + drift * 0.3);
+            const sz = 1.5 + ks * (2.6 + si * 0.4);
+            sp.scale.set(sz, sz * 0.86, 1);
+            sp.material.opacity = Math.sin(Math.min(1, ks * 1.15) * Math.PI) * 0.5;
           }
         }
       }
@@ -1116,14 +1212,16 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       // 8. Sweeping Cinematic Camera Choreography
       if (!reducedMotion) {
         const camX = -4.2 + progress * 7.6 + Math.sin(t * 29) * camShake;
-        const camY = (isRiver ? 5.6 : 4.6) - Math.sin(progress * Math.PI) * 1.15 + Math.cos(t * 33) * camShake;
-        const camZ = (isRiver ? 17.8 : 15.8) - Math.sin(progress * Math.PI) * 2.8;
+        // Ships stand twice as tall as riders, so the river camera keeps its height and distance
+        const push = Math.sin(progress * Math.PI);
+        const camY = (isRiver ? 7.4 - push * 0.5 : 4.6 - push * 1.15) + Math.cos(t * 33) * camShake;
+        const camZ = isRiver ? 21.5 - push * 1.6 : 15.8 - push * 2.8;
         camera.position.set(camX, camY, camZ);
         const lookX = isFortress && !isRiver ? 1.8 * chargeEase : 0.4 * (progress - 0.5);
-        camera.lookAt(lookX, isRiver ? 1.35 : 1.75, -0.6);
+        camera.lookAt(lookX, isRiver ? 1.1 : 1.75, -0.6);
       } else {
-        camera.position.set(0, 5.0, 16.5);
-        camera.lookAt(0, 1.7, -0.5);
+        camera.position.set(0, isRiver ? 7.2 : 5.0, isRiver ? 20.5 : 16.5);
+        camera.lookAt(0, isRiver ? 1.1 : 1.7, -0.5);
       }
 
       renderer.render(world, camera);
@@ -1141,7 +1239,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
         host.removeChild(renderer.domElement);
       }
     };
-  }, [scene, elapsedRef, onFallback]);
+  }, [scene, elapsedRef]);
 
   return <div ref={mountRef} className="absolute inset-0 w-full h-full" />;
 }

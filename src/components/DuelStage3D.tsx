@@ -185,7 +185,7 @@ export function DuelStage3D({
     renderer.setPixelRatio(dpr);
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
     container.innerHTML = '';

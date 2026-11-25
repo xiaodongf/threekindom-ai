@@ -41,6 +41,7 @@ import type {
   BattlePreview,
   BattleReport,
   ChronicleEntry,
+  ChronoState,
   City,
   DiplomaticStatus,
   DuelResult,
@@ -52,6 +53,7 @@ import type {
   HeroEncounterMode,
   LocalizedText,
   MarchEvent,
+  MultiplayerWorldMeta,
   OperationReport,
   PlayableFactionId,
   PlayerProfile,
@@ -86,6 +88,21 @@ export function createDefaultPlayerProfile(avatar: 'male' | 'female' = 'male', n
     name: name.trim(),
     avatar,
     portrait: avatar === 'female' ? '/portraits/traveler_female.jpg' : '/portraits/traveler_male.jpg',
+  };
+}
+
+export function createDefaultChronoState(): ChronoState {
+  return {
+    trust: 55,
+    suspicion: 12,
+    divergence: 5,
+    innovationPoints: 1,
+    techFrozenTurns: 0,
+    coalitionActive: false,
+    unlockedTechs: [],
+    rivalTechs: { wei: [], shu: [], wu: [] },
+    pendingTechCopies: [],
+    triggeredEventIds: [],
   };
 }
 
@@ -128,18 +145,7 @@ export function createNewGame(
     cities,
     generals,
     diplomacy,
-    chrono: {
-      trust: 55,
-      suspicion: 12,
-      divergence: 5,
-      innovationPoints: 1,
-      techFrozenTurns: 0,
-      coalitionActive: false,
-      unlockedTechs: [],
-      rivalTechs: { wei: [], shu: [], wu: [] },
-      pendingTechCopies: [],
-      triggeredEventIds: [],
-    },
+    chrono: createDefaultChronoState(),
     activeEvent: null,
     chronicle: [introEntry],
     lastBattle: null,
@@ -147,6 +153,174 @@ export function createNewGame(
     recentMarches: [],
     winner: null,
     isPlayerDefeated: false,
+  };
+}
+
+export function createMultiplayerGame(opts: {
+  roomCode: string;
+  roomName: string;
+  humanFactions: PlayableFactionId[];
+  factionProfiles: Partial<Record<PlayableFactionId, PlayerProfile>>;
+}): GameState {
+  const turnOrder: PlayableFactionId[] = ['wei', 'shu', 'wu'];
+  const orderedHumans = turnOrder.filter((f) => opts.humanFactions.includes(f));
+  const firstActive: PlayableFactionId = orderedHumans[0] ?? 'shu';
+
+  const fullProfiles: Record<PlayableFactionId, PlayerProfile> = {
+    wei: opts.factionProfiles.wei ?? createDefaultPlayerProfile('male', 'Wei Strategist'),
+    shu: opts.factionProfiles.shu ?? createDefaultPlayerProfile('male', 'Shu Strategist'),
+    wu: opts.factionProfiles.wu ?? createDefaultPlayerProfile('female', 'Wu Strategist'),
+  };
+  const factionChronos: Record<PlayableFactionId, ChronoState> = {
+    wei: createDefaultChronoState(),
+    shu: createDefaultChronoState(),
+    wu: createDefaultChronoState(),
+  };
+
+  const base = createNewGame(firstActive, fullProfiles[firstActive]);
+  const humanNamesEn = orderedHumans.map((f) => `${base.factions[f].shortName.en} (${fullProfiles[f].name || 'Strategist'})`).join(', ');
+  const humanNamesZh = orderedHumans.map((f) => `${base.factions[f].shortName.zh}（${fullProfiles[f].name || '奇士'}）`).join('、');
+
+  const mpIntro: ChronicleEntry = {
+    id: nextId('log'),
+    turn: 1,
+    year: 214,
+    season: 'spring',
+    category: 'chrono',
+    faction: firstActive,
+    text: {
+      en: `214 AD — Shared Timeline Rift! Multiple Time-Travelers descend upon China [${humanNamesEn}]. Capture ${VICTORY_CITY_TARGET} cities to claim the Mandate of Heaven!`,
+      zh: `建安十九年（214年）春，群雄联机裂缝开启！多位天命奇士降临乱世【${humanNamesZh}】，夺取 ${VICTORY_CITY_TARGET} 座城池者一统天下！`,
+    },
+  };
+
+  const mpMeta: MultiplayerWorldMeta = {
+    roomCode: opts.roomCode,
+    roomName: opts.roomName,
+    humanFactions: orderedHumans.length > 0 ? orderedHumans : [firstActive],
+    turnOrder,
+    activeFaction: firstActive,
+    factionChronos,
+    factionProfiles: fullProfiles,
+  };
+
+  return {
+    ...base,
+    chrono: factionChronos[firstActive],
+    chronicle: [mpIntro],
+    multiplayer: mpMeta,
+  };
+}
+
+/** Syncs the currently active faction's `chrono` and `playerProfile` into `state.multiplayer`. */
+export function syncMultiplayerActiveFaction(state: GameState): GameState {
+  if (!state.multiplayer) return state;
+  const active = state.multiplayer.activeFaction;
+  const prevChronos = state.multiplayer.factionChronos;
+  const sharedDivergence = Math.max(
+    state.chrono.divergence,
+    prevChronos.wei.divergence,
+    prevChronos.shu.divergence,
+    prevChronos.wu.divergence
+  );
+  const nextChronos: Record<PlayableFactionId, ChronoState> = {
+    wei: { ...prevChronos.wei, divergence: sharedDivergence },
+    shu: { ...prevChronos.shu, divergence: sharedDivergence },
+    wu: { ...prevChronos.wu, divergence: sharedDivergence },
+  };
+  nextChronos[active] = {
+    ...state.chrono,
+    divergence: sharedDivergence,
+  };
+  // If any tech was reverse-engineered into rivalTechs for another human seat, unlock it in their chrono too
+  for (const fid of ['wei', 'shu', 'wu'] as PlayableFactionId[]) {
+    const copied = state.chrono.rivalTechs[fid] ?? [];
+    for (const tid of copied) {
+      if (!nextChronos[fid].unlockedTechs.includes(tid)) {
+        nextChronos[fid] = {
+          ...nextChronos[fid],
+          unlockedTechs: [...nextChronos[fid].unlockedTechs, tid],
+        };
+      }
+    }
+  }
+  const nextProfiles: Record<PlayableFactionId, PlayerProfile> = {
+    ...state.multiplayer.factionProfiles,
+    [active]: state.playerProfile,
+  };
+  return {
+    ...state,
+    chrono: nextChronos[active],
+    multiplayer: {
+      ...state.multiplayer,
+      factionChronos: nextChronos,
+      factionProfiles: nextProfiles,
+    },
+  };
+}
+
+/** Switches the canonical multiplayer state onto `nextFaction`'s turn and refills their seasonal orders. */
+export function activateMultiplayerSeat(
+  state: GameState,
+  nextFaction: PlayableFactionId,
+  rollStoryEvent = false
+): GameState {
+  const synced = syncMultiplayerActiveFaction(state);
+  if (!synced.multiplayer) return synced;
+  const chrono = synced.multiplayer.factionChronos[nextFaction] ?? createDefaultChronoState();
+  const profile =
+    synced.multiplayer.factionProfiles[nextFaction] ?? createDefaultPlayerProfile('male', '');
+
+  let switched: GameState = checkVictoryState({
+    ...synced,
+    playerFaction: nextFaction,
+    playerProfile: profile,
+    chrono,
+    activeEvent: null,
+    multiplayer: {
+      ...synced.multiplayer,
+      activeFaction: nextFaction,
+    },
+  });
+  const maxAP = getEffectiveMaxAP(switched);
+  switched = {
+    ...switched,
+    actionPoints: maxAP,
+    maxActionPoints: maxAP,
+  };
+  if (rollStoryEvent && !switched.winner && !switched.isPlayerDefeated) {
+    const ev = pickSeasonalStoryEvent(switched);
+    if (ev) switched = { ...switched, activeEvent: ev };
+  }
+  return syncMultiplayerActiveFaction(switched);
+}
+
+/** Projects a canonical multiplayer `GameState` for `viewerFaction` so each player sees their own court & tech. */
+export function projectStateForViewer(
+  state: GameState,
+  viewerFaction: PlayableFactionId
+): GameState {
+  const synced = syncMultiplayerActiveFaction(state);
+  if (!synced.multiplayer) return synced;
+  const active = synced.multiplayer.activeFaction;
+  if (viewerFaction === active) return synced;
+
+  const chrono = synced.multiplayer.factionChronos[viewerFaction] ?? synced.chrono;
+  const profile = synced.multiplayer.factionProfiles[viewerFaction] ?? synced.playerProfile;
+  const viewerCities = getFactionCities(synced, viewerFaction).length;
+  let viewerMaxAP = ordersForRealmSize(viewerCities);
+  if (chrono.trust >= 80) viewerMaxAP += 1;
+  if (chrono.unlockedTechs.includes('balloon')) viewerMaxAP += 1;
+
+  return {
+    ...synced,
+    playerFaction: viewerFaction,
+    playerProfile: profile,
+    chrono,
+    actionPoints: 0,
+    maxActionPoints: viewerMaxAP,
+    activeEvent: null,
+    isPlayerDefeated: viewerCities === 0,
   };
 }
 
@@ -328,6 +502,15 @@ export function checkVictoryState(state: GameState): GameState {
   }
   if (!winner && activePlayables.length === 1) {
     winner = activePlayables[0];
+  }
+  if (
+    !winner &&
+    state.multiplayer &&
+    state.multiplayer.humanFactions.length > 0 &&
+    state.multiplayer.humanFactions.every((f) => counts[f] === 0) &&
+    activePlayables.length > 0
+  ) {
+    winner = [...activePlayables].sort((a, b) => counts[b] - counts[a])[0];
   }
 
   const isPlayerDefeated = counts[state.playerFaction] === 0;
@@ -2558,6 +2741,36 @@ export function advanceSeason(state: GameState): GameState {
     pendingTechCopies: remainingCopies,
   };
 
+  let nextMultiplayer = state.multiplayer;
+  if (nextMultiplayer) {
+    const tickedChronos: Record<PlayableFactionId, ChronoState> = {
+      wei: { ...nextMultiplayer.factionChronos.wei },
+      shu: { ...nextMultiplayer.factionChronos.shu },
+      wu: { ...nextMultiplayer.factionChronos.wu },
+    };
+    for (const fid of ['wei', 'shu', 'wu'] as PlayableFactionId[]) {
+      const prevC = fid === state.playerFaction ? state.chrono : tickedChronos[fid];
+      const unlocked = [...prevC.unlockedTechs];
+      for (const tid of nextRivalTechs[fid] ?? []) {
+        if (!unlocked.includes(tid)) unlocked.push(tid);
+      }
+      tickedChronos[fid] = {
+        ...prevC,
+        innovationPoints: prevC.innovationPoints + 1,
+        techFrozenTurns: Math.max(0, prevC.techFrozenTurns - 1),
+        suspicion: clamp(prevC.suspicion - 5, 0, 100),
+        coalitionActive,
+        unlockedTechs: unlocked,
+        rivalTechs: nextRivalTechs,
+        pendingTechCopies: remainingCopies,
+      };
+    }
+    nextMultiplayer = {
+      ...nextMultiplayer,
+      factionChronos: tickedChronos,
+    };
+  }
+
   let nextState: GameState = checkVictoryState({
     ...state,
     turn: nextTurn,
@@ -2567,8 +2780,9 @@ export function advanceSeason(state: GameState): GameState {
     cities: nextCities,
     generals: nextGenerals,
     diplomacy: nextDiplomacy,
-    chrono: nextChrono,
+    chrono: nextMultiplayer ? nextMultiplayer.factionChronos[state.playerFaction] : nextChrono,
     chronicle: nextChronicle,
+    ...(nextMultiplayer ? { multiplayer: nextMultiplayer } : {}),
   });
 
   const maxAP = getEffectiveMaxAP(nextState);

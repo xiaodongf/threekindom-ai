@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bot,
   Castle,
+  Clock,
   Crown,
   FlaskConical,
   Grid2x2,
@@ -14,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { AdvisorPanel } from './components/AdvisorPanel.js';
+import { AuthModal } from './components/AuthModal.js';
 import { BattleReportModal } from './components/BattleModal.js';
 import { ChronicleLog } from './components/ChronicleLog.js';
 import { CityPanel } from './components/CityPanel.js';
@@ -29,6 +31,8 @@ import {
   OperationReportModal,
   type ExecuteMilitaryPayload,
 } from './components/MilitaryModal.js';
+import { MultiplayerModal } from './components/MultiplayerModal.js';
+import { SaveLoadModal } from './components/SaveLoadModal.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { StrategyMap, type ActiveMapMarch } from './components/StrategyMap.js';
 import { TacticalBattleModal } from './components/TacticalBattleModal.js';
@@ -61,11 +65,22 @@ import {
   performRewardHero,
   performSabotageBombard,
   performSowDiscord,
+  projectStateForViewer,
   resolveStoryEventChoice,
+  syncMultiplayerActiveFaction,
 } from './game/engine.js';
+import {
+  buildSaveEnvelope,
+  type SaveEnvelopeV1,
+  type SaveSlotId,
+  type SaveSlotSummary,
+  type SavedMidSessionState,
+  type SerializedPendingRivalTurn,
+} from './game/saveSystem.js';
 import type {
   TacticalBattleConfig,
   TacticalBattleOutcome,
+  TacticalBattleState,
 } from './game/tacticalTypes.js';
 import type {
   AIProviderStatus,
@@ -89,6 +104,22 @@ import type {
 } from './game/types.js';
 import { UI_TEXT, tLoc } from './i18n/translations.js';
 import { fetchProviders, requestAITurnDecision } from './services/aiClient.js';
+import {
+  commitMultiplayerState,
+  deleteSoloSave,
+  fetchMultiplayerRoom,
+  initAuthSession,
+  listMultiplayerRooms,
+  listSoloSaves,
+  loadCachedPreferences,
+  loadSoloSave,
+  putSoloSave,
+  subscribeToRoomEvents,
+  triggerSaveFileDownload,
+  updateServerPreferences,
+  type ClientUser,
+  type MultiplayerRoomSummary,
+} from './services/persistenceClient.js';
 import { battleAudio } from './utils/battleAudio.js';
 
 type RightTab = 'city' | 'heroes' | 'tech' | 'advisor' | 'diplomacy' | 'chronicle';
@@ -300,10 +331,25 @@ interface RivalOrder {
   byStaff: boolean;
 }
 
+function isPreviewQueryActive(): boolean {
+  if (typeof window === 'undefined') return false;
+  const p = new URLSearchParams(window.location.search);
+  return (
+    p.has('faction') ||
+    p.get('demoDuel') === '1' ||
+    p.get('demoWar') === '1' ||
+    p.get('demoMarch') === '1' ||
+    p.get('demoTactical') === '1'
+  );
+}
+
 export default function App() {
+  const [isDemoUrl] = useState<boolean>(() => isPreviewQueryActive());
   const [lang, setLang] = useState<Language>(() => {
     const p = new URLSearchParams(window.location.search).get('lang');
-    return p === 'zh' ? 'zh' : 'en';
+    if (p === 'zh' || p === 'en') return p;
+    const cached = loadCachedPreferences();
+    return cached.lang === 'zh' ? 'zh' : 'en';
   });
   const [gameState, setGameState] = useState<GameState | null>(() => {
     const f = new URLSearchParams(window.location.search).get('faction');
@@ -373,8 +419,36 @@ export default function App() {
   } | null>(null);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showSaves, setShowSaves] = useState(false);
+  const [showMultiplayer, setShowMultiplayer] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
+
+  const [currentUser, setCurrentUser] = useState<ClientUser | null>(null);
+  const [soloSaves, setSoloSaves] = useState<SaveSlotSummary[]>([]);
+  const [mpRooms, setMpRooms] = useState<MultiplayerRoomSummary[]>([]);
+  const [activeMpRoom, setActiveMpRoom] = useState<MultiplayerRoomSummary | null>(null);
+  const [saveIndicator, setSaveIndicator] = useState<'idle' | 'saving' | 'saved' | 'offline'>('idle');
+  const [battleStateNonce, setBattleStateNonce] = useState(0);
+
+  const mpVersionRef = useRef<number>(0);
+  const mpCommitChainRef = useRef<Promise<void>>(Promise.resolve());
+  const liveTacticalBattleRef = useRef<TacticalBattleState | undefined>(undefined);
+  const suppressAutosaveRef = useRef<boolean>(false);
+
   const [providers, setProviders] = useState<AIProviderStatus[]>(DEFAULT_PROVIDERS);
-  const [aiConfig, setAiConfig] = useState<AIRequestConfig>({ provider: 'auto' });
+  const [aiConfig, setAiConfig] = useState<AIRequestConfig>(() => {
+    const cached = loadCachedPreferences();
+    return cached.aiConfig ? { ...cached.aiConfig } : { provider: 'auto' };
+  });
+
+  const refreshPersistenceLists = useCallback(async (uid: string) => {
+    const [saves, roomsRes] = await Promise.all([
+      listSoloSaves(uid),
+      listMultiplayerRooms(),
+    ]);
+    setSoloSaves(saves);
+    setMpRooms(roomsRes.myRooms);
+  }, []);
 
   useEffect(() => {
     fetchProviders()
@@ -384,7 +458,57 @@ export default function App() {
       .catch(() => {
         // Keep defaults if offline
       });
-  }, []);
+
+    initAuthSession().then((user) => {
+      setCurrentUser(user);
+      const urlHasLang = new URLSearchParams(window.location.search).has('lang');
+      if (!urlHasLang && user.prefs?.lang) {
+        setLang(user.prefs.lang);
+      }
+      if (user.prefs?.aiConfig) {
+        setAiConfig((prev) => ({
+          ...user.prefs.aiConfig!,
+          ...(prev.apiKey ? { apiKey: prev.apiKey } : {}),
+        }));
+      }
+      void refreshPersistenceLists(user.id);
+    });
+  }, [refreshPersistenceLists]);
+
+  const handleAuthChanged = useCallback(
+    (nextUser: ClientUser) => {
+      setCurrentUser(nextUser);
+      if (nextUser.prefs?.lang) setLang(nextUser.prefs.lang);
+      if (nextUser.prefs?.aiConfig) {
+        setAiConfig((prev) => ({
+          ...nextUser.prefs.aiConfig!,
+          ...(prev.apiKey ? { apiKey: prev.apiKey } : {}),
+        }));
+      }
+      void refreshPersistenceLists(nextUser.id);
+    },
+    [refreshPersistenceLists]
+  );
+
+  const handleToggleLang = useCallback(() => {
+    setLang((prev) => {
+      const next: Language = prev === 'en' ? 'zh' : 'en';
+      if (!isDemoUrl && currentUser) {
+        void updateServerPreferences({ lang: next, aiConfig });
+      }
+      return next;
+    });
+  }, [aiConfig, currentUser, isDemoUrl]);
+
+  const handleSaveAiConfig = useCallback(
+    (nextConfig: AIRequestConfig) => {
+      setAiConfig(nextConfig);
+      if (!isDemoUrl && currentUser) {
+        void updateServerPreferences({ lang, aiConfig: nextConfig });
+      }
+    },
+    [currentUser, isDemoUrl, lang]
+  );
 
   const [demoElapsed, setDemoElapsed] = useState<number>(0);
   const [demoTacticalPreset, setDemoTacticalPreset] = useState<boolean>(false);
@@ -393,10 +517,13 @@ export default function App() {
   const [tacticalMarch, setTacticalMarch] = useState<{
     march: ActiveMapMarch;
     config: TacticalBattleConfig;
+    pendingRivalTurn?: SerializedPendingRivalTurn;
     onAfterTactical?: (updatedState: GameState) => void;
   } | null>(null);
   const [activeTactical, setActiveTactical] = useState<{
     config: TacticalBattleConfig;
+    initialBattleState?: TacticalBattleState;
+    pendingRivalTurn?: SerializedPendingRivalTurn;
     onAfterTactical?: (updatedState: GameState) => void;
   } | null>(null);
   const [tacticalReportModal, setTacticalReportModal] = useState<{
@@ -560,8 +687,10 @@ export default function App() {
     if (!tacticalMarch) return;
     battleAudio.playWarDrum(0.26);
     const timer = window.setTimeout(() => {
+      liveTacticalBattleRef.current = undefined;
       setActiveTactical({
         config: tacticalMarch.config,
+        pendingRivalTurn: tacticalMarch.pendingRivalTurn,
         onAfterTactical: tacticalMarch.onAfterTactical,
       });
       setTacticalMarch(null);
@@ -612,8 +741,359 @@ export default function App() {
     }
   }
 
+  const isMyTurnInMp =
+    !activeMpRoom ||
+    (activeMpRoom.status === 'active' &&
+      activeMpRoom.myFaction !== null &&
+      activeMpRoom.myFaction === activeMpRoom.activeFaction);
+
+  const canIssueOrders = !activeMpRoom || isMyTurnInMp;
+
+  /** Commits a player campaign state update (local + debounced cloud autosave in solo, live server commit in MP). */
+  const commitCampaignState = useCallback(
+    (next: GameState) => {
+      if (!activeMpRoom) {
+        setGameState(next);
+        return;
+      }
+      if (!isMyTurnInMp) return;
+
+      const synced = syncMultiplayerActiveFaction(next);
+      setGameState(synced);
+
+      const code = activeMpRoom.code;
+      mpCommitChainRef.current = mpCommitChainRef.current
+        .then(async () => {
+          setSaveIndicator('saving');
+          const res = await commitMultiplayerState(code, {
+            expectedVersion: mpVersionRef.current,
+            state: synced,
+            endTurn: false,
+            aiConfig,
+            language: lang,
+          });
+          mpVersionRef.current = res.room.stateVersion;
+          setActiveMpRoom(res.room);
+          const viewerFac = res.room.myFaction ?? res.room.activeFaction;
+          if (res.conflict) {
+            setGameState(projectStateForViewer(res.state, viewerFac));
+          }
+          setSaveIndicator('saved');
+        })
+        .catch(() => {
+          setSaveIndicator('offline');
+        });
+    },
+    [activeMpRoom, aiConfig, isMyTurnInMp, lang]
+  );
+
+  // Build current solo mid-session state (mid-8x8 tactical battle or incoming defense prompt)
+  const buildCurrentMidSession = useCallback((): SavedMidSessionState | undefined => {
+    if (activeTactical) {
+      return {
+        activeTactical: {
+          config: activeTactical.config,
+          battleState: liveTacticalBattleRef.current ?? activeTactical.initialBattleState,
+          pendingRivalTurn: activeTactical.pendingRivalTurn,
+        },
+      };
+    }
+    if (incomingDefensePrompt) {
+      return {
+        incomingDefense: {
+          attackerFaction: incomingDefensePrompt.attackerFaction,
+          fromCityId: incomingDefensePrompt.fromCityId,
+          toCityId: incomingDefensePrompt.toCityId,
+          troops: incomingDefensePrompt.troops,
+          action: incomingDefensePrompt.action,
+          proclamation: incomingDefensePrompt.proclamation,
+          remainingAiFactions: incomingDefensePrompt.remainingAiFactions,
+          accumulatedWarSnapshots: incomingDefensePrompt.accumulatedWarItems.map((w) => ({
+            battleReport: w.battleReport ?? null,
+            operationReport: w.operationReport ?? null,
+            fromCityId: w.scene.fromCityId,
+            toCityId: w.scene.toCityId,
+            pincerFromCityId: w.scene.pincerFromCityId,
+            isRiverStrike: w.scene.mode === 'river_strike',
+            isPlayerDefending: w.scene.isPlayerDefending,
+          })),
+        },
+      };
+    }
+    return undefined;
+  }, [activeTactical, incomingDefensePrompt]);
+
+  const performSoloSlotSave = useCallback(
+    async (slotId: SaveSlotId, customLabel?: string) => {
+      if (!gameState || activeMpRoom || !currentUser) return;
+      setSaveIndicator('saving');
+      const envelope = buildSaveEnvelope(
+        slotId,
+        gameState,
+        { selectedCityId, activeTab, sheetOpen },
+        {
+          label: customLabel,
+          session: buildCurrentMidSession(),
+        }
+      );
+      const res = await putSoloSave(currentUser.id, envelope);
+      setSaveIndicator(res.syncedToCloud ? 'saved' : 'offline');
+      setSoloSaves((prev) => {
+        const filtered = prev.filter((s) => s.slotId !== slotId);
+        return [res.summary, ...filtered];
+      });
+    },
+    [
+      activeMpRoom,
+      activeTab,
+      buildCurrentMidSession,
+      currentUser,
+      gameState,
+      selectedCityId,
+      sheetOpen,
+    ]
+  );
+
+  // Rolling 400ms debounced solo autosave on campaign or 8x8 battle progression
+  useEffect(() => {
+    if (!gameState || activeMpRoom || isDemoUrl || !currentUser || suppressAutosaveRef.current) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void performSoloSlotSave('autosave');
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [
+    gameState,
+    activeTactical,
+    incomingDefensePrompt,
+    battleStateNonce,
+    activeMpRoom,
+    isDemoUrl,
+    currentUser,
+    performSoloSlotSave,
+  ]);
+
+  // Keyboard shortcut: Ctrl/Cmd + S opens Imperial Archives (or Multiplayer modal in MP)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        const el = e.target as HTMLElement | null;
+        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+          return;
+        }
+        e.preventDefault();
+        if (activeMpRoom) setShowMultiplayer(true);
+        else setShowSaves(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeMpRoom]);
+
+  // Live SSE synchronization when inside a Shared Multiplayer Room
+  useEffect(() => {
+    if (!activeMpRoom) return;
+    const code = activeMpRoom.code;
+    const unsub = subscribeToRoomEvents(code, {
+      onRoomUpdate: async (ev) => {
+        if (ev.stateVersion <= mpVersionRef.current) return;
+        try {
+          const fresh = await fetchMultiplayerRoom(code);
+          if (!fresh.state) return;
+          mpVersionRef.current = fresh.room.stateVersion;
+          setActiveMpRoom(fresh.room);
+          const viewerFac = fresh.room.myFaction ?? fresh.room.activeFaction;
+          setGameState(projectStateForViewer(fresh.state, viewerFac));
+          if (
+            ev.turnEnded &&
+            fresh.room.status === 'active' &&
+            fresh.room.myFaction === fresh.room.activeFaction
+          ) {
+            battleAudio.playWarDrum(0.28);
+          }
+        } catch {
+          // ignore transient fetch errors
+        }
+      },
+      onPresence: async () => {
+        try {
+          const fresh = await fetchMultiplayerRoom(code);
+          setActiveMpRoom(fresh.room);
+        } catch {
+          // ignore
+        }
+      },
+      onClosed: () => {
+        setActiveMpRoom(null);
+        setGameState(null);
+      },
+    });
+    return unsub;
+  }, [activeMpRoom?.code]);
+
+  function rebuildWarItemsFromSnapshots(
+    baseState: GameState,
+    snaps: SerializedPendingRivalTurn['accumulatedWarSnapshots']
+  ): WarTheaterQueueItem[] {
+    const out: WarTheaterQueueItem[] = [];
+    for (const s of snaps) {
+      if (s.battleReport) {
+        out.push(
+          buildBattleWarItem(baseState, s.battleReport, {
+            pincerFromCityId: s.pincerFromCityId,
+            isRiverStrike: s.isRiverStrike,
+            isPlayerDefending: s.isPlayerDefending,
+          })
+        );
+      } else if (s.operationReport) {
+        const targetCity = baseState.cities[s.toCityId];
+        out.push(
+          buildOperationWarItem(
+            baseState,
+            s.operationReport,
+            8000,
+            targetCity?.troops ?? 6000,
+            targetCity?.owner ?? 'neutral',
+            Boolean(s.isPlayerDefending)
+          )
+        );
+      }
+    }
+    return out;
+  }
+
+  function restoreFromEnvelope(envelope: SaveEnvelopeV1) {
+    suppressAutosaveRef.current = true;
+    setActiveMpRoom(null);
+    mpVersionRef.current = 0;
+    setWarQueue([]);
+    setWarStage('idle');
+    setWarBatchTotal(0);
+    setTacticalMarch(null);
+    setTacticalReportModal(null);
+    setPendingMilitary(null);
+    setActiveDuel(null);
+    setHeroEncounter(null);
+    setAttackMode(false);
+    setDemoTacticalPreset(false);
+
+    setGameState(envelope.state);
+    setSelectedCityId(envelope.ui.selectedCityId);
+    setActiveTab(envelope.ui.activeTab);
+    setSheetOpen(envelope.ui.sheetOpen);
+
+    const savedTac = envelope.session?.activeTactical;
+    const savedDef = envelope.session?.incomingDefense;
+
+    if (savedTac) {
+      liveTacticalBattleRef.current = savedTac.battleState;
+      setIncomingDefensePrompt(null);
+      setActiveTactical({
+        config: savedTac.config,
+        initialBattleState: savedTac.battleState,
+        pendingRivalTurn: savedTac.pendingRivalTurn,
+        onAfterTactical: savedTac.pendingRivalTurn
+          ? (updatedAfterDef) => {
+              const items = rebuildWarItemsFromSnapshots(
+                updatedAfterDef,
+                savedTac.pendingRivalTurn!.accumulatedWarSnapshots
+              );
+              void runEndTurnPipeline(
+                updatedAfterDef,
+                savedTac.pendingRivalTurn!.remainingAiFactions,
+                items
+              );
+            }
+          : undefined,
+      });
+    } else if (savedDef) {
+      liveTacticalBattleRef.current = undefined;
+      setActiveTactical(null);
+      setIncomingDefensePrompt({
+        attackerFaction: savedDef.attackerFaction,
+        fromCityId: savedDef.fromCityId,
+        toCityId: savedDef.toCityId,
+        troops: savedDef.troops,
+        action: savedDef.action,
+        proclamation: savedDef.proclamation,
+        snapshotState: envelope.state,
+        remainingAiFactions: savedDef.remainingAiFactions,
+        accumulatedWarItems: rebuildWarItemsFromSnapshots(
+          envelope.state,
+          savedDef.accumulatedWarSnapshots
+        ),
+      });
+    } else {
+      liveTacticalBattleRef.current = undefined;
+      setActiveTactical(null);
+      setIncomingDefensePrompt(null);
+    }
+
+    window.setTimeout(() => {
+      suppressAutosaveRef.current = false;
+    }, 100);
+  }
+
+  function enterMultiplayerCampaign(room: MultiplayerRoomSummary, serverState: GameState) {
+    mpVersionRef.current = room.stateVersion;
+    setActiveMpRoom(room);
+    const viewerFac = room.myFaction ?? room.activeFaction;
+    const projected = projectStateForViewer(serverState, viewerFac);
+    const cap =
+      Object.values(projected.cities).find((c) => c.owner === viewerFac && c.isCapital) ??
+      Object.values(projected.cities).find((c) => c.owner === viewerFac);
+
+    setGameState(projected);
+    setSelectedCityId(cap?.id ?? null);
+    openTab('heroes');
+    setFocusedHeroId(null);
+    setAttackMode(false);
+    setWarQueue([]);
+    setWarStage('idle');
+    setWarBatchTotal(0);
+    setTacticalMarch(null);
+    setActiveTactical(null);
+    setTacticalReportModal(null);
+    setIncomingDefensePrompt(null);
+    setPendingMilitary(null);
+    setActiveDuel(null);
+    setHeroEncounter(null);
+    setSaveIndicator('saved');
+    if (currentUser) void refreshPersistenceLists(currentUser.id);
+  }
+
+  async function handleReturnToTitle() {
+    if (gameState && !activeMpRoom && !isDemoUrl && currentUser) {
+      await performSoloSlotSave('autosave');
+    }
+    setActiveMpRoom(null);
+    mpVersionRef.current = 0;
+    liveTacticalBattleRef.current = undefined;
+    setActiveTactical(null);
+    setTacticalMarch(null);
+    setTacticalReportModal(null);
+    setIncomingDefensePrompt(null);
+    setPendingMilitary(null);
+    setActiveDuel(null);
+    setHeroEncounter(null);
+    setWarQueue([]);
+    setWarStage('idle');
+    setGameState(null);
+    if (currentUser) void refreshPersistenceLists(currentUser.id);
+  }
+
   function startCampaign(faction: PlayableFactionId, profile?: PlayerProfile) {
-    const fresh = createNewGame(faction, profile || createDefaultPlayerProfile());
+    setActiveMpRoom(null);
+    mpVersionRef.current = 0;
+    liveTacticalBattleRef.current = undefined;
+    const resolvedProfile =
+      profile ||
+      createDefaultPlayerProfile(
+        currentUser?.avatar ?? 'male',
+        currentUser && !currentUser.isGuest ? currentUser.displayName : ''
+      );
+    const fresh = createNewGame(faction, resolvedProfile);
     const capital = Object.values(fresh.cities).find(
       (c) => c.owner === faction && c.isCapital
     );
@@ -636,9 +1116,9 @@ export default function App() {
   }
 
   function handleTogglePlayerAvatar() {
-    if (!gameState) return;
+    if (!gameState || !canIssueOrders) return;
     const nextAvatar = gameState.playerProfile.avatar === 'male' ? 'female' : 'male';
-    setGameState({
+    commitCampaignState({
       ...gameState,
       playerProfile: createDefaultPlayerProfile(nextAvatar, gameState.playerProfile.name),
     });
@@ -657,8 +1137,9 @@ export default function App() {
   function handleTacticalBattleCompleted(outcome: TacticalBattleOutcome) {
     if (!gameState) return;
     const afterHook = activeTactical?.onAfterTactical;
+    liveTacticalBattleRef.current = undefined;
     const updated = applyTacticalBattleOutcome(gameState, outcome);
-    setGameState(updated);
+    commitCampaignState(updated);
     setActiveTactical(null);
     setDemoTacticalPreset(false);
 
@@ -753,7 +1234,7 @@ export default function App() {
         isRiverStrike: payload.actionType === 'river_strike',
       }
     );
-    setGameState(updated);
+    commitCampaignState(updated);
     if (updated.lastBattle) {
       const warItem = buildBattleWarItem(updated, updated.lastBattle, {
         pincerFromCityId: payload.pincerFromCityId,
@@ -765,7 +1246,7 @@ export default function App() {
   }
 
   function handleExecuteMilitary(payload: ExecuteMilitaryPayload) {
-    if (!gameState) return;
+    if (!gameState || !canIssueOrders) return;
 
     const preFromTroops = gameState.cities[payload.fromCityId]?.troops ?? 0;
     const preTargetCity = gameState.cities[payload.toCityId];
@@ -781,7 +1262,7 @@ export default function App() {
         payload.generalId,
         true
       );
-      setGameState(updated);
+      commitCampaignState(updated);
       setPendingMilitary(null);
       setAttackMode(false);
       if (updated.lastOperation) {
@@ -808,7 +1289,7 @@ export default function App() {
         payload.generalId,
         true
       );
-      setGameState(updated);
+      commitCampaignState(updated);
       setPendingMilitary(null);
       setAttackMode(false);
       if (updated.lastOperation) {
@@ -834,7 +1315,7 @@ export default function App() {
         payload.generalId,
         true
       );
-      setGameState(updated);
+      commitCampaignState(updated);
       setPendingMilitary(null);
       setAttackMode(false);
       if (updated.lastOperation) {
@@ -863,11 +1344,11 @@ export default function App() {
   }
 
   function handleReinforce(fromCityId: string, toCityId: string) {
-    if (!gameState) return;
+    if (!gameState || !canIssueOrders) return;
     const fromCity = gameState.cities[fromCityId];
     if (!fromCity) return;
     const amount = Math.round(fromCity.troops * 0.4);
-    setGameState(
+    commitCampaignState(
       performReinforceCity(gameState, gameState.playerFaction, fromCityId, toCityId, amount, true)
     );
   }
@@ -878,7 +1359,7 @@ export default function App() {
     res: HeroEncounterResponse,
     giftGold: number
   ) {
-    if (!gameState) return;
+    if (!gameState || !canIssueOrders) return;
     const hero = gameState.generals[heroId];
     if (!hero) return;
 
@@ -898,7 +1379,7 @@ export default function App() {
               zh: `拜访${hero.name.zh}（${mode === 'recruit' ? '招贤' : '劝降'}）：结果 ${res.outcome}。`,
             };
 
-    setGameState(
+    commitCampaignState(
       applyHeroEncounterOutcome(
         gameState,
         heroId,
@@ -919,7 +1400,7 @@ export default function App() {
     result: DiplomacyResponse,
     giftGold: number
   ) {
-    if (!gameState) return;
+    if (!gameState || !canIssueOrders) return;
     const playerF = gameState.factions[gameState.playerFaction];
     const targetF = gameState.factions[targetFaction];
 
@@ -930,7 +1411,7 @@ export default function App() {
 
     const actualGift = proposalType === 'gift' && result.decision !== 'reject' ? giftGold : 0;
 
-    setGameState(
+    commitCampaignState(
       applyDiplomacyOutcome(
         gameState,
         gameState.playerFaction,
@@ -1114,10 +1595,23 @@ export default function App() {
         zh: `保卫${targetName.zh}！${atkShort.zh}军压境，展开 8×8 守城沙盘战！`,
       },
     };
+    const pendingRivalTurn: SerializedPendingRivalTurn = {
+      remainingAiFactions: prompt.remainingAiFactions,
+      accumulatedWarSnapshots: prompt.accumulatedWarItems.map((w) => ({
+        battleReport: w.battleReport ?? null,
+        operationReport: w.operationReport ?? null,
+        fromCityId: w.scene.fromCityId,
+        toCityId: w.scene.toCityId,
+        pincerFromCityId: w.scene.pincerFromCityId,
+        isRiverStrike: w.scene.mode === 'river_strike',
+        isPlayerDefending: w.scene.isPlayerDefending,
+      })),
+    };
     setDemoTacticalPreset(false);
     setTacticalMarch({
       march,
       config,
+      pendingRivalTurn,
       onAfterTactical: (updatedAfterDef) => {
         void runEndTurnPipeline(
           updatedAfterDef,
@@ -1140,6 +1634,34 @@ export default function App() {
     ) {
       return;
     }
+
+    if (activeMpRoom) {
+      if (!isMyTurnInMp) return;
+      setIsEndingTurn(true);
+      try {
+        await mpCommitChainRef.current;
+        const synced = syncMultiplayerActiveFaction(gameState);
+        const res = await commitMultiplayerState(activeMpRoom.code, {
+          expectedVersion: mpVersionRef.current,
+          state: synced,
+          endTurn: true,
+          aiConfig,
+          language: lang,
+        });
+        mpVersionRef.current = res.room.stateVersion;
+        setActiveMpRoom(res.room);
+        const viewerFac = res.room.myFaction ?? res.room.activeFaction;
+        setGameState(projectStateForViewer(res.state, viewerFac));
+        setSaveIndicator('saved');
+      } catch (err) {
+        console.warn('Multiplayer end turn failed:', err);
+        setSaveIndicator('offline');
+      } finally {
+        setIsEndingTurn(false);
+      }
+      return;
+    }
+
     const rivalOrders: RivalOrder[] = [];
     for (const fid of ['wei', 'shu', 'wu'] as PlayableFactionId[]) {
       if (fid === gameState.playerFaction || gameState.factions[fid].isEliminated) continue;
@@ -1157,26 +1679,137 @@ export default function App() {
         'HEURISTIC'
       : aiConfig.provider.toUpperCase();
 
+  const resumeSoloSummary =
+    soloSaves
+      .filter((s) => !s.winner && !s.isPlayerDefeated)
+      .sort((a, b) => b.savedAt.localeCompare(a.savedAt))[0] ??
+    soloSaves[0] ??
+    null;
+
+  const resumeMpRoom =
+    mpRooms.find((r) => r.status === 'active' && r.myFaction === r.activeFaction) ??
+    mpRooms.find((r) => r.status === 'active') ??
+    null;
+
+  const sharedPersistenceModals = (
+    <>
+      {showSettings && (
+        <SettingsModal
+          lang={lang}
+          providers={providers}
+          currentConfig={aiConfig}
+          onSave={handleSaveAiConfig}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {showAuth && currentUser && (
+        <AuthModal
+          lang={lang}
+          user={currentUser}
+          onAuthChanged={handleAuthChanged}
+          onClose={() => setShowAuth(false)}
+        />
+      )}
+
+      {showSaves && currentUser && (
+        <SaveLoadModal
+          lang={lang}
+          user={currentUser}
+          saves={soloSaves}
+          canSaveCurrent={Boolean(gameState && !activeMpRoom)}
+          onSaveSlot={async (slotId, customLabel) => {
+            await performSoloSlotSave(slotId, customLabel);
+          }}
+          onLoadSlot={async (slotId) => {
+            const env = await loadSoloSave(currentUser.id, slotId);
+            restoreFromEnvelope(env);
+          }}
+          onDeleteSlot={async (slotId) => {
+            await deleteSoloSave(currentUser.id, slotId);
+            setSoloSaves((prev) => prev.filter((s) => s.slotId !== slotId));
+          }}
+          onExportSlot={async (slotId) => {
+            const env = await loadSoloSave(currentUser.id, slotId);
+            triggerSaveFileDownload(env);
+          }}
+          onExportCurrent={
+            gameState && !activeMpRoom
+              ? () => {
+                  const env = buildSaveEnvelope(
+                    'slot-1',
+                    gameState,
+                    { selectedCityId, activeTab, sheetOpen },
+                    { session: buildCurrentMidSession() }
+                  );
+                  triggerSaveFileDownload(env);
+                }
+              : undefined
+          }
+          onImportEnvelope={async (env) => {
+            const res = await putSoloSave(currentUser.id, env);
+            setSoloSaves((prev) => [
+              res.summary,
+              ...prev.filter((s) => s.slotId !== env.slotId),
+            ]);
+            restoreFromEnvelope(env);
+          }}
+          onOpenAuth={() => setShowAuth(true)}
+          onClose={() => setShowSaves(false)}
+        />
+      )}
+
+      {showMultiplayer && currentUser && (
+        <MultiplayerModal
+          lang={lang}
+          user={currentUser}
+          activeRoomCode={activeMpRoom?.code ?? null}
+          onEnterCampaign={enterMultiplayerCampaign}
+          onOpenAuth={() => setShowAuth(true)}
+          onClose={() => {
+            setShowMultiplayer(false);
+            void refreshPersistenceLists(currentUser.id);
+          }}
+        />
+      )}
+    </>
+  );
+
   if (!gameState) {
     return (
       <>
         <FactionSelect
           lang={lang}
-          onToggleLang={() => setLang((l) => (l === 'en' ? 'zh' : 'en'))}
+          onToggleLang={handleToggleLang}
           onSelectFaction={startCampaign}
           onOpenSettings={() => setShowSettings(true)}
           providers={providers}
           selectedProviderMode={aiConfig.provider}
+          user={currentUser}
+          resumeSoloSummary={resumeSoloSummary}
+          resumeMpRoom={resumeMpRoom}
+          totalSaveCount={soloSaves.length}
+          activeMpCount={mpRooms.filter((r) => r.status !== 'finished').length}
+          onResumeSolo={
+            currentUser && resumeSoloSummary
+              ? () => {
+                  void loadSoloSave(currentUser.id, resumeSoloSummary.slotId).then(
+                    restoreFromEnvelope
+                  );
+                }
+              : undefined
+          }
+          onResumeMpRoom={(room) => {
+            void fetchMultiplayerRoom(room.code).then((res) => {
+              if (res.state) enterMultiplayerCampaign(res.room, res.state);
+              else setShowMultiplayer(true);
+            });
+          }}
+          onOpenSaves={() => setShowSaves(true)}
+          onOpenMultiplayer={() => setShowMultiplayer(true)}
+          onOpenAuth={() => setShowAuth(true)}
         />
-        {showSettings && (
-          <SettingsModal
-            lang={lang}
-            providers={providers}
-            currentConfig={aiConfig}
-            onSave={setAiConfig}
-            onClose={() => setShowSettings(false)}
-          />
-        )}
+        {sharedPersistenceModals}
       </>
     );
   }
@@ -1215,12 +1848,30 @@ export default function App() {
         lang={lang}
         isEndingTurn={isEndingTurn}
         providerLabel={providerLabel}
-        onToggleLang={() => setLang((l) => (l === 'en' ? 'zh' : 'en'))}
+        onToggleLang={handleToggleLang}
         onTogglePlayerAvatar={handleTogglePlayerAvatar}
         onOpenSettings={() => setShowSettings(true)}
         onEndTurn={handleEndTurn}
-        onNewGame={() => setGameState(null)}
+        onNewGame={() => void handleReturnToTitle()}
+        user={currentUser}
+        saveIndicator={saveIndicator}
+        activeMpRoom={activeMpRoom}
+        isMyTurnInMp={isMyTurnInMp}
+        onOpenSaves={() => setShowSaves(true)}
+        onOpenMultiplayer={() => setShowMultiplayer(true)}
+        onOpenAuth={() => setShowAuth(true)}
       />
+
+      {activeMpRoom && !isMyTurnInMp && activeMpRoom.status === 'active' && (
+        <div className="shrink-0 z-20 bg-gradient-to-r from-[#1f1911] via-[#2b2114] to-[#1f1911] border-b border-amber-400/30 px-4 py-1.5 flex items-center justify-center gap-2 text-xs text-amber-100">
+          <Clock className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+          <span>
+            {zh
+              ? `联机模式 · 当前正由【${gameState.factions[activeMpRoom.activeFaction].name.zh}】（${activeMpRoom.seats[activeMpRoom.activeFaction].playerName}）下令行动，你可自由巡视地图与战报，轮到你时将自动同步提醒！`
+              : `Multiplayer · ${gameState.factions[activeMpRoom.activeFaction].name.en} (${activeMpRoom.seats[activeMpRoom.activeFaction].playerName}) is issuing orders. Browse freely — the map updates live when your turn begins!`}
+          </span>
+        </div>
+      )}
 
       <SeasonBanner
         turn={gameState.turn}
@@ -1236,14 +1887,18 @@ export default function App() {
             state={gameState}
             lang={lang}
             selectedCityId={selectedCityId}
-            attackMode={attackMode}
+            attackMode={attackMode && canIssueOrders}
             activeMapMarch={
               tacticalMarch?.march ??
               (warStage === 'march' ? activeWarItem?.march ?? null : null)
             }
-            onToggleAttackMode={() => setAttackMode((v) => !v)}
+            onToggleAttackMode={() => {
+              if (!canIssueOrders) return;
+              setAttackMode((v) => !v);
+            }}
             onSelectCity={handleSelectCity}
             onQuickTargetEnemy={(targetCityId) => {
+              if (!canIssueOrders) return;
               setSelectedCityId(targetCityId);
               setPendingMilitary({ targetCityId });
               setAttackMode(false);
@@ -1308,24 +1963,29 @@ export default function App() {
                 state={gameState}
                 lang={lang}
                 selectedCityId={selectedCityId}
-                onDevelop={(cid) =>
-                  setGameState(performDevelopCity(gameState, gameState.playerFaction, cid, true))
-                }
-                onFortify={(cid) =>
-                  setGameState(performFortifyCity(gameState, gameState.playerFaction, cid, true))
-                }
-                onRecruit={(cid) =>
-                  setGameState(performRecruitTroops(gameState, gameState.playerFaction, cid, true))
-                }
-                onOpenMilitary={(targetCityId, fromCityId, action) =>
-                  setPendingMilitary({ targetCityId, fromCityId, action })
-                }
+                onDevelop={(cid) => {
+                  if (!canIssueOrders) return;
+                  commitCampaignState(performDevelopCity(gameState, gameState.playerFaction, cid, true));
+                }}
+                onFortify={(cid) => {
+                  if (!canIssueOrders) return;
+                  commitCampaignState(performFortifyCity(gameState, gameState.playerFaction, cid, true));
+                }}
+                onRecruit={(cid) => {
+                  if (!canIssueOrders) return;
+                  commitCampaignState(performRecruitTroops(gameState, gameState.playerFaction, cid, true));
+                }}
+                onOpenMilitary={(targetCityId, fromCityId, action) => {
+                  if (!canIssueOrders) return;
+                  setPendingMilitary({ targetCityId, fromCityId, action });
+                }}
                 onReinforce={handleReinforce}
                 onSelectCity={handleSelectCity}
                 onInspectHero={handleInspectHero}
-                onRecruitWanderingHero={(heroId) =>
-                  setHeroEncounter({ heroId, mode: 'recruit' })
-                }
+                onRecruitWanderingHero={(heroId) => {
+                  if (!canIssueOrders) return;
+                  setHeroEncounter({ heroId, mode: 'recruit' });
+                }}
               />
             )}
 
@@ -1335,8 +1995,9 @@ export default function App() {
                 lang={lang}
                 focusedHeroId={focusedHeroId}
                 onSelectFocusHero={setFocusedHeroId}
-                onRelocateHero={(heroId, targetCityId) =>
-                  setGameState(
+                onRelocateHero={(heroId, targetCityId) => {
+                  if (!canIssueOrders) return;
+                  commitCampaignState(
                     performRelocateHero(
                       gameState,
                       gameState.playerFaction,
@@ -1344,15 +2005,20 @@ export default function App() {
                       targetCityId,
                       true
                     )
-                  )
-                }
-                onRewardHero={(heroId) =>
-                  setGameState(performRewardHero(gameState, gameState.playerFaction, heroId))
-                }
-                onOpenEncounter={(heroId, mode) => setHeroEncounter({ heroId, mode })}
-                onPrisonerAction={(heroId, action) =>
-                  setGameState(performPrisonerAction(gameState, heroId, action))
-                }
+                  );
+                }}
+                onRewardHero={(heroId) => {
+                  if (!canIssueOrders) return;
+                  commitCampaignState(performRewardHero(gameState, gameState.playerFaction, heroId));
+                }}
+                onOpenEncounter={(heroId, mode) => {
+                  if (!canIssueOrders) return;
+                  setHeroEncounter({ heroId, mode });
+                }}
+                onPrisonerAction={(heroId, action) => {
+                  if (!canIssueOrders) return;
+                  commitCampaignState(performPrisonerAction(gameState, heroId, action));
+                }}
               />
             )}
 
@@ -1360,9 +2026,10 @@ export default function App() {
               <TechLabPanel
                 state={gameState}
                 lang={lang}
-                onResearchTech={(techId: TechId, researcherId?: string) =>
-                  setGameState(performResearchTech(gameState, techId, researcherId))
-                }
+                onResearchTech={(techId: TechId, researcherId?: string) => {
+                  if (!canIssueOrders) return;
+                  commitCampaignState(performResearchTech(gameState, techId, researcherId));
+                }}
               />
             )}
 
@@ -1417,7 +2084,7 @@ export default function App() {
       </main>
 
       {/* Unified War Room Military Operations Modal (5 Operations + Live Odds + Pincer) */}
-      {pendingMilitary && (
+      {pendingMilitary && canIssueOrders && (
         <MilitaryModal
           state={gameState}
           lang={lang}
@@ -1523,6 +2190,19 @@ export default function App() {
           config={activeTactical.config}
           lang={lang}
           demoPreset={demoTacticalPreset}
+          initialBattleState={activeTactical.initialBattleState}
+          onBattleStateChange={(b) => {
+            liveTacticalBattleRef.current = b;
+            setBattleStateNonce((n) => n + 1);
+          }}
+          onSaveAndExit={
+            !activeMpRoom
+              ? (b) => {
+                  liveTacticalBattleRef.current = b;
+                  void handleReturnToTitle();
+                }
+              : undefined
+          }
           onComplete={handleTacticalBattleCompleted}
         />
       )}
@@ -1540,7 +2220,7 @@ export default function App() {
           }}
           onPersuadePrisoner={(heroId) => setHeroEncounter({ heroId, mode: 'persuade' })}
           onPrisonerAction={(heroId, action) =>
-            setGameState(performPrisonerAction(gameState, heroId, action))
+            commitCampaignState(performPrisonerAction(gameState, heroId, action))
           }
         />
       )}
@@ -1576,13 +2256,13 @@ export default function App() {
           onClose={handleCloseWarReport}
           onPersuadePrisoner={(heroId) => setHeroEncounter({ heroId, mode: 'persuade' })}
           onPrisonerAction={(heroId, action) =>
-            setGameState(performPrisonerAction(gameState, heroId, action))
+            commitCampaignState(performPrisonerAction(gameState, heroId, action))
           }
         />
       )}
 
       {/* AI Hero Recruitment / Persuasion / Private Chat Modal */}
-      {heroEncounter && (
+      {heroEncounter && canIssueOrders && (
         <HeroRecruitModal
           state={gameState}
           lang={lang}
@@ -1595,24 +2275,16 @@ export default function App() {
       )}
 
       {/* Fated History Crisis / Court Suspicion Trial / What-If Event Modal */}
-      {isBattleIdle && gameState.activeEvent && (
+      {isBattleIdle && canIssueOrders && gameState.activeEvent && (
         <HeroEventModal
           event={gameState.activeEvent}
           state={gameState}
           lang={lang}
-          onChoose={(choiceId) => setGameState(resolveStoryEventChoice(gameState, choiceId))}
+          onChoose={(choiceId) => commitCampaignState(resolveStoryEventChoice(gameState, choiceId))}
         />
       )}
 
-      {showSettings && (
-        <SettingsModal
-          lang={lang}
-          providers={providers}
-          currentConfig={aiConfig}
-          onSave={setAiConfig}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
+      {sharedPersistenceModals}
 
       {/* Victory / Defeat Overlay */}
       {isBattleIdle && (gameState.winner || gameState.isPlayerDefeated) && (
@@ -1636,7 +2308,7 @@ export default function App() {
                 : ''}
             </p>
             <button
-              onClick={() => setGameState(null)}
+              onClick={() => void handleReturnToTitle()}
               className="w-full py-3 rounded-xl bg-[#d4a853] hover:bg-[#e1b866] text-[#14110d] font-bold text-sm transition cursor-pointer"
             >
               {tLoc(UI_TEXT.playAgain, lang)}

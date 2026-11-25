@@ -8,6 +8,7 @@ import {
   FastForward,
   Flame,
   Footprints,
+  Save,
   Shield,
   Sparkles,
   Swords,
@@ -78,6 +79,10 @@ interface TacticalBattleModalProps {
   lang: Language;
   /** Optional pre-ignited demo setup for visual inspection */
   demoPreset?: boolean;
+  /** Optional saved mid-battle state when resuming from disk/cloud */
+  initialBattleState?: TacticalBattleState;
+  onBattleStateChange?: (battle: TacticalBattleState) => void;
+  onSaveAndExit?: (battle: TacticalBattleState) => void;
   onComplete: (outcome: TacticalBattleOutcome) => void;
 }
 
@@ -204,11 +209,18 @@ export function TacticalBattleModal({
   config,
   lang,
   demoPreset,
+  initialBattleState,
+  onBattleStateChange,
+  onSaveAndExit,
   onComplete,
 }: TacticalBattleModalProps) {
-  const [battle, setBattle] = useState<TacticalBattleState>(() =>
-    createInitialTacticalState(gameState, config, demoPreset)
+  const [battle, setBattle] = useState<TacticalBattleState>(
+    () => initialBattleState ?? createInitialTacticalState(gameState, config, demoPreset)
   );
+
+  useEffect(() => {
+    onBattleStateChange?.(battle);
+  }, [battle, onBattleStateChange]);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(() => {
     const first = battle.units.find((u) => !u.defeated && u.side === config.playerSide);
     return first?.id ?? null;
@@ -956,6 +968,22 @@ export function TacticalBattleModal({
               </span>
             </button>
 
+            {onSaveAndExit && !battle.winner && (
+              <button
+                type="button"
+                onClick={() => onSaveAndExit(battle)}
+                title={
+                  lang === 'zh'
+                    ? '封存当前回合沙盘战局并返回标题页，随时可续战'
+                    : 'Save current 8×8 battle round and return to title screen'
+                }
+                className="px-2.5 py-1.5 rounded-lg border border-amber-400/35 bg-slate-900 hover:bg-slate-800 text-xs font-semibold text-amber-200 flex items-center gap-1 cursor-pointer"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{lang === 'zh' ? '暂存退回' : 'Save & Exit'}</span>
+              </button>
+            )}
+
             <button
               type="button"
               disabled={!isPlayerTurn}
@@ -1095,19 +1123,19 @@ export function TacticalBattleModal({
                         >
                           {/* Markers for the tiles that carry rules */}
                           {tile.type === 'ford' && !visibleUnit && (
-                            <span className="pointer-events-none relative z-10 text-[8px] font-black px-1 py-0.2 rounded bg-cyan-950/80 border border-cyan-400/50 text-cyan-100">
+                            <span className="pointer-events-none relative z-10 text-[8px] font-black px-1 py-px rounded bg-cyan-950/80 border border-cyan-400/50 text-cyan-100">
                               {lang === 'zh' ? '浅滩' : 'FORD'}
                             </span>
                           )}
                           {tile.type === 'wall' && !visibleUnit && (
-                            <span className="pointer-events-none relative z-10 text-[8px] font-black px-1 py-0.2 rounded bg-slate-950/80 border border-slate-400/45 text-slate-200">
+                            <span className="pointer-events-none relative z-10 text-[8px] font-black px-1 py-px rounded bg-slate-950/80 border border-slate-400/45 text-slate-200">
                               {lang === 'zh' ? '城墙' : 'WALL'}
                             </span>
                           )}
                           {tile.type === 'gate' && !visibleUnit && (
                             <div className="pointer-events-none relative z-10 flex flex-col items-center justify-end h-full pb-2.5">
                               <span
-                                className={`text-[7.5px] font-black px-1.5 py-0.2 rounded border shadow ${
+                                className={`text-[7.5px] font-black px-1.5 py-px rounded border shadow ${
                                   gateBreached
                                     ? 'bg-rose-950/90 border-rose-400/70 text-rose-200'
                                     : 'bg-[#2a1510]/90 border-amber-400/75 text-amber-200'
@@ -1157,7 +1185,7 @@ export function TacticalBattleModal({
                           {/* Live INT Success % Pill on Stratagem-Targetable Tiles! */}
                           {stratOdds !== null && (
                             <div
-                              className={`pointer-events-none absolute top-0.5 left-0.5 z-20 px-1 py-0.2 rounded text-[9px] font-mono font-black shadow-md border border-white/30 ${
+                              className={`pointer-events-none absolute top-0.5 left-0.5 z-20 px-1 py-px rounded text-[9px] font-mono font-black shadow-md border border-white/30 ${
                                 stratOdds >= 75
                                   ? 'bg-emerald-600/95 text-white'
                                   : stratOdds >= 45

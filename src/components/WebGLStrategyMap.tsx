@@ -138,7 +138,7 @@ export function WebGLStrategyMap({
   const [failed, setFailed] = useState(false);
   const [paperShown, setPaperShown] = useState(() => viewMode !== 'terrain');
   // Two levels of map: provinces from afar, cities up close
-  const [provinceLevel, setProvinceLevel] = useState(() => viewMode !== 'terrain');
+  const [provinceLevel, setProvinceLevel] = useState(true);
   const [nearProvince, setNearProvince] = useState<ProvinceId | null>(null);
 
   const cities = Object.values(state.cities);
@@ -269,8 +269,8 @@ export function WebGLStrategyMap({
     const groundPoint = new THREE.Vector3();
     const provinceIndex = (id: ProvinceId) => PROVINCE_ORDER.indexOf(id);
 
-    // 0 = cities, 1 = provinces; follows the camera's distance (or 0 immediately in Terrain view)
-    let level = live.current.viewMode === 'terrain' ? 0 : 1;
+    // 0 = cities, 1 = provinces; follows the camera's distance in every view
+    let level = 1;
     let fly: FlyGoal | null = null;
     let hoverProvince: ProvinceId | null = null;
     let groundCityAt: ((mapX: number, mapY: number) => City | null) | null = null;
@@ -609,10 +609,9 @@ export function WebGLStrategyMap({
           }
         }
 
-        // Provinces from afar, cities up close; explicit Terrain mode always reveals all 32 cities
+        // Provinces from afar, cities up close, in every view; only the paper sheet depends on the view
         const dist = camera.position.distanceTo(controls.target);
-        const wantLevel =
-          cur.viewMode === 'terrain' ? 0 : smooth(cityLevelBelow, provinceLevelAbove, dist);
+        const wantLevel = smooth(cityLevelBelow, provinceLevelAbove, dist);
         level += (wantLevel - level) * (stillMotion ? 1 : 1 - Math.exp(-dt * 8));
         const wantPaper = cur.viewMode === 'paper' ? 1 : cur.viewMode === 'terrain' ? 0 : wantLevel;
         paper += (wantPaper - paper) * (stillMotion ? 1 : 1 - Math.exp(-dt * 7));

@@ -941,7 +941,9 @@
 /* ---- Pointer parallax on painted art ---- */
 .parallax {
   transform-origin: 50% 0%;
-  transform: translate3d(calc(var(--px, 0) * -10px), calc(var(--py, 0) * -6px), 0) scale(1.055);
+  /* Scaled from the top edge, so there is no spare picture above it: vertical drift runs
+     from 0 to -6px and never pulls the top edge away from its frame */
+  transform: translate3d(calc(var(--px, 0) * -10px), calc((var(--py, 0) + 1) * -3px), 0) scale(1.055);
   transition: transform 420ms var(--ease-out);
   will-change: transform;
 }

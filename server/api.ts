@@ -1,3 +1,4 @@
+import type Database from 'better-sqlite3';
 import { Router } from 'express';
 import type {
   AITurnDecisionRequest,
@@ -12,13 +13,24 @@ import {
   handleDiplomacyRequest,
   handleHeroEncounterRequest,
 } from './ai/registry.js';
+import { attachAuthMiddleware, createAuthRouter } from './auth.js';
+import { getDefaultDb } from './db.js';
+import { createRoomsRouter } from './rooms.js';
+import { createSavesRouter } from './saves.js';
 
-export function createApiRouter(): Router {
+export function createApiRouter(customDb?: Database.Database): Router {
+  const db = customDb ?? getDefaultDb();
   const router = Router();
 
+  router.use(attachAuthMiddleware(db));
+
   router.get('/health', (_req, res) => {
-    res.json({ ok: true, service: 'threekindom-ai' });
+    res.json({ ok: true, service: 'threekindom-ai', persistence: 'sqlite' });
   });
+
+  router.use('/auth', createAuthRouter(db));
+  router.use('/saves', createSavesRouter(db));
+  router.use('/rooms', createRoomsRouter(db));
 
   router.get('/ai/providers', (_req, res) => {
     res.json({
