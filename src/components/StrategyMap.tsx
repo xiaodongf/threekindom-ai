@@ -1571,8 +1571,13 @@ export function StrategyMap({
                 </span>
               </div>
               <div>
-                {lang === 'zh' ? '城防' : 'Defense'} Lv.{hoveredCity.defense} ·{' '}
-                {lang === 'zh' ? '繁荣' : 'Prosperity'} Lv.{hoveredCity.development}
+                {lang === 'zh' ? '城防' : 'Walls'} {hoveredCity.defense} ·{' '}
+                {lang === 'zh' ? '农' : 'Farming'} {hoveredCity.farming} ·{' '}
+                {lang === 'zh' ? '商' : 'Trade'} {hoveredCity.trade}
+              </div>
+              <div>
+                {lang === 'zh' ? '训练' : 'Drill'} {hoveredCity.drill} ·{' '}
+                {lang === 'zh' ? '民心' : 'Support'} {hoveredCity.support}
               </div>
               {hoveredGenerals.length > 0 && (
                 <div className="text-cyan-300 pt-0.5">

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PROVINCES, VICTORY_CITY_TARGET, isWithinRiverStrike } from './data.js';
 import { HERO_BONDS } from './heroes.js';
 import {
-  advanceSeason,
+  advanceSeason as advanceSeasonWith,
   applyDiplomacyOutcome,
   applyHeroEncounterOutcome,
   canSeeHeroWeakness,
@@ -27,6 +27,9 @@ import {
   resolveDuelRound,
 } from './engine.js';
 import type { GameState } from './types.js';
+
+/** A season in which no city event begins, so each test sees only what it sets up. */
+const advanceSeason = (state: GameState) => advanceSeasonWith(state, () => 0.999);
 
 describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
   it('initializes the 214 AD map with 32 cities, 55 heroes (9 wandering) and orders scaled to the realm', () => {
@@ -145,7 +148,8 @@ describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
     expect(state.actionPoints).toBe(2);
 
     state = performDevelopCity(state, 'wei', 'xuchang', true);
-    expect(state.cities.xuchang.development).toBe(5);
+    expect(state.cities.xuchang.farming).toBe(5);
+    expect(state.cities.xuchang.trade).toBe(4);
     expect(state.actionPoints).toBe(1);
     expect(state.factions.wei.gold).toBeLessThan(startGold);
 

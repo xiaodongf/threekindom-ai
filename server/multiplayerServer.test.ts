@@ -138,7 +138,7 @@ describe('Network Multi-User SQLite Server (Auth, Solo Cloud Saves & Shared Room
     });
     expect(loadedA.status).toBe(200);
     expect(loadedA.data.save.label).toBe('Chengdu Boom');
-    expect(loadedA.data.save.state.cities.chengdu.development).toBeGreaterThan(2);
+    expect(loadedA.data.save.state.cities.chengdu.farming).toBeGreaterThan(2);
   });
 
   it('runs a persistent 2-human + 1-AI shared multiplayer campaign across turns and season rollover', async () => {

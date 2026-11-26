@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ScrollText } from 'lucide-react';
+import { ChevronDown, Landmark, ScrollText } from 'lucide-react';
 import { PROVINCES, PROVINCE_ORDER } from '../game/data.js';
 import type { FactionId, GameState, Language } from '../game/types.js';
 import { tLoc } from '../i18n/translations.js';
@@ -9,6 +9,8 @@ interface ProvinceRegisterProps {
   lang: Language;
   selectedCityId: string | null;
   onSelectCity: (cityId: string) => void;
+  /** Opens the realm table: every city the player holds, its governor and the governor's work. */
+  onOpenRealm: () => void;
 }
 
 const FACTION_CSS: Record<FactionId, string> = {
@@ -23,7 +25,7 @@ const FACTION_BADGE: Record<FactionId, string> = { wei: '魏', shu: '蜀', wu: '
  * The realm as a register: every city under its province, with who holds it and how many men.
  * It is the list form of the province map, and the quickest way to reach a city by name.
  */
-export function ProvinceRegister({ state, lang, selectedCityId, onSelectCity }: ProvinceRegisterProps) {
+export function ProvinceRegister({ state, lang, selectedCityId, onSelectCity, onOpenRealm }: ProvinceRegisterProps) {
   const zh = lang === 'zh';
   const selected = selectedCityId ? state.cities[selectedCityId] : undefined;
   // Open while nothing is chosen; once a city is on the sheet the register folds to one line
@@ -53,6 +55,17 @@ export function ProvinceRegister({ state, lang, selectedCityId, onSelectCity }: 
           className={`w-3.5 h-3.5 shrink-0 text-[#9ea3ae] transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
+
+      <div className="px-4 pb-2">
+        <button
+          type="button"
+          onClick={onOpenRealm}
+          className="w-full flex items-center justify-center gap-1.5 rounded-md border border-amber-400/35 bg-amber-400/10 hover:bg-amber-400/20 px-2 py-1.5 text-xs font-semibold text-amber-100 cursor-pointer"
+        >
+          <Landmark className="w-3.5 h-3.5" />
+          {zh ? '治所总览：太守与政务' : 'Realm table: governors and their work'}
+        </button>
+      </div>
 
       {open && (
         <div className="px-4 pb-3 space-y-2.5">

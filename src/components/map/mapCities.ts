@@ -1,3 +1,4 @@
+import { cityTier } from '../../game/cityAspects.js';
 import * as THREE from 'three';
 import type { City } from '../../game/types.js';
 import { mergeRigid, type DisposeBag, type PaletteMaterials } from '../duel/duelGeometry3D.js';
@@ -5,7 +6,7 @@ import { FACTION_PIGMENT } from './mapTerrain.js';
 
 /**
  * Cities are oversized miniatures on the campaign table. A city grows through five tiers with its
- * development level (village, town, walled city, great city, metropolis); walls rise with its
+ * prosperity, the average of farming and trade (village, town, walled city, great city, metropolis); walls rise with its
  * defence; roof tiles and banners carry the owner's pigment. Footprints stay tight so a growing
  * city never buries the geography around it.
  */
@@ -20,9 +21,7 @@ export interface CityKit {
 const TIER_SIZE = [2.0, 2.4, 2.9, 3.4, 4.0];
 const TIER_HOUSES = [3, 5, 7, 9, 12];
 
-export function cityTier(city: City): number {
-  return Math.max(1, Math.min(5, Math.round(city.development)));
-}
+export { cityTier };
 
 /** Changes whenever the model has to be rebuilt. */
 export function citySignature(city: City): string {

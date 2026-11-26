@@ -1,3 +1,4 @@
+import { ACTION_COSTS } from '../../../src/game/data.js';
 import type {
   AITurnAction,
   City,
@@ -553,14 +554,79 @@ export function generateHeuristicAITurn(
     }
   }
 
-  // 3. Levy where the border is thinnest
-  const recruitGold = factionId === 'wei' ? 153 : 180;
+  // 3. Look after the people before asking more of them: a city close to unrest loses income and
+  //    men every season, so grain from the stores goes there first.
+  const restless = [...owned].sort((x, y) => x.support - y.support)[0];
+  if (restless && restless.support < 30 && faction.food >= ACTION_COSTS.reliefFood + 160) {
+    return {
+      action: { type: 'relief', cityId: restless.id },
+      proclamation:
+        lang === 'zh'
+          ? `开${cityName(restless, lang)}官仓赈济百姓，以安民心！`
+          : `Open the granaries of ${cityName(restless, lang)} and feed the people!`,
+      reasoning: `Support in ${cityName(restless, lang)} is close to unrest.`,
+    };
+  }
+
   const frontline = owned
     .filter((c) => (toFront.get(c.id) ?? 0) === 0)
     .sort((a, b) => a.troops - b.troops);
 
-  if (faction.gold >= recruitGold && faction.food >= 140 && frontline.length > 0) {
-    const targetCity = frontline[0];
+  // 4. A large border army of raw levies fights badly: drill it before raising more.
+  const rawArmy = frontline
+    .filter((c) => c.troops >= 8000 && c.drill < 40)
+    .sort((a, b) => a.drill - b.drill)[0];
+  if (rawArmy && faction.gold >= ACTION_COSTS.drillGold) {
+    return {
+      action: { type: 'drill', cityId: rawArmy.id },
+      proclamation:
+        lang === 'zh'
+          ? `${cityName(rawArmy, lang)}新兵未经战阵，即日起校场操练！`
+          : `The levies at ${cityName(rawArmy, lang)} are raw — drill them until they hold a line!`,
+      reasoning: `Garrison of ${cityName(rawArmy, lang)} is large but poorly drilled.`,
+    };
+  }
+
+  // The lowest of every city's farming and trade, leaning to whichever store is shorter.
+  const pickEconomy = (): { city: City; aspect: 'farm' | 'trade' } | null => {
+    const preferFarm = faction.food < faction.gold;
+    let best: { city: City; aspect: 'farm' | 'trade'; level: number } | null = null;
+    for (const c of owned) {
+      const options: Array<['farm' | 'trade', number]> = preferFarm
+        ? [['farm', c.farming], ['trade', c.trade]]
+        : [['trade', c.trade], ['farm', c.farming]];
+      for (const [aspect, level] of options) {
+        if (level < 5 && (!best || level < best.level)) best = { city: c, aspect, level };
+      }
+    }
+    return best;
+  };
+  const economyOrder = (pick: { city: City; aspect: 'farm' | 'trade' }) => ({
+    action: { type: pick.aspect, cityId: pick.city.id } as AITurnAction,
+    proclamation:
+      pick.aspect === 'farm'
+        ? lang === 'zh'
+          ? `兴修${cityName(pick.city, lang)}屯田水利，广积粮草！`
+          : `Open new fields around ${cityName(pick.city, lang)} and fill the granaries!`
+        : lang === 'zh'
+          ? `扩建${cityName(pick.city, lang)}市集，通商富国！`
+          : `Enlarge the markets of ${cityName(pick.city, lang)} — let trade fill the treasury!`,
+    reasoning: pick.aspect === 'farm' ? 'Expand seasonal grain income.' : 'Expand seasonal gold income.',
+  });
+
+  // 5. One season in four, with gold to spare, the realm is built up before more men are raised.
+  const economyCost = Math.max(ACTION_COSTS.farmGold, ACTION_COSTS.tradeGold);
+  if ((state.turn + owned.length) % 4 === 0 && faction.gold >= economyCost + 260) {
+    const pick = pickEconomy();
+    if (pick) return economyOrder(pick);
+  }
+
+  // 6. Levy where the border is thinnest, leaving alone a city whose people are near unrest.
+  const recruitGold = factionId === 'wei' ? 153 : 180;
+  const levyCity = frontline.find((c) => c.support >= 30) ?? frontline[0];
+
+  if (faction.gold >= recruitGold && faction.food >= 140 && levyCity) {
+    const targetCity = levyCity;
     return {
       action: { type: 'recruit', cityId: targetCity.id },
       proclamation:
@@ -571,18 +637,9 @@ export function generateHeuristicAITurn(
     };
   }
 
-  const developable = [...owned]
-    .filter((c) => c.development < 5)
-    .sort((a, b) => a.development - b.development)[0];
-  if (faction.gold >= 220 && developable) {
-    return {
-      action: { type: 'develop', cityId: developable.id },
-      proclamation:
-        lang === 'zh'
-          ? `兴修${cityName(developable, lang)}屯田水利，富国强兵！`
-          : `Invest in ${cityName(developable, lang)}'s granaries and commerce!`,
-      reasoning: 'Expand seasonal tax base.',
-    };
+  if (faction.gold >= economyCost) {
+    const pick = pickEconomy();
+    if (pick) return economyOrder(pick);
   }
 
   const fortifiable = [...owned]

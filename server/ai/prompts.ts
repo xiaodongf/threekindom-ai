@@ -30,7 +30,7 @@ export function summarizeGameStateForAI(state: GameState, lang: Language): strin
     const cityList = owned
       .map(
         (c) =>
-          `${lang === 'zh' ? c.name.zh : c.name.en}(id:${c.id}, province:${c.province}, troops:${c.troops}, def:${c.defense}, dev:${c.development}, terrain:${c.terrain}, neighbors:[${c.neighbors.join(',')}])`
+          `${lang === 'zh' ? c.name.zh : c.name.en}(id:${c.id}, province:${c.province}, troops:${c.troops}, def:${c.defense}, farming:${c.farming}, trade:${c.trade}, drill:${c.drill}, support:${c.support}, terrain:${c.terrain}, neighbors:[${c.neighbors.join(',')}])`
       )
       .join('; ');
     const rivalTechs =
@@ -226,7 +226,7 @@ export const AI_TURN_SCHEMA: Record<string, unknown> = {
   properties: {
     type: {
       type: 'string',
-      enum: ['attack', 'raid', 'bombard', 'recruit', 'develop', 'fortify', 'reinforce', 'hold'],
+      enum: ['attack', 'raid', 'bombard', 'recruit', 'farm', 'trade', 'drill', 'relief', 'fortify', 'reinforce', 'hold'],
     },
     cityId: { type: 'string' },
     targetCityId: { type: 'string' },
@@ -262,14 +262,14 @@ export function buildAITurnPrompt(
 1. attack 需 cityId 兵力 >= 4500 且 targetCityId 在其 neighbors 中（避开 truce 盟友）。
 2. raid（夜袭劫营）需 cityId 兵力 >= 2500 且 targetCityId 邻接，适合消耗高守军敌城并劫粮。
 3. bombard（火攻轰城）需国库 >= 150 且 targetCityId 邻接且城防 >= 3，削弱敌城墙与守军。
-4. recruit 需国库 >= 180 且粮草 >= 140；develop（国库 >= 220，繁荣 < 5）；fortify（国库 >= 200，城防 < 5）。
+4. recruit 需国库 >= 180 且粮草 >= 140（募兵使该城民心 -6、训练度下降）；farm（国库 >= 120，farming < 5，增粮）；trade（国库 >= 120，trade < 5，增金）；drill（国库 >= 80，drill < 100，训练度高则战场士气高）；relief（粮草 >= 160，support < 100，开仓赈济回升民心；民心低于 25 则每季逃兵且收入减少）；fortify（国库 >= 200，城防 < 5）。
 5. proclamation 与 reasoning 使用简短中文。`
       : `You are an autonomous Three Kingdoms AI warlord: ${persona}. You own city IDs: [${ownedIds}]. ${coalitionNote}
 Choose the single strongest strategic action and return strictly valid JSON:
 1. "attack": owned cityId (>= 4500 troops) vs adjacent enemy/neutral targetCityId (respect active truces).
 2. "raid": hit-and-run night raid (cityId >= 2500 troops) to thin a heavily defended neighbor & plunder supplies.
 3. "bombard": fire/gunpowder strike (gold >= 150) against an adjacent fortified city (defense >= 3) to blast walls.
-4. "recruit" (gold >= 180, food >= 140), "develop" (gold >= 220, dev < 5), or "fortify" (gold >= 200, def < 5).
+4. "recruit" (gold >= 180, food >= 140; costs that city 6 support and waters down its drill), "farm" (gold >= 120, farming < 5: more grain), "trade" (gold >= 120, trade < 5: more gold), "drill" (gold >= 80, drill < 100: higher battle morale), "relief" (food >= 160, support < 100: restores support; below 25 a city loses income and deserters every season), or "fortify" (gold >= 200, def < 5).
 5. Write proclamation and reasoning concisely in English.`;
 
   const prompt = `${summarizeGameStateForAI(state, lang)}\n\nSelect the best move for ${factionId.toUpperCase()} now.`;

@@ -202,14 +202,40 @@ export interface City {
   y: number;
   owner: FactionId;
   troops: number;
+  /** Walls, 1..5. */
   defense: number;
-  development: number;
+  /** Fields outside the walls, 1..5: grain each season. */
+  farming: number;
+  /** Markets inside the walls, 1..5: gold each season. */
+  trade: number;
+  /** How well the garrison is drilled, 0..100: morale it takes into battle. */
+  drill: number;
+  /** The people's support, 0..100: scales income and levies; unrest when very low. */
+  support: number;
   baseGold: number;
   baseFood: number;
   terrain: TerrainType;
   neighbors: string[];
   isCapital?: boolean;
+  /** The general appointed governor. Empty, or no longer valid, the best administrator present acts. */
+  governorId?: string;
+  /** What the governor works on each season; unset means his own judgment. */
+  focus?: GovernorFocus;
+  /** Works piled up toward the next level of farming, trade and walls, 0..99 each. */
+  works?: Partial<Record<'farming' | 'trade' | 'walls', number>>;
+  /** Something happening to the city on its own, and how many seasons it still has to run. */
+  event?: { kind: CityEventKind; seasonsLeft: number };
+  /** Seasons the walls stay visibly broken after a bombardment or a storming. */
+  wallScar?: number;
 }
+
+/** Things that befall a city without anyone ordering them. */
+export type CityEventKind = 'harvest' | 'flood' | 'drought' | 'fair' | 'plague' | 'riot';
+
+/** The five things a governor can spend a season on. */
+export type GovernorTask = 'farming' | 'trade' | 'walls' | 'drill' | 'relief';
+/** A governor's standing instruction: one task, or 'auto' to leave the choice to him. */
+export type GovernorFocus = 'auto' | GovernorTask;
 
 export interface Province {
   id: ProvinceId;
@@ -289,6 +315,9 @@ export interface MarchEvent {
   type: 'attack' | 'reinforce' | 'raid' | 'bombard' | 'discord' | 'river_strike';
   captured?: boolean;
 }
+
+/** Orders that work on one aspect of a city the player holds. */
+export type DomesticOrder = 'farm' | 'trade' | 'drill' | 'relief';
 
 export type MilitaryActionType = 'assault' | 'raid' | 'bombard' | 'discord' | 'river_strike';
 
@@ -455,6 +484,10 @@ export type AITurnActionType =
   | 'bombard'
   | 'recruit'
   | 'develop'
+  | 'farm'
+  | 'trade'
+  | 'drill'
+  | 'relief'
   | 'fortify'
   | 'reinforce'
   | 'hold';

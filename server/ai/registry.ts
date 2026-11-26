@@ -281,7 +281,16 @@ function validateAITurnAction(req: AITurnDecisionRequest, raw: Partial<AITurnAct
     return null;
   }
 
-  if (raw.type === 'recruit' || raw.type === 'develop' || raw.type === 'fortify' || raw.type === 'hold') {
+  if (
+    raw.type === 'recruit' ||
+    raw.type === 'develop' ||
+    raw.type === 'farm' ||
+    raw.type === 'trade' ||
+    raw.type === 'drill' ||
+    raw.type === 'relief' ||
+    raw.type === 'fortify' ||
+    raw.type === 'hold'
+  ) {
     return { type: raw.type, cityId: city.id };
   }
 

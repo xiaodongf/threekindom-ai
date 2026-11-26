@@ -13,7 +13,50 @@ import {
   createInitialGenerals,
   getDiplomacyKey,
 } from './data.js';
+import {
+  ASPECT_MAX_LEVEL,
+  DRILL_HELD_GAIN,
+  DRILL_ORDER_GAIN,
+  DRILL_SEASON_DRIFT,
+  DRILL_VICTORY_GAIN,
+  FOOD_PER_FARMING_LEVEL,
+  GOLD_PER_TRADE_LEVEL,
+  LEVY_PER_PROSPERITY,
+  RAW_LEVY_DRILL,
+  RELIEF_ORDER_GAIN,
+  SUPPORT_AFTER_CONQUEST,
+  SUPPORT_COST_BOMBARD,
+  SUPPORT_COST_DISCORD,
+  SUPPORT_COST_LEVY,
+  SUPPORT_COST_RAID,
+  SUPPORT_COST_SIEGE,
+  SUPPORT_SEASON_DRIFT,
+  cityProsperity,
+  driftToward,
+  drillMoraleBonus,
+  drillOfficerBonus,
+  mixDrill,
+  reliefOfficerBonus,
+  supportIncomeFactor,
+  supportLevyFactor,
+  supportRestingLevel,
+  unrestDeserters,
+} from './cityAspects.js';
+import {
+  WALL_SCAR_SEASONS,
+  beginCityEvent,
+  cityEventChronicle,
+  eventIncomeFactor,
+  rollCityEvent,
+} from './cityEvents.js';
 import { pickSeasonalStoryEvent } from './events.js';
+import {
+  GOVERNOR_FOCI,
+  applyGovernorSeason,
+  canGovern,
+  getCityGovernor,
+  governorPlanOf,
+} from './governors.js';
 import {
   factionHasTech,
   getActiveBondsForHeroes,
@@ -50,6 +93,7 @@ import type {
   FactionId,
   GameState,
   General,
+  GovernorFocus,
   HeroEncounterMode,
   LocalizedText,
   MarchEvent,
@@ -372,21 +416,28 @@ export function getFactionPrisoners(state: GameState, faction: PlayableFactionId
 export function getFactionIncomeBreakdown(
   state: GameState,
   faction: PlayableFactionId
-): Array<{ cityId: string; gold: number; food: number; governorBonus: number }> {
+): Array<{ cityId: string; gold: number; food: number; governorBonus: number; supportBonus: number }> {
   const cities = getFactionCities(state, faction);
   const multiplier = faction === 'wei' ? 1.2 : faction === 'wu' ? 1.1 : 1.0;
   const foodTechMult = factionHasTech(state, faction, 'agriculture') ? 1.35 : 1.0;
   const goldTechMult = factionHasTech(state, faction, 'printing') ? 1.1 : 1.0;
 
   return cities.map((city) => {
-    const stationed = getCityGenerals(state, city.id);
-    const bestPol = stationed.reduce((max, g) => Math.max(max, g.politics), 50);
-    const govBonus = 1 + Math.max(0, bestPol - 60) / 260; // up to +15% from top statesman!
+    // The governor's politics lifts what the city brings in: up to +15%.
+    const governorPolitics = getCityGovernor(state, city.id)?.general.politics ?? 50;
+    const govBonus = 1 + Math.max(0, governorPolitics - 60) / 260;
+    const people = supportIncomeFactor(city.support);
+    const event = eventIncomeFactor(city);
     return {
       cityId: city.id,
-      gold: Math.round((city.baseGold + city.development * 45) * multiplier * govBonus * goldTechMult),
-      food: Math.round((city.baseFood + city.development * 40) * multiplier * govBonus * foodTechMult),
+      gold: Math.round(
+        (city.baseGold + city.trade * GOLD_PER_TRADE_LEVEL) * multiplier * govBonus * goldTechMult * people * event.gold
+      ),
+      food: Math.round(
+        (city.baseFood + city.farming * FOOD_PER_FARMING_LEVEL) * multiplier * govBonus * foodTechMult * people * event.food
+      ),
       governorBonus: govBonus - 1,
+      supportBonus: people - 1,
     };
   });
 }
@@ -525,28 +576,34 @@ export function checkVictoryState(state: GameState): GameState {
 
 // ==================== DOMESTIC ACTIONS ====================
 
-export function performDevelopCity(
+/** Which of a city's two economic aspects an order improves. */
+export type EconomyAspect = 'farming' | 'trade';
+
+function performImproveEconomy(
   state: GameState,
   factionId: PlayableFactionId,
   cityId: string,
-  consumeAP = true
+  aspect: EconomyAspect,
+  consumeAP: boolean
 ): GameState {
   const city = state.cities[cityId];
   const faction = state.factions[factionId];
-  if (!city || city.owner !== factionId || city.development >= 5) return state;
+  if (!city || city.owner !== factionId || city[aspect] >= ASPECT_MAX_LEVEL) return state;
   if (consumeAP && state.actionPoints < 1) return state;
-  if (faction.gold < ACTION_COSTS.developGold) return state;
+  const cost = aspect === 'farming' ? ACTION_COSTS.farmGold : ACTION_COSTS.tradeGold;
+  if (faction.gold < cost) return state;
 
-  const updatedCity: City = { ...city, development: city.development + 1 };
-  const updatedFaction = { ...faction, gold: faction.gold - ACTION_COSTS.developGold };
+  const updatedCity: City = { ...city, [aspect]: city[aspect] + 1 };
+  const updatedFaction = { ...faction, gold: faction.gold - cost };
 
-  // Grant XP to stationed governor
+  // The general who runs the city learns from the work.
   const updatedGenerals = { ...state.generals };
-  const governor = getCityGenerals(state, cityId).sort((a, b) => b.politics - a.politics)[0];
+  const governor = getCityGovernor(state, cityId)?.general;
   if (governor) {
-    updatedGenerals[governor.id] = grantHeroXp(governor, 25);
+    updatedGenerals[governor.id] = grantHeroXp(governor, 15);
   }
 
+  const level = updatedCity[aspect];
   return {
     ...state,
     actionPoints: consumeAP ? state.actionPoints - 1 : state.actionPoints,
@@ -556,9 +613,183 @@ export function performDevelopCity(
     chronicle: appendChronicle(
       state,
       'economy',
+      aspect === 'farming'
+        ? {
+            en: `${faction.shortName.en} opened new fields at ${city.name.en}: Farming Lv.${level}.`,
+            zh: `${faction.shortName.zh}于${city.name.zh}开垦屯田，农业升至 ${level} 级。`,
+          }
+        : {
+            en: `${faction.shortName.en} enlarged the markets of ${city.name.en}: Trade Lv.${level}.`,
+            zh: `${faction.shortName.zh}于${city.name.zh}扩建市集，商业升至 ${level} 级。`,
+          },
+      factionId
+    ),
+  };
+}
+
+/** Open new fields: one more level of farming, which is grain every season. */
+export function performDevelopFarming(
+  state: GameState,
+  factionId: PlayableFactionId,
+  cityId: string,
+  consumeAP = true
+): GameState {
+  return performImproveEconomy(state, factionId, cityId, 'farming', consumeAP);
+}
+
+/** Enlarge the markets: one more level of trade, which is gold every season. */
+export function performDevelopTrade(
+  state: GameState,
+  factionId: PlayableFactionId,
+  cityId: string,
+  consumeAP = true
+): GameState {
+  return performImproveEconomy(state, factionId, cityId, 'trade', consumeAP);
+}
+
+/**
+ * "Develop" as a single order, for callers that do not choose: improves whichever of farming and
+ * trade is lower (farming on a tie). Does nothing once both are at the top level.
+ */
+export function performDevelopCity(
+  state: GameState,
+  factionId: PlayableFactionId,
+  cityId: string,
+  consumeAP = true
+): GameState {
+  const city = state.cities[cityId];
+  if (!city) return state;
+  const aspect: EconomyAspect = city.farming <= city.trade ? 'farming' : 'trade';
+  return performImproveEconomy(state, factionId, cityId, aspect, consumeAP);
+}
+
+/**
+ * Give a city's post to one of the generals stationed there, or with `null` leave it to whoever
+ * is senior. It is an appointment, not an order: it costs nothing.
+ */
+export function performAppointGovernor(
+  state: GameState,
+  factionId: PlayableFactionId,
+  cityId: string,
+  generalId: string | null
+): GameState {
+  const city = state.cities[cityId];
+  if (!city || city.owner !== factionId) return state;
+  if (generalId === null) {
+    if (!city.governorId) return state;
+    const { governorId: _vacated, ...rest } = city;
+    return { ...state, cities: { ...state.cities, [cityId]: rest } };
+  }
+  if (!canGovern(state, cityId, generalId) || city.governorId === generalId) return state;
+  const general = state.generals[generalId];
+  return {
+    ...state,
+    cities: { ...state.cities, [cityId]: { ...city, governorId: generalId } },
+    chronicle: appendChronicle(
+      state,
+      'economy',
       {
-        en: `${faction.shortName.en} developed ${city.name.en} to Prosperity Lv.${updatedCity.development}.`,
-        zh: `${faction.shortName.zh}治理${city.name.zh}内政，繁荣度提升至 ${updatedCity.development} 级。`,
+        en: `${general.name.en} was appointed governor of ${city.name.en}.`,
+        zh: `拜${general.name.zh}为${city.name.zh}太守。`,
+      },
+      factionId
+    ),
+  };
+}
+
+/** Tell a city's governor what to work on each season, or leave it to his judgment. Costs nothing. */
+export function performSetGovernorFocus(
+  state: GameState,
+  factionId: PlayableFactionId,
+  cityId: string,
+  focus: GovernorFocus
+): GameState {
+  const city = state.cities[cityId];
+  if (!city || city.owner !== factionId || !GOVERNOR_FOCI.includes(focus)) return state;
+  if ((city.focus ?? 'auto') === focus) return state;
+  return { ...state, cities: { ...state.cities, [cityId]: { ...city, focus } } };
+}
+
+/** Drill the garrison: better drilled men go into battle with higher morale. */
+export function performDrillTroops(
+  state: GameState,
+  factionId: PlayableFactionId,
+  cityId: string,
+  consumeAP = true
+): GameState {
+  const city = state.cities[cityId];
+  const faction = state.factions[factionId];
+  if (!city || city.owner !== factionId || city.drill >= 100) return state;
+  if (consumeAP && state.actionPoints < 1) return state;
+  if (faction.gold < ACTION_COSTS.drillGold) return state;
+
+  const drillmaster = getCityGenerals(state, cityId).sort((a, b) => b.command - a.command)[0];
+  const gain = DRILL_ORDER_GAIN + drillOfficerBonus(drillmaster?.command ?? 0);
+  const updatedCity: City = { ...city, drill: clamp(city.drill + gain, 0, 100) };
+
+  const updatedGenerals = { ...state.generals };
+  if (drillmaster) {
+    updatedGenerals[drillmaster.id] = grantHeroXp(drillmaster, 15);
+  }
+
+  return {
+    ...state,
+    actionPoints: consumeAP ? state.actionPoints - 1 : state.actionPoints,
+    factions: {
+      ...state.factions,
+      [factionId]: { ...faction, gold: faction.gold - ACTION_COSTS.drillGold },
+    },
+    cities: { ...state.cities, [cityId]: updatedCity },
+    generals: updatedGenerals,
+    chronicle: appendChronicle(
+      state,
+      'economy',
+      {
+        en: `${drillmaster ? drillmaster.name.en : faction.shortName.en} drilled the garrison of ${city.name.en}: drill ${updatedCity.drill}.`,
+        zh: `${drillmaster ? drillmaster.name.zh : faction.shortName.zh}于${city.name.zh}校场操练士卒，训练度升至 ${updatedCity.drill}。`,
+      },
+      factionId
+    ),
+  };
+}
+
+/** Open the granaries to the people: grain from the stores buys their support. */
+export function performRelief(
+  state: GameState,
+  factionId: PlayableFactionId,
+  cityId: string,
+  consumeAP = true
+): GameState {
+  const city = state.cities[cityId];
+  const faction = state.factions[factionId];
+  if (!city || city.owner !== factionId || city.support >= 100) return state;
+  if (consumeAP && state.actionPoints < 1) return state;
+  if (faction.food < ACTION_COSTS.reliefFood) return state;
+
+  const steward = getCityGenerals(state, cityId).sort((a, b) => b.charisma - a.charisma)[0];
+  const gain = RELIEF_ORDER_GAIN + reliefOfficerBonus(steward?.charisma ?? 0);
+  const updatedCity: City = { ...city, support: clamp(city.support + gain, 0, 100) };
+
+  const updatedGenerals = { ...state.generals };
+  if (steward) {
+    updatedGenerals[steward.id] = grantHeroXp(steward, 15);
+  }
+
+  return {
+    ...state,
+    actionPoints: consumeAP ? state.actionPoints - 1 : state.actionPoints,
+    factions: {
+      ...state.factions,
+      [factionId]: { ...faction, food: faction.food - ACTION_COSTS.reliefFood },
+    },
+    cities: { ...state.cities, [cityId]: updatedCity },
+    generals: updatedGenerals,
+    chronicle: appendChronicle(
+      state,
+      'economy',
+      {
+        en: `${steward ? steward.name.en : faction.shortName.en} opened the granaries of ${city.name.en} to the people: support ${updatedCity.support}.`,
+        zh: `${steward ? steward.name.zh : faction.shortName.zh}于${city.name.zh}开仓赈济百姓，民心升至 ${updatedCity.support}。`,
       },
       factionId
     ),
@@ -577,7 +808,8 @@ export function performFortifyCity(
   if (consumeAP && state.actionPoints < 1) return state;
   if (faction.gold < ACTION_COSTS.fortifyGold) return state;
 
-  const updatedCity: City = { ...city, defense: city.defense + 1 };
+  // Raising the walls also makes good whatever a bombardment or a storming broke.
+  const updatedCity: City = { ...city, defense: city.defense + 1, wallScar: undefined };
   const updatedFaction = { ...faction, gold: faction.gold - ACTION_COSTS.fortifyGold };
 
   return {
@@ -595,6 +827,16 @@ export function performFortifyCity(
       factionId
     ),
   };
+}
+
+/** Men one levy raises in a city: its prosperity, its best-liked general and the people's support. */
+export function levySizeOf(
+  city: Pick<City, 'farming' | 'trade' | 'support'>,
+  bestCharisma: number
+): number {
+  const heroLevyBonus = Math.round(Math.max(0, bestCharisma - 60) * 18);
+  const base = ACTION_COSTS.recruitTroops + cityProsperity(city) * LEVY_PER_PROSPERITY + heroLevyBonus;
+  return Math.round(base * supportLevyFactor(city.support));
 }
 
 export function performRecruitTroops(
@@ -615,11 +857,15 @@ export function performRecruitTroops(
 
   const stationed = getCityGenerals(state, cityId);
   const charismaBonus = stationed.reduce((max, g) => Math.max(max, g.charisma), 60);
-  const heroLevyBonus = Math.round(Math.max(0, charismaBonus - 60) * 18);
 
-  const bonus = city.development * 350 + heroLevyBonus;
-  const troopsAdded = ACTION_COSTS.recruitTroops + bonus;
-  const updatedCity: City = { ...city, troops: city.troops + troopsAdded };
+  const troopsAdded = levySizeOf(city, charismaBonus);
+  // Raw recruits water down the garrison's drill, and a levy costs the people's goodwill.
+  const updatedCity: City = {
+    ...city,
+    troops: city.troops + troopsAdded,
+    drill: mixDrill(city.troops, city.drill, troopsAdded, RAW_LEVY_DRILL),
+    support: clamp(city.support - SUPPORT_COST_LEVY, 0, 100),
+  };
   const updatedFaction = {
     ...faction,
     gold: faction.gold - goldCost,
@@ -665,7 +911,11 @@ export function performReinforceCity(
   const updatedCities = {
     ...state.cities,
     [fromCityId]: { ...fromCity, troops: fromCity.troops - actual },
-    [toCityId]: { ...toCity, troops: toCity.troops + actual },
+    [toCityId]: {
+      ...toCity,
+      troops: toCity.troops + actual,
+      drill: mixDrill(toCity.troops, toCity.drill, actual, fromCity.drill),
+    },
   };
 
   const march = {
@@ -1390,6 +1640,30 @@ function describeAssaultModifiers(state: GameState, config: TacticalBattleConfig
     positive: false,
   });
 
+  const fromCity = state.cities[config.fromCityId];
+  const atkDrill = drillMoraleBonus(fromCity?.drill ?? 50);
+  if (atkDrill !== 0) {
+    tags.push({
+      label:
+        atkDrill > 0
+          ? { en: `Well-drilled army (drill ${fromCity.drill})`, zh: `我军训练有素（训练 ${fromCity.drill}）` }
+          : { en: `Raw army (drill ${fromCity.drill})`, zh: `我军操练不足（训练 ${fromCity.drill}）` },
+      value: `${atkDrill > 0 ? '+' : ''}${atkDrill} Morale`,
+      positive: atkDrill > 0,
+    });
+  }
+  const defDrill = drillMoraleBonus(toCity.drill);
+  if (defDrill !== 0) {
+    tags.push({
+      label:
+        defDrill > 0
+          ? { en: `Well-drilled garrison (drill ${toCity.drill})`, zh: `守军训练有素（训练 ${toCity.drill}）` }
+          : { en: `Raw garrison (drill ${toCity.drill})`, zh: `守军操练不足（训练 ${toCity.drill}）` },
+      value: `${defDrill > 0 ? '+' : ''}${defDrill} Morale`,
+      positive: defDrill < 0,
+    });
+  }
+
   const planTag: Record<TacticId, { label: LocalizedText; value: string }> = {
     assault: {
       label: { en: 'Frontal Assault Plan', zh: '正面强攻之策' },
@@ -1648,11 +1922,22 @@ export function applyTacticalBattleOutcome(
   let withdrawnTroops = 0;
   let withdrawCity: City | undefined;
   if (captured) {
+    // The victors garrison the city: it takes their drill, and its people start wary of the new rule.
+    const victorDrill =
+      pincerCity && pincerTroops > 0
+        ? mixDrill(primaryTroops, fromCity.drill, pincerTroops, pincerCity.drill)
+        : fromCity.drill;
     updatedCities[toCity.id] = {
       ...toCity,
       owner: attackerFaction,
       troops: Math.max(1000, survivingAttackers),
       defense: Math.max(1, toCity.defense - 1),
+      drill: clamp(victorDrill + DRILL_VICTORY_GAIN, 0, 100),
+      support: SUPPORT_AFTER_CONQUEST,
+      // The old governor's post and instructions fall with the city.
+      governorId: undefined,
+      focus: 'auto',
+      wallScar: WALL_SCAR_SEASONS,
     };
 
     const survivingDefenders = clamp(outcome.defenderRemainingTroops, 0, toCity.troops);
@@ -1666,13 +1951,17 @@ export function applyTacticalBattleOutcome(
         updatedCities[withdrawCity.id] = {
           ...withdrawCity,
           troops: withdrawCity.troops + withdrawnTroops,
+          drill: mixDrill(withdrawCity.troops, withdrawCity.drill, withdrawnTroops, toCity.drill),
         };
       }
     }
   } else {
+    // A garrison that held its walls is the better for it; the people inside paid for the siege.
     updatedCities[toCity.id] = {
       ...toCity,
       troops: Math.max(500, Math.min(toCity.troops, outcome.defenderRemainingTroops)),
+      drill: clamp(toCity.drill + DRILL_HELD_GAIN, 0, 100),
+      support: clamp(toCity.support - SUPPORT_COST_SIEGE, 0, 100),
     };
   }
 
@@ -1943,7 +2232,11 @@ export function performNightRaid(
   const updatedCities = {
     ...state.cities,
     [fromCityId]: { ...fromCity, troops: Math.max(1000, fromCity.troops - friendlyLost) },
-    [toCityId]: { ...toCity, troops: Math.max(500, toCity.troops - enemyLost) },
+    [toCityId]: {
+      ...toCity,
+      troops: Math.max(500, toCity.troops - enemyLost),
+      support: clamp(toCity.support - SUPPORT_COST_RAID, 0, 100),
+    },
   };
 
   const updatedFactions = { ...state.factions };
@@ -2068,6 +2361,8 @@ export function performSabotageBombard(
       ...toCity,
       defense: Math.max(1, toCity.defense - defDrop),
       troops: Math.max(500, toCity.troops - burnedTroops),
+      support: clamp(toCity.support - SUPPORT_COST_BOMBARD, 0, 100),
+      wallScar: WALL_SCAR_SEASONS,
     },
   };
 
@@ -2191,7 +2486,11 @@ export function performSowDiscord(
 
   const updatedCities = {
     ...state.cities,
-    [toCityId]: { ...toCity, troops: Math.max(500, toCity.troops - deserters) },
+    [toCityId]: {
+      ...toCity,
+      troops: Math.max(500, toCity.troops - deserters),
+      support: clamp(toCity.support - SUPPORT_COST_DISCORD, 0, 100),
+    },
   };
 
   const updatedGenerals = { ...state.generals };
@@ -2543,6 +2842,14 @@ export function executeAITurnAction(
     next = performRecruitTroops(state, factionId, city.id, false);
   } else if (action.type === 'develop' && city && city.owner === factionId) {
     next = performDevelopCity(state, factionId, city.id, false);
+  } else if (action.type === 'farm' && city && city.owner === factionId) {
+    next = performDevelopFarming(state, factionId, city.id, false);
+  } else if (action.type === 'trade' && city && city.owner === factionId) {
+    next = performDevelopTrade(state, factionId, city.id, false);
+  } else if (action.type === 'drill' && city && city.owner === factionId) {
+    next = performDrillTroops(state, factionId, city.id, false);
+  } else if (action.type === 'relief' && city && city.owner === factionId) {
+    next = performRelief(state, factionId, city.id, false);
   } else if (action.type === 'fortify' && city && city.owner === factionId) {
     next = performFortifyCity(state, factionId, city.id, false);
   }
@@ -2568,7 +2875,11 @@ export function executeAITurnAction(
 
 // ==================== SEASON ADVANCE + HARDCORE BUTTERFLY EFFECT ENGINE ====================
 
-export function advanceSeason(state: GameState): GameState {
+/**
+ * Turn the season. `rng` decides which cities an event befalls; pass a fixed one to make a season
+ * repeatable.
+ */
+export function advanceSeason(state: GameState, rng: () => number = Math.random): GameState {
   const nextTurn = state.turn + 1;
   const seasonIdx = (SEASONS.indexOf(state.season) + 1) % SEASONS.length;
   const nextSeason = SEASONS[seasonIdx];
@@ -2728,6 +3039,100 @@ export function advanceSeason(state: GameState): GameState {
   for (const city of Object.values(nextCities)) {
     if (city.owner === 'neutral' && city.troops < NEUTRAL_GARRISON_CAP) {
       nextCities[city.id] = { ...city, troops: city.troops + 300 };
+    }
+  }
+
+  // 7. The garrison and the people of every held city: drill settles back toward the middle,
+  //    support moves toward what the city's best-liked general inspires, and a city in unrest
+  //    loses part of its garrison to desertion.
+  const humanFactions: FactionId[] = state.multiplayer?.humanFactions ?? [state.playerFaction];
+  for (const city of Object.values(nextCities)) {
+    if (city.owner === 'neutral') {
+      // A free city has no governor and no events, but its people still patch a broken wall.
+      if (city.wallScar) {
+        nextCities[city.id] = { ...city, wallScar: city.wallScar > 1 ? city.wallScar - 1 : undefined };
+      }
+      continue;
+    }
+    const bestCharisma = Object.values(nextGenerals)
+      .filter((g) => g.cityId === city.id && g.faction === city.owner && g.status === 'active')
+      .reduce((max, g) => Math.max(max, g.charisma), 0);
+    const deserters = unrestDeserters(city);
+    let settled: City = {
+      ...city,
+      troops: city.troops - deserters,
+      drill: driftToward(city.drill, 50, DRILL_SEASON_DRIFT),
+      support: driftToward(city.support, supportRestingLevel(bestCharisma), SUPPORT_SEASON_DRIFT),
+    };
+
+    // The governor's season: one aspect of the city moves forward without an order being spent.
+    // A post whose holder has left the city or the realm is cleared; a wounded governor keeps it.
+    const holder = city.governorId ? state.generals[city.governorId] : undefined;
+    if (city.governorId && !(holder && holder.cityId === city.id && holder.faction === city.owner &&
+        (holder.status === 'active' || holder.status === 'wounded'))) {
+      settled = { ...settled, governorId: undefined };
+    }
+    // A riot stops every work but the winning back of the people.
+    const plan = governorPlanOf(state, city.id);
+    if (plan && !(city.event?.kind === 'riot' && plan.task !== 'relief')) {
+      const worked = applyGovernorSeason(city, settled, plan);
+      settled = worked.city;
+      if (worked.completed?.task === 'walls') settled = { ...settled, wallScar: undefined };
+      if (worked.completed) {
+        nextGenerals[plan.general.id] = grantHeroXp(nextGenerals[plan.general.id], 10);
+        if (humanFactions.includes(city.owner)) {
+          const { task, level } = worked.completed;
+          const who = plan.general.name;
+          pushLog(
+            'economy',
+            task === 'farming'
+              ? {
+                  en: `Governor ${who.en} finished new fields at ${city.name.en}: Farming Lv.${level}.`,
+                  zh: `${city.name.zh}太守${who.zh}垦田功成，农业升至 ${level} 级。`,
+                }
+              : task === 'trade'
+                ? {
+                    en: `Governor ${who.en} finished the new market at ${city.name.en}: Trade Lv.${level}.`,
+                    zh: `${city.name.zh}太守${who.zh}兴市功成，商业升至 ${level} 级。`,
+                  }
+                : {
+                    en: `Governor ${who.en} finished the works on ${city.name.en}'s walls: Defense Lv.${level}.`,
+                    zh: `${city.name.zh}太守${who.zh}修城功成，城防升至 ${level} 级。`,
+                  },
+            city.owner
+          );
+        }
+      }
+    }
+    // Broken walls are slowly patched; an event runs its course, and a new one may begin.
+    if (settled.wallScar) {
+      settled = { ...settled, wallScar: settled.wallScar > 1 ? settled.wallScar - 1 : undefined };
+    }
+    if (settled.event) {
+      const left = settled.event.seasonsLeft - 1;
+      settled = { ...settled, event: left > 0 ? { ...settled.event, seasonsLeft: left } : undefined };
+    }
+    const roll = rng();
+    if (!settled.event) {
+      const kind = rollCityEvent(state, settled, nextSeason, roll);
+      if (kind) {
+        const begun = beginCityEvent(state, settled, kind);
+        settled = begun.city;
+        if (humanFactions.includes(city.owner)) {
+          pushLog('economy', cityEventChronicle(city, kind, begun.troopsLost), city.owner);
+        }
+      }
+    }
+    nextCities[city.id] = settled;
+    if (deserters > 0) {
+      pushLog(
+        'economy',
+        {
+          en: `Unrest in ${city.name.en}: with the people's support at ${city.support}, ${deserters.toLocaleString()} of the garrison deserted.`,
+          zh: `${city.name.zh}民怨沸腾（民心 ${city.support}），守军逃散 ${deserters.toLocaleString()} 人。`,
+        },
+        city.owner
+      );
     }
   }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  advanceSeason,
+  advanceSeason as advanceSeasonWith,
   buildAssaultConfig,
   createMultiplayerGame,
   createNewGame,
@@ -19,6 +19,11 @@ import {
   validateAndHydrateSave,
 } from './saveSystem.js';
 import { createTacticalBattle, moveTacticalUnit } from './tacticalEngine.js';
+
+import type { GameState as QuietGameState } from './types.js';
+
+/** A season in which no city event begins, so each test sees only what it sets up. */
+const advanceSeason = (state: QuietGameState) => advanceSeasonWith(state, () => 0.999);
 
 describe('Save System & Multiplayer State Engine', () => {
   it('round-trips a campaign save envelope including mid-8x8 tactical battle state', () => {

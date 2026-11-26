@@ -40,6 +40,7 @@ import { StrategyMap, type ActiveMapMarch } from './components/StrategyMap.js';
 import { TacticalBattleModal } from './components/TacticalBattleModal.js';
 import { TechLabPanel } from './components/TechLabPanel.js';
 import { ProvinceRegister } from './components/ProvinceRegister.js';
+import { RealmTable } from './components/RealmTable.js';
 import { TopBar } from './components/TopBar.js';
 import { SeasonBanner } from './components/ui/SeasonBanner.js';
 import { WarSceneModal, type WarSceneConfig } from './components/WarSceneModal.js';
@@ -55,15 +56,20 @@ import {
   executeAITurnAction,
   factionHasTech,
   getCityGenerals,
+  performAppointGovernor,
   performAttackCity,
-  performDevelopCity,
+  performDevelopFarming,
+  performDevelopTrade,
+  performDrillTroops,
   performFortifyCity,
   performNightRaid,
   performPrisonerAction,
   performRecruitTroops,
   performReinforceCity,
+  performRelief,
   performRelocateHero,
   performResearchTech,
+  performSetGovernorFocus,
   performRewardHero,
   performSabotageBombard,
   performSowDiscord,
@@ -91,9 +97,11 @@ import type {
   BattleReport,
   DiplomacyProposalType,
   DiplomacyResponse,
+  DomesticOrder,
   DuelResult,
   FactionId,
   GameState,
+  GovernorFocus,
   HeroEncounterMode,
   HeroEncounterResponse,
   Language,
@@ -411,6 +419,30 @@ export default function App() {
     const timer = window.setTimeout(() => setCityViewCovers(true), 700);
     return () => window.clearTimeout(timer);
   }, [cityViewId]);
+  /** Farming, trade, drill and relief: one order on one aspect of a city the player holds. */
+  const issueDomesticOrder = (cityId: string, order: DomesticOrder) => {
+    if (!gameState || !canIssueOrders) return;
+    const perform =
+      order === 'farm'
+        ? performDevelopFarming
+        : order === 'trade'
+          ? performDevelopTrade
+          : order === 'drill'
+            ? performDrillTroops
+            : performRelief;
+    commitCampaignState(perform(gameState, gameState.playerFaction, cityId, true));
+  };
+
+  /** Appointments and a governor's instructions cost no order, but are still given on your own turn. */
+  const appointGovernor = (cityId: string, generalId: string | null) => {
+    if (!gameState || !canIssueOrders) return;
+    commitCampaignState(performAppointGovernor(gameState, gameState.playerFaction, cityId, generalId));
+  };
+  const setGovernorFocus = (cityId: string, focus: GovernorFocus) => {
+    if (!gameState || !canIssueOrders) return;
+    commitCampaignState(performSetGovernorFocus(gameState, gameState.playerFaction, cityId, focus));
+  };
+
   const enterCity = (cityId: string) => {
     setSelectedCityId(cityId);
     setCityViewId(cityId);
@@ -446,6 +478,9 @@ export default function App() {
   } | null>(null);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showRealm, setShowRealm] = useState(
+    () => new URLSearchParams(window.location.search).get('demoRealm') === '1'
+  );
   const [showSaves, setShowSaves] = useState(false);
   const [showMultiplayer, setShowMultiplayer] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
@@ -1723,6 +1758,21 @@ export default function App() {
 
   const sharedPersistenceModals = (
     <>
+      {showRealm && gameState && (
+        <RealmTable
+          state={gameState}
+          lang={lang}
+          canIssueOrders={canIssueOrders}
+          onClose={() => setShowRealm(false)}
+          onOpenCity={(cid) => {
+            setShowRealm(false);
+            enterCity(cid);
+          }}
+          onAppointGovernor={appointGovernor}
+          onSetFocus={setGovernorFocus}
+        />
+      )}
+
       {showSettings && (
         <SettingsModal
           lang={lang}
@@ -1957,10 +2007,9 @@ export default function App() {
                 setSelectedCityId(cid);
                 setCityViewId(cid);
               }}
-              onDevelop={(cid) => {
-                if (!canIssueOrders) return;
-                commitCampaignState(performDevelopCity(gameState, gameState.playerFaction, cid, true));
-              }}
+              onDomesticOrder={issueDomesticOrder}
+              onAppointGovernor={appointGovernor}
+              onSetFocus={setGovernorFocus}
               onFortify={(cid) => {
                 if (!canIssueOrders) return;
                 commitCampaignState(performFortifyCity(gameState, gameState.playerFaction, cid, true));
@@ -2026,6 +2075,7 @@ export default function App() {
                 lang={lang}
                 selectedCityId={selectedCityId}
                 onSelectCity={handleSelectCity}
+                onOpenRealm={() => setShowRealm(true)}
               />
             )}
             {activeTab === 'city' && (
@@ -2033,10 +2083,7 @@ export default function App() {
                 state={gameState}
                 lang={lang}
                 selectedCityId={selectedCityId}
-                onDevelop={(cid) => {
-                  if (!canIssueOrders) return;
-                  commitCampaignState(performDevelopCity(gameState, gameState.playerFaction, cid, true));
-                }}
+                onDomesticOrder={issueDomesticOrder}
                 onFortify={(cid) => {
                   if (!canIssueOrders) return;
                   commitCampaignState(performFortifyCity(gameState, gameState.playerFaction, cid, true));

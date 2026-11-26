@@ -64,6 +64,9 @@ const C = {
 };
 const HOUSE_TILES = [0x4b4f52, 0x57524b, 0x44494c, 0x514e49];
 const CLOTH = [0x8f3a2c, 0xa3823a, 0x3f5a6c, 0x6c4a34, 0x7a6a3a, 0x4a6650];
+/** Fields under a bumper harvest and under drought, whatever the season */
+const FIELD_HARVEST = [0xd9b84a, 0xcfa83c, 0xe0c25a, 0xc49a34];
+const FIELD_DROUGHT = [0xa08a5c, 0xad9868, 0x94804e, 0xb8a474];
 const FIELD: Record<Season, number[]> = {
   spring: [0x86a552, 0x94ae5c, 0x6f9148, 0x7a6446],
   summer: [0x4f7f3a, 0x5e8c40, 0x6c9646, 0x47733a],
@@ -74,9 +77,17 @@ const FIELD: Record<Season, number[]> = {
 interface Extras {
   flags: Array<{ p: THREE.Vector3; size: number }>;
   lamps: THREE.Vector3[];
+  /** Small festival lanterns strung along the avenue */
+  lanterns: THREE.Vector3[];
   smoke: THREE.Vector3[];
-  soldiers: Array<{ x: number; z: number; r: number }>;
+  /** Something burning: a glow, a light and a column of dark smoke */
+  fires: THREE.Vector3[];
+  /** `c` is the company a soldier stands in, so companies can move as one at drill */
+  soldiers: Array<{ x: number; z: number; r: number; c: number }>;
+  /** Townsfolk about their business; fewer of them show when the city is afraid */
   people: Array<{ x: number; z: number; r: number }>;
+  /** People brought together by what is happening: a crowd, a queue, a work gang */
+  gathered: Array<{ x: number; z: number; r: number; y?: number }>;
   trees: Array<{ x: number; z: number; s: number }>;
 }
 
@@ -143,16 +154,54 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
   const kit = createCityBuildKit(bag);
   const L = cityLayoutOf(spec);
   const rnd = seeded(hashString(spec.id));
+  // The country outside has its own dice, and so does everything that shows the city's condition,
+  // so a riot or a fair never reshuffles the houses and fields the player knows.
+  const land = seeded(hashString(`${spec.id}:land`));
+  const dress = seeded(hashString(`${spec.id}:dress`));
   const pigment = FACTION_PIGMENT[spec.owner];
   const H = L.half;
   const { wallH, wallT, crossZ } = L;
   const tier = spec.tier;
+  // The market and the quays grow with trade, the fields and granaries with farming.
+  const trade = spec.trade;
+  const farming = spec.farming;
   const def = spec.defense;
 
   const group = new THREE.Group();
   const town = new THREE.Group();
   group.add(town);
-  const extras: Extras = { flags: [], lamps: [], smoke: [], soldiers: [], people: [], trees: [] };
+  const extras: Extras = {
+    flags: [],
+    lamps: [],
+    lanterns: [],
+    smoke: [],
+    fires: [],
+    soldiers: [],
+    people: [],
+    gathered: [],
+    trees: [],
+  };
+  const riot = spec.event === 'riot';
+  const uneasy = spec.unrest || riot;
+  // Timber staging against a wall face, with a gang working on it
+  const scaffold = (f: THREE.Object3D, x: number, z: number, len: number, h: number, gang: number) => {
+    const pole = kit.paint(C.timber);
+    const plank = kit.paint(C.wood);
+    const posts = Math.max(2, Math.ceil(len / 2.6) + 1);
+    for (let i = 0; i < posts; i++) {
+      const px = x - len / 2 + (i * len) / (posts - 1);
+      kit.box(f, pole, 0.16, h + 0.6, 0.16, px, 0, z);
+      kit.box(f, pole, 0.16, h + 0.6, 0.16, px, 0, z + 1.0);
+    }
+    for (const level of [0.34, 0.67, 1]) {
+      kit.box(f, plank, len + 0.4, 0.1, 1.2, x, h * level, z + 0.5);
+      kit.box(f, pole, len + 0.4, 0.1, 0.1, x, h * level + 0.9, z);
+    }
+    for (let i = 0; i < gang; i++) {
+      const p = frameToWorld(f, x - len / 2 + ((i + 0.5) * len) / gang, 0, z - 0.9 - (i % 2) * 0.7);
+      extras.gathered.push({ x: p.x, z: p.z, r: dress() * Math.PI * 2 });
+    }
+  };
   const districts = {} as CityWorld['districts'];
   const hitMeshes: THREE.Mesh[] = [];
 
@@ -260,8 +309,37 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
     const gw = main ? 12 : 9.6;
     const gd = wallT + 2.8;
     const gh = wallH + 1.7;
-    run(f, -span / 2, -gw / 2 + 0.3);
+    if (main && spec.breached) {
+      // A stretch west of the gate is down: a stump of wall, rubble spilled outward, staging behind
+      const bx = -(span / 2 + gw / 2) / 2;
+      run(f, -span / 2, bx - 3.4);
+      run(f, bx + 3.4, -gw / 2 + 0.3);
+      const broken = kit.paint(mixHex(def >= 5 ? C.brick : C.rammed, 0x3a332a, 0.3), 'wall');
+      kit.batter(f, wallMat, 6.8, wallH * 0.36, wallT, bx, 0, 0);
+      kit.box(f, wallMat, 1.3, wallH * 0.74, wallT * 0.9, bx - 2.9, 0, 0);
+      kit.box(f, wallMat, 1.1, wallH * 0.56, wallT * 0.8, bx + 2.8, 0, 0.1);
+      kit.box(f, kit.paint(0x26221e), 5.4, 0.1, wallT * 0.84, bx, wallH * 0.36, 0);
+      for (let k = 0; k < 18; k++) {
+        const size = 0.5 + dress() * 1.2;
+        kit.box(f, broken, size, size * 0.6, size * 0.8, bx + (dress() - 0.5) * 9, 0, wallT / 2 + 0.4 + dress() * 4.6);
+      }
+      for (let k = 0; k < 5; k++) {
+        const size = 0.4 + dress() * 0.7;
+        kit.box(f, broken, size, size * 0.6, size, bx + (dress() - 0.5) * 6, wallH * 0.36, (dress() - 0.5) * wallT * 0.6);
+      }
+      scaffold(f, bx, -wallT / 2 - 1.5, 8, wallH * 0.8, 5);
+      extras.smoke.unshift(frameToWorld(f, bx, wallH * 0.5, 0));
+    } else {
+      run(f, -span / 2, -gw / 2 + 0.3);
+    }
     run(f, gw / 2 - 0.3, span / 2);
+    if (main && spec.works === 'walls') {
+      // The governor's works: staging up the inner face east of the gate, and earth to ram
+      const wx = gw / 2 + Math.min(12, span * 0.16);
+      scaffold(f, wx, -wallT / 2 - 1.5, 12, wallH, 7);
+      kit.box(f, kit.paint(C.rammed, 'earth'), 3.2, 0.9, 1.3, wx + 8.4, 0, -wallT / 2 - 1.1);
+      kit.box(f, kit.paint(C.rammed, 'earth'), 2.0, 0.6, 1.1, wx - 8, 0, -wallT / 2 - 1.1);
+    }
 
     // The gatehouse: a block thicker and taller than the wall, pierced by the gateway
     kit.batter(f, wallMat, gw, gh, gd, 0, 0, 0);
@@ -457,6 +535,58 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
     };
   }
 
+  // What the people are doing before the hall and along the avenue
+  {
+    const courtDepth = crossZ - 2.3 - hallFront;
+    if (uneasy) {
+      // A crowd pressing on the hall gate
+      const count = riot ? 72 : 38;
+      for (let i = 0; i < count; i++) {
+        extras.gathered.push({
+          x: (dress() + dress() - 1) * cw * 0.3,
+          z: hallFront + 1.4 + dress() * dress() * Math.max(2, courtDepth - 1.5),
+          r: Math.PI + (dress() - 0.5) * 0.6,
+        });
+      }
+      extras.fires.push(new THREE.Vector3(-H * 0.6, 2.4, -H * 0.5));
+      if (riot) extras.fires.push(new THREE.Vector3(H * 0.62, 2.4, -H * 0.18));
+    } else if (spec.works === 'relief') {
+      // Grain given out at the hall gate: sacks on a trestle and a queue down the court
+      const tx = Math.min(cw / 2 - 4, 7);
+      const tz = hallFront + 2.2;
+      kit.box(town, wood, 3.4, 0.8, 1.2, tx, 0, tz);
+      for (let k = 0; k < 7; k++) {
+        kit.box(town, kit.paint(C.canvas), 0.7, 0.45, 0.5, tx - 1.2 + (k % 4) * 0.8, 0.8 + Math.floor(k / 4) * 0.45, tz);
+      }
+      for (let k = 0; k < 5; k++) kit.box(town, kit.paint(C.canvas), 0.8, 0.5, 0.6, tx + 2.6 + (k % 2) * 0.9, Math.floor(k / 2) * 0.5, tz - 0.3);
+      const rows = Math.max(3, Math.floor(courtDepth - 3.2));
+      for (let i = 0; i < 18; i++) {
+        extras.gathered.push({
+          x: tx - 0.6 - Math.floor(i / rows) * 1.3 + (dress() - 0.5) * 0.3,
+          z: tz + 1.5 + (i % rows) * 1.0,
+          r: Math.PI,
+        });
+      }
+      for (let k = 0; k < 2; k++) extras.gathered.push({ x: tx - 0.8 + k * 1.6, z: tz - 1.0, r: 0 });
+    }
+    if (spec.thriving && !uneasy) {
+      // Lanterns on posts down the avenue, and the street full
+      const post = kit.paint(C.timber);
+      for (let z = crossZ + 4; z < H - 3; z += 5) {
+        for (const sx of [-1, 1]) {
+          kit.box(town, post, 0.12, 3.1, 0.12, sx * 3.25, 0, z);
+          extras.lanterns.push(new THREE.Vector3(sx * 3.25, 3.0, z));
+        }
+      }
+      for (let z = hallFront + 3; z < crossZ - 3; z += 5) {
+        for (const sx of [-1, 1]) extras.lanterns.push(new THREE.Vector3(sx * (cw / 2 - 1.5), 2.6, z));
+      }
+      for (let i = 0; i < 26; i++) {
+        extras.gathered.push({ x: (dress() - 0.5) * 4.2, z: crossZ + 3 + dress() * (H - crossZ - 6), r: dress() * Math.PI * 2 });
+      }
+    }
+  }
+
   // =============================================================== homes and granaries
   const houses = (rect: Rect, skip: Rect[]) => {
     const density = [0.44, 0.58, 0.72, 0.85, 0.95][tier - 1];
@@ -494,7 +624,7 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
       }
     }
   };
-  const granaryCount = Math.min(1 + tier, Math.max(1, Math.floor((H - 3 - (cw / 2 + 3)) / 4.2)) * 2);
+  const granaryCount = Math.min(1 + farming, Math.max(1, Math.floor((H - 3 - (cw / 2 + 3)) / 4.2)) * 2);
   const granaryRect: Rect = {
     x0: cw / 2 + 8,
     x1: cw / 2 + 8 + Math.ceil(granaryCount / 2) * 4.2,
@@ -535,12 +665,12 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
       kit.box(f, kit.paint(CLOTH[Math.floor(rnd() * CLOTH.length)]), len * 0.8, 0.08, 1.3, 0, 1.75, 2.3);
       kit.box(f, wood, len * 0.7, 0.7, 0.6, 0, 0, 2.2);
     };
-    if (tier >= 2) {
+    if (trade >= 2) {
       const n = Math.max(1, Math.floor((w - 3) / 8));
       for (let i = 0; i < n; i++) shop(r.x0 + 1.5 + ((i + 0.5) * (w - 3)) / n, r.z0 + 2.2, (w - 3) / n - 0.9, 0);
       taken.push({ x0: r.x0, x1: r.x1, z0: r.z0, z1: r.z0 + 6 });
     }
-    if (tier >= 3) {
+    if (trade >= 3) {
       const n = Math.max(1, Math.floor((d - 10) / 8));
       for (let i = 0; i < n; i++) {
         shop(r.x1 - 2.2, r.z0 + 8 + ((i + 0.5) * (d - 10)) / n, (d - 10) / n - 0.9, -Math.PI / 2);
@@ -555,13 +685,49 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
       extras.lamps.push(new THREE.Vector3(tx + 2.8, 1.8, tz + 2.8), new THREE.Vector3(tx - 2.8, 1.8, tz + 2.8));
     }
 
-    // Stalls in rows across what is left of the square
-    const want = [3, 7, 12, 18, 26][tier - 1];
+    if (spec.works === 'trade') {
+      // The governor's works: the frame of a new shop going up, with its timber stacked beside it
+      const bx = r.x0 + 6;
+      const bz = r.z1 - 4.4;
+      const pole = kit.paint(C.timber);
+      for (const sx of [-1, 0, 1]) {
+        for (const sz of [-1, 1]) kit.box(town, pole, 0.22, 2.9, 0.22, bx + sx * 3.2, 0, bz + sz * 1.6);
+      }
+      for (const sz of [-1, 1]) kit.box(town, pole, 6.8, 0.2, 0.2, bx, 2.9, bz + sz * 1.6);
+      for (const sx of [-1, 0, 1]) kit.box(town, pole, 0.2, 0.2, 3.4, bx + sx * 3.2, 2.9, bz);
+      for (let k = 0; k < 5; k++) kit.box(town, wood, 0.14, 0.14, 4.2, bx - 3 + k * 1.5, 3.5, bz);
+      for (let k = 0; k < 6; k++) kit.box(town, wood, 3.6, 0.2, 0.24, bx + 6.2, (k % 3) * 0.2, bz - 0.5 + Math.floor(k / 3) * 0.5);
+      for (let k = 0; k < 6; k++) {
+        extras.gathered.push({ x: bx - 3 + dress() * 6, z: bz - 2.6 + dress() * 5.2, r: dress() * Math.PI * 2 });
+      }
+      taken.push({ x0: bx - 5, x1: bx + 8.6, z0: bz - 3.4, z1: bz + 3.4 });
+    }
+    if (riot) {
+      // A stall burning in the open part of the square and a mob around it
+      const fx = r.x0 + w * 0.2;
+      const fz = cz + d * 0.12;
+      const charred = kit.paint(0x1c1815);
+      for (const sx of [-1, 1]) kit.box(town, charred, 0.12, 1.5, 0.12, fx + sx * 1.1, 0, fz - 0.7);
+      kit.box(town, charred, 2.6, 0.5, 1.4, fx, 0, fz);
+      kit.box(town, charred, 2.2, 0.1, 1.9, fx + 0.5, 0.5, fz + 0.3);
+      extras.fires.push(new THREE.Vector3(fx, 1.3, fz));
+      taken.push({ x0: fx - 2.4, x1: fx + 2.4, z0: fz - 2.2, z1: fz + 2.2 });
+      for (let i = 0; i < 34; i++) {
+        const a = dress() * Math.PI * 2;
+        const rad = 3.2 + dress() * 4.5;
+        extras.gathered.push({ x: fx + Math.cos(a) * rad, z: fz + Math.sin(a) * rad * 0.8, r: a });
+      }
+    }
+
+    // Stalls in rows across what is left of the square; a fair fills it, fear empties it
+    const usual = [3, 7, 12, 18, 26][trade - 1];
+    const want = spec.event === 'fair' ? 999 : uneasy || spec.event === 'plague' ? Math.ceil(usual * 0.55) : usual;
     let stalls = 0;
     for (let z = r.z0 + 3.5; z < r.z1 - 2 && stalls < want; z += 4.4) {
       for (let x = r.x0 + 3; x < r.x1 - 2 && stalls < want; x += 4.6) {
         if (taken.some((t) => inRect(t, x, z, 1.6))) continue;
-        if (rnd() < 0.14) continue;
+        const gap = rnd() < 0.14;
+        if (gap && spec.event !== 'fair') continue;
         const f = kit.frame(town, x + (rnd() - 0.5) * 0.8, z + (rnd() - 0.5) * 0.6, rnd() < 0.8 ? 0 : Math.PI / 2);
         for (const sx of [-1, 1]) {
           for (const sz of [-1, 1]) kit.box(f, wood, 0.1, 1.7, 0.1, sx * 1.15, 0, sz * 0.8);
@@ -579,12 +745,12 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
         stalls += 1;
       }
     }
-    if (tier >= 2) extras.smoke.push(new THREE.Vector3(cx + w * 0.2, 3, r.z0 + 2.2));
+    if (trade >= 2) extras.smoke.push(new THREE.Vector3(cx + w * 0.2, 3, r.z0 + 2.2));
     extras.lamps.push(new THREE.Vector3(r.x0 + 1.4, 1.8, r.z0 + 1.4), new THREE.Vector3(r.x1 - 1.4, 1.8, r.z1 - 1.4));
-    hit('market', cx, cz, w, tier >= 3 ? 8 : 4, d);
+    hit('market', cx, cz, w, trade >= 3 ? 8 : 4, d);
     glow('market', cx, 0.26, cz, w + 1.5, d + 1.5);
     districts.market = {
-      anchor: new THREE.Vector3(cx, tier >= 3 ? 11.5 : 6.5, cz),
+      anchor: new THREE.Vector3(cx, trade >= 3 ? 11.5 : 6.5, cz),
       focus: new THREE.Vector3(cx, 1.5, cz),
       dist: Math.max(46, w * 1.9),
     };
@@ -630,15 +796,47 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
       const step = 1.2;
       const cols = Math.max(1, Math.floor((gw - 1.2) / step));
       const rows = Math.max(1, Math.floor((gd - 1.2) / step));
-      const men = Math.max(6, Math.min(cols * rows, 240, Math.round(spec.troops / 200)));
-      // Companies of five files with a lane between them
+      const men = Math.max(6, Math.min(cols * rows, 240, Math.round(spec.troops / 120)));
+      // Companies of five files with a lane between them. How they stand tells their drill: raw
+      // levies in a ragged crowd, veterans dressed by the right with a banner to each company.
+      const band = spec.drillBand;
+      const ragged = band === 0 ? 0.5 : band === 1 ? 0.22 : 0;
+      const sick = spec.event === 'plague' ? 0.45 : 1;
+      const muster = Math.max(6, Math.round(men * sick));
+      const drilling = spec.works === 'drill';
+      // The ranks stand in the middle of the ground, not crowded against its north side
+      const files = cols - Math.floor(cols / 6);
+      const lead = Math.max(0, (rows - Math.ceil(muster / Math.max(1, files))) / 2) * step * 0.7;
       let placed = 0;
-      for (let row = 0; row < rows && placed < men; row++) {
-        for (let col = 0; col < cols && placed < men; col++) {
+      for (let row = 0; row < rows && placed < muster; row++) {
+        for (let col = 0; col < cols && placed < muster; col++) {
           if (col % 6 === 5) continue;
-          extras.soldiers.push({ x: ground.x1 - 0.8 - col * step, z: ground.z0 + 0.8 + row * step, r: Math.PI / 2 });
+          if (ragged > 0 && dress() < ragged * 0.3) continue;
+          const company = Math.floor(col / 6);
+          extras.soldiers.push({
+            x: ground.x1 - 0.8 - col * step + (dress() - 0.5) * ragged * 2,
+            z: ground.z0 + 0.8 + lead + row * step + (dress() - 0.5) * ragged * 2,
+            // At drill, neighbouring companies face each other across the lane
+            r: (drilling && company % 2 === 1 ? -Math.PI / 2 : Math.PI / 2) + (dress() - 0.5) * ragged * 3,
+            c: company,
+          });
           placed += 1;
         }
+      }
+      if (band === 3 || drilling) {
+        const companies = Math.ceil(cols / 6);
+        for (let c = 0; c < companies; c++) {
+          const x = ground.x1 - 0.8 - (c * 6 + 2) * step;
+          if (x < ground.x0 + 0.5) break;
+          kit.box(town, kit.paint(C.timber), 0.12, 3.6, 0.12, x, 0, ground.z0 + lead);
+          extras.flags.push({ p: new THREE.Vector3(x, 3.1, ground.z0 + lead), size: 0.62 });
+        }
+      }
+      if (drilling) {
+        // The drill-master on a stand, and dust kicked up by the ranks
+        kit.box(town, wood, 2.2, 0.7, 2.2, ground.x0 + 1.6, 0, ground.z1 - 1.6);
+        extras.gathered.push({ x: ground.x0 + 1.6, z: ground.z1 - 1.6, r: 0, y: 0.7 });
+        extras.smoke.unshift(new THREE.Vector3((ground.x0 + ground.x1) / 2, 0.6, (ground.z0 + ground.z1) / 2));
       }
       // Racks of polearms and a row of archery butts along the north side
       for (let k = 0; k < 3; k++) {
@@ -688,9 +886,12 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
 
   // =============================================================== farmland
   {
-    const tones = FIELD[spec.season];
-    const paddies = spec.river && (spec.season === 'spring' || spec.season === 'summer');
-    const share = [0.5, 0.62, 0.74, 0.86, 0.96][tier - 1];
+    const harvest = spec.event === 'harvest';
+    const drought = spec.event === 'drought';
+    const tones = harvest ? FIELD_HARVEST : drought ? FIELD_DROUGHT : FIELD[spec.season];
+    const paddies = !drought && !harvest && spec.river && (spec.season === 'spring' || spec.season === 'summer');
+    let opening = spec.works === 'farming';
+    const share = [0.5, 0.62, 0.74, 0.86, 0.96][farming - 1];
     const path = kit.paint(C.road, 'earth');
     let first: Rect | null = null;
     for (const zone of L.fieldZones) {
@@ -709,22 +910,32 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
           const z = zone.z0 + (r + 0.5) * pd;
           // Land nearest the gates is taken up first; the rest waits for a richer city
           const far = Math.hypot(x, z - L.outer) / (L.outer + 90);
-          if (far * 0.75 + rnd() * 0.45 > share + 0.12) {
-            if (rnd() < 0.35) {
-              const f = kit.frame(town, x, z, rnd() < 0.5 ? 0 : Math.PI / 2);
+          if (far * 0.75 + land() * 0.45 > share + 0.12) {
+            if (opening && far < 0.8) {
+              // The governor's works: waste being broken into a new field
+              opening = false;
+              kit.patch(town, kit.paint(0x6b5536, 'field'), pw - 1.3, pd - 1.3, x, 0.08, z, 0);
+              kit.box(town, wood, 2.4, 0.9, 1.3, x - pw / 2 + 2, 0, z - pd / 2 + 1.4);
+              for (let k = 0; k < 9; k++) {
+                extras.gathered.push({ x: x + (dress() - 0.5) * (pw - 3), z: z + (dress() - 0.5) * (pd - 3), r: dress() * Math.PI * 2 });
+              }
+              continue;
+            }
+            if (land() < 0.35) {
+              const f = kit.frame(town, x, z, land() < 0.5 ? 0 : Math.PI / 2);
               kit.box(f, kit.paint(C.mudWall), 3.6, 1.7, 2.8, 0, 0, 0);
               kit.roof(f, kit.paint(C.thatch), 4.7, 3.9, 1.35, 0, 1.7, 0, 0, { ridge: 0.72, lift: 0.04 });
               if (spec.season === 'autumn' || spec.season === 'winter') {
                 kit.cyl(f, kit.paint(0xb39a52), 0, 0.9, 1.4, 3.2, 0, 0.6);
               }
-              if (rnd() < 0.5) extras.smoke.push(new THREE.Vector3(x, 3.3, z));
-              extras.trees.push({ x: x - 3.4, z: z - 2.2, s: 1.1 + rnd() * 0.5 });
+              if (land() < 0.5) extras.smoke.push(new THREE.Vector3(x, 3.3, z));
+              extras.trees.push({ x: x - 3.4, z: z - 2.2, s: 1.1 + land() * 0.5 });
             }
             continue;
           }
-          const wet = paddies && rnd() < 0.55;
-          const tone = wet ? mixHex(0x3d5a52, tones[0], 0.35) : tones[Math.floor(rnd() * tones.length)];
-          const turned = rnd() < 0.3;
+          const wet = paddies && land() < 0.55;
+          const tone = wet ? mixHex(0x3d5a52, tones[0], 0.35) : tones[Math.floor(land() * tones.length)];
+          const turned = land() < 0.3;
           kit.patch(
             town,
             kit.paint(tone, wet ? 'matte' : 'field'),
@@ -735,8 +946,21 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
             z,
             turned ? Math.PI / 2 : 0
           );
+          if (harvest) {
+            // Sheaves stooked across the stubble and reapers still at work
+            const stooks = 3 + Math.floor(dress() * 4);
+            for (let k = 0; k < stooks; k++) {
+              kit.cyl(town, kit.paint(0xc9a43e), 0, 0.62, 1.15, x + (dress() - 0.5) * (pw - 4), 0.08, z + (dress() - 0.5) * (pd - 4));
+            }
+            if (dress() < 0.6) {
+              for (let k = 0; k < 3; k++) {
+                extras.gathered.push({ x: x + (dress() - 0.5) * (pw - 4), z: z + (dress() - 0.5) * (pd - 4), r: dress() * Math.PI * 2 });
+              }
+            }
+          }
         }
       }
+      if (drought) extras.smoke.unshift(new THREE.Vector3((zone.x0 + zone.x1) / 2, 0.5, (zone.z0 + zone.z1) / 2));
       hit('fields', (zone.x0 + zone.x1) / 2, (zone.z0 + zone.z1) / 2, zw, 2.4, zd);
       glow('fields', (zone.x0 + zone.x1) / 2, 0.3, (zone.z0 + zone.z1) / 2, zw + 3, zd + 3);
     }
@@ -750,11 +974,48 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
     };
   }
 
+  // =============================================================== outside the south gate
+  if (spec.event === 'fair' || spec.event === 'plague') {
+    const rowZ = L.moat ? L.moat.inner + L.moat.width + 2.6 : L.outer + 4.6;
+    const fair = spec.event === 'fair';
+    for (let i = 0; i < (fair ? 7 : 5); i++) {
+      for (const sx of fair ? [-1, 1] : [-1]) {
+        const x = sx * (7.5 + i * 4.3);
+        if (fair) {
+          // Travelling merchants' booths under bright awnings
+          const f = kit.frame(town, x, rowZ, 0);
+          for (const px of [-1, 1]) {
+            for (const pz of [-1, 1]) kit.box(f, wood, 0.1, 1.8, 0.1, px * 1.3, 0, pz * 0.9);
+          }
+          kit.roof(f, kit.paint(CLOTH[(i + (sx > 0 ? 3 : 0)) % CLOTH.length]), 3.4, 2.6, 0.85, 0, 1.8, 0, 0, { ridge: 0.7, lift: 0.02 });
+          kit.box(f, wood, 2.2, 0.6, 1.0, 0, 0, 0);
+          for (let k = 0; k < 3; k++) kit.box(f, kit.paint(CLOTH[(i + k) % CLOTH.length]), 0.4, 0.3, 0.4, -0.6 + k * 0.6, 0.6, 0);
+          for (let k = 0; k < 3; k++) {
+            extras.gathered.push({ x: x + (dress() - 0.5) * 3, z: rowZ - 1.6 - dress() * 1.2, r: dress() * Math.PI * 2 });
+          }
+        } else {
+          // The sick are kept in tents outside the walls
+          kit.cyl(town, kit.paint(0xd9d2c0), 0, 1.5, 1.9, x, 0, rowZ);
+          kit.box(town, kit.paint(C.timber), 0.07, 0.5, 0.07, x, 1.8, rowZ);
+        }
+      }
+    }
+    if (fair) {
+      // Pack animals and carts drawn up on the road
+      for (let k = 0; k < 4; k++) kit.box(town, wood, 1.4, 0.9, 2.4, (k % 2 === 0 ? -1 : 1) * 1.3, 0.2, rowZ + 6 + k * 4.2);
+      for (let i = 0; i < 16; i++) extras.gathered.push({ x: (dress() - 0.5) * 4, z: L.outer + 1.5 + dress() * 16, r: dress() * Math.PI * 2 });
+    } else {
+      // Pyres beyond the tents
+      extras.fires.push(new THREE.Vector3(-(7.5 + 5 * 4.3 + 4), 0.8, rowZ + 1));
+      extras.fires.push(new THREE.Vector3(-(7.5 + 5 * 4.3 + 10), 0.8, rowZ - 0.5));
+    }
+  }
+
   // =============================================================== the waterfront
   if (L.river) {
     const bank = L.river.x - L.river.half - 2;
     const plank = kit.paint(0x5c4832);
-    const quays = 2 + Math.round(tier / 2);
+    const quays = 2 + Math.round(trade / 2);
     for (let i = 0; i < quays; i++) {
       const z = (i - (quays - 1) / 2) * 17;
       kit.box(town, plank, 18, 0.5, 3, bank + 5, -0.1, z);
@@ -762,8 +1023,8 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
         for (const s of [-1, 1]) kit.cyl(town, kit.paint(C.timber), 0.2, 0.2, 2.6, bank - 2 + k * 5, -2, z + s * 1.3);
       }
       // A boat moored at each quay
-      const f = kit.frame(town, bank + 9 + (rnd() - 0.5) * 3, z + (i % 2 === 0 ? 4.4 : -4.4), (rnd() - 0.5) * 0.3);
-      const len = 8 + rnd() * 4 + tier * 0.6;
+      const f = kit.frame(town, bank + 9 + (land() - 0.5) * 3, z + (i % 2 === 0 ? 4.4 : -4.4), (land() - 0.5) * 0.3);
+      const len = 8 + land() * 4 + trade * 0.6;
       kit.box(f, kit.paint(0x4a3826), len, 1.0, 2.4, 0, -0.9, 0);
       kit.box(f, kit.paint(0x4a3826), 1.6, 1.3, 1.9, len / 2 + 0.4, -0.8, 0);
       kit.box(f, kit.paint(0x4a3826), 1.4, 1.5, 1.7, -len / 2 - 0.3, -0.8, 0);
@@ -798,18 +1059,18 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
   })();
   const dummy = new THREE.Object3D();
   const crowd = (
-    list: Array<{ x: number; z: number; r: number }>,
+    list: Array<{ x: number; z: number; r: number; y?: number }>,
     tones: number[],
     spear: boolean
-  ) => {
-    if (list.length === 0) return;
+  ): THREE.InstancedMesh[] => {
+    if (list.length === 0) return [];
     const bodyMat = bag.add(new THREE.MeshStandardMaterial({ roughness: spear ? 0.55 : 0.9, metalness: spear ? 0.5 : 0 }));
     const skin = bag.add(new THREE.MeshStandardMaterial({ color: spear ? 0x4a4744 : 0xb08a68, roughness: 0.8, metalness: spear ? 0.6 : 0 }));
     const bodies = new THREE.InstancedMesh(figure.body, bodyMat, list.length);
     const heads = new THREE.InstancedMesh(figure.head, skin, list.length);
     const tint = new THREE.Color();
     list.forEach((m, i) => {
-      dummy.position.set(m.x, 0.09, m.z);
+      dummy.position.set(m.x, 0.09 + (m.y ?? 0), m.z);
       dummy.rotation.set(0, m.r, 0);
       dummy.scale.setScalar(spear ? 1.12 : 0.98 + (i % 5) * 0.03);
       dummy.updateMatrix();
@@ -821,6 +1082,7 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
     bag.add(bodies);
     bag.add(heads);
     group.add(bodies, heads);
+    const meshes = [bodies, heads];
     if (spear) {
       const shaft = bag.add(new THREE.BoxGeometry(0.05, 2.1, 0.05));
       shaft.translate(0.26, 1.05, 0);
@@ -834,11 +1096,42 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
       });
       bag.add(spears);
       group.add(spears);
+      meshes.push(spears);
     }
+    return meshes;
   };
   const iron = spec.myth ? 0x34373a : 0x55595c;
-  crowd(extras.soldiers, [mixHex(iron, pigment, 0.22), mixHex(iron, pigment, 0.38), iron], true);
-  crowd(extras.people, [0x6c5a44, 0x8a7a5c, 0x4f5a66, 0x7a4a3a, 0x9a8e74, 0x5a6650], false);
+  const ranks = crowd(extras.soldiers, [mixHex(iron, pigment, 0.22), mixHex(iron, pigment, 0.38), iron], true);
+  // In a frightened or sickened city most people stay indoors
+  const abroad = spec.event === 'plague' ? 0.25 : riot ? 0.3 : spec.unrest ? 0.5 : 1;
+  const townsfolk = extras.people.filter((_, i) => ((i * 7) % 20) / 20 < abroad).concat(extras.gathered);
+  crowd(townsfolk, [0x6c5a44, 0x8a7a5c, 0x4f5a66, 0x7a4a3a, 0x9a8e74, 0x5a6650], false);
+
+  // Floodwater standing on the fields
+  if (spec.event === 'flood') {
+    const floodMat = bag.add(
+      new THREE.MeshStandardMaterial({
+        // Muddy water: dull enough that the low sun does not flare on it
+        color: spec.myth ? 0x6c8078 : 0x86a09a,
+        roughness: 0.5,
+        metalness: 0,
+        transparent: true,
+        opacity: 0.93,
+        emissive: 0x2c2a20,
+        emissiveIntensity: 0.3,
+      })
+    );
+    const sheets: Rect[] = L.fieldZones.map((z) => ({ x0: z.x0 - 5, x1: z.x1 + 5, z0: z.z0 - 3, z1: z.z1 + 6 }));
+    if (L.river) sheets.push({ x0: L.outer + 20, x1: L.river.x - L.river.half + 4, z0: -L.outer, z1: L.outer + 80 });
+    for (const sheet of sheets) {
+      const geo = bag.add(new THREE.PlaneGeometry(sheet.x1 - sheet.x0, sheet.z1 - sheet.z0));
+      geo.rotateX(-Math.PI / 2);
+      const water = new THREE.Mesh(geo, floodMat);
+      water.position.set((sheet.x0 + sheet.x1) / 2, 0.5, (sheet.z0 + sheet.z1) / 2);
+      water.receiveShadow = true;
+      group.add(water);
+    }
+  }
 
   // Banners in the owner's colour
   const flagGeo = bag.add(new THREE.PlaneGeometry(2.3, 1.35, 1, 1));
@@ -876,6 +1169,47 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
     group.add(s);
     return { sprite: s, phase: i * 2.3 };
   });
+  const lanternMat = bag.add(
+    new THREE.SpriteMaterial({
+      map: glowTexture,
+      color: new THREE.Color(0xff5236).multiplyScalar(spec.myth ? 3.2 : 1.8),
+      transparent: true,
+      opacity: spec.myth ? 0.95 : 0.7,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      fog: false,
+    })
+  );
+  for (const p of extras.lanterns) {
+    const s = new THREE.Sprite(lanternMat);
+    s.position.copy(p);
+    s.scale.setScalar(1.25);
+    group.add(s);
+  }
+  // Fires: a hot glow that lights what stands near it
+  const fireMat = bag.add(
+    new THREE.SpriteMaterial({
+      map: glowTexture,
+      color: new THREE.Color(0xff5a1e).multiplyScalar(spec.myth ? 3.4 : 2),
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      fog: false,
+    })
+  );
+  const blazes = extras.fires.map((p, i) => {
+    const s = new THREE.Sprite(fireMat);
+    s.position.copy(p);
+    s.scale.setScalar(5.5);
+    group.add(s);
+    if (i < 3) {
+      const light = new THREE.PointLight(0xff5a20, spec.myth ? 90 : 40, 42, 1.8);
+      light.position.copy(p).setY(p.y + 2);
+      group.add(light);
+    }
+    return { sprite: s, phase: i * 1.9 };
+  });
   // A few real lights, so the gate and the hall are warmed by their own fires
   const warm = [districts.walls.anchor.clone().setY(3).add(new THREE.Vector3(0, 0, 5)), districts.hall.focus.clone().setY(4), districts.market.focus.clone().setY(4), districts.barracks.focus.clone().setY(3)];
   for (const p of warm) {
@@ -903,6 +1237,16 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
       return { sprite: s, mat, origin: p, phase: k / PUFFS + i * 0.37 };
     })
   );
+  const BLACK_PUFFS = 11;
+  const blackSmoke = extras.fires.flatMap((p, i) =>
+    Array.from({ length: BLACK_PUFFS }, (_, k) => {
+      const mat = bag.add(smokeMat.clone());
+      mat.color.setHex(0x1e1a17);
+      const s = new THREE.Sprite(mat);
+      group.add(s);
+      return { sprite: s, mat, origin: p, phase: k / BLACK_PUFFS + i * 0.23 };
+    })
+  );
   const placeSmoke = (elapsed: number) => {
     for (const puff of smoke) {
       const t = (elapsed * 0.09 + puff.phase) % 1;
@@ -910,6 +1254,13 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
       const size = 1.2 + t * 4.6;
       puff.sprite.scale.set(size, size, 1);
       puff.mat.opacity = Math.sin(Math.PI * t) * (spec.myth ? 0.3 : 0.24);
+    }
+    for (const puff of blackSmoke) {
+      const t = (elapsed * 0.05 + puff.phase) % 1;
+      puff.sprite.position.set(puff.origin.x + t * t * 12, puff.origin.y + 1 + t * 22, puff.origin.z - t * 4);
+      const size = 2.6 + t * 8.5;
+      puff.sprite.scale.set(size, size, 1);
+      puff.mat.opacity = Math.sin(Math.PI * Math.min(1, t * 1.1)) ** 0.6 * 0.85;
     }
   };
   placeSmoke(0);
@@ -935,6 +1286,22 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
         glowMats[id].opacity += (want - glowMats[id].opacity) * k;
       }
       if (still) return;
+      for (const b of blazes) {
+        b.sprite.scale.setScalar(5.5 * (0.85 + 0.2 * Math.sin(elapsed * 9.1 + b.phase) + 0.1 * Math.sin(elapsed * 21 + b.phase)));
+      }
+      if (spec.works === 'drill' && ranks.length > 0) {
+        // Companies advance on each other and fall back, each as one body
+        extras.soldiers.forEach((m, i) => {
+          const facing = m.c % 2 === 1 ? 1 : -1;
+          const swing = Math.sin(elapsed * 0.9 + m.c * 0.5);
+          dummy.position.set(m.x + facing * (0.9 + 0.9 * swing), 0.09 + Math.abs(Math.sin(elapsed * 5 + m.c)) * 0.05, m.z);
+          dummy.rotation.set(0, m.r, swing > 0.6 ? facing * -0.16 : 0);
+          dummy.scale.setScalar(1.12);
+          dummy.updateMatrix();
+          for (const mesh of ranks) mesh.setMatrixAt(i, dummy.matrix);
+        });
+        for (const mesh of ranks) mesh.instanceMatrix.needsUpdate = true;
+      }
       for (const f of flags) f.mesh.rotation.y = f.base + Math.sin(elapsed * 1.9 + f.phase) * 0.24;
       for (const l of lamps) {
         l.sprite.scale.setScalar(2.6 * (0.9 + 0.14 * Math.sin(elapsed * 7.3 + l.phase) + 0.06 * Math.sin(elapsed * 17.1 + l.phase)));

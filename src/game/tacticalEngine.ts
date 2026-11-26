@@ -1,3 +1,4 @@
+import { drillMoraleBonus } from './cityAspects.js';
 import { HERO_BONDS } from './heroes.js';
 import { factionHasTech, getChronoInsightBonus, getCityGenerals } from './queries.js';
 import type {
@@ -593,18 +594,25 @@ export function createTacticalBattle(
         config.initialDuelResult.attackerHeroId === leadAtkHero?.id
     );
 
+  // Each army brings the drill of the city it marched from (or holds) onto the field as morale.
+  const atkDrill = drillMoraleBonus(gameState.cities[config.fromCityId]?.drill ?? 50);
+  const pincerDrill = drillMoraleBonus(
+    (config.pincerFromCityId ? gameState.cities[config.pincerFromCityId]?.drill : undefined) ?? 50
+  );
+  const defDrill = drillMoraleBonus(targetCity?.drill ?? 50);
+
   const duelMoraleAtk =
-    config.initialDuelResult?.winner === 'attacker'
+    (config.initialDuelResult?.winner === 'attacker'
       ? 96
       : config.initialDuelResult?.winner === 'defender'
         ? 68
-        : 84;
+        : 84) + atkDrill;
   const duelMoraleDef =
-    config.initialDuelResult?.winner === 'defender'
+    (config.initialDuelResult?.winner === 'defender'
       ? 96
       : config.initialDuelResult?.winner === 'attacker'
         ? 66
-        : 84;
+        : 84) + defDrill;
 
   const units: TacticalUnit[] = [];
 
@@ -687,7 +695,7 @@ export function createTacticalBattle(
         hasStirrups: atkStirrups,
         isNavalCapable: atkNavalCapable,
         isFlankSquad: true,
-        initialMorale: Math.min(100, duelMoraleAtk + 8),
+        initialMorale: Math.min(100, duelMoraleAtk - atkDrill + pincerDrill + 8),
       })
     );
   }

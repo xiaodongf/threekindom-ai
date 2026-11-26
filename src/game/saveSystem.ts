@@ -1,3 +1,5 @@
+import { ASPECT_MAX_LEVEL, DRILL_START, SUPPORT_START } from './cityAspects.js';
+import { CITY_EVENT_KINDS } from './cityEvents.js';
 import {
   createInitialCities,
   createInitialDiplomacy,
@@ -5,15 +7,18 @@ import {
   createInitialGenerals,
 } from './data.js';
 import { createDefaultChronoState, createDefaultPlayerProfile } from './engine.js';
+import { GOVERNOR_FOCI, WORKS_PER_LEVEL } from './governors.js';
 import type { TacticalBattleConfig, TacticalBattleState } from './tacticalTypes.js';
 import type {
   AIProviderId,
   AIRequestConfig,
   AITurnAction,
   City,
+  CityEventKind,
   FactionState,
   GameState,
   General,
+  GovernorFocus,
   Language,
   LocalizedText,
   OperationReport,
@@ -255,6 +260,61 @@ const VALID_SEASONS: Season[] = ['spring', 'summer', 'autumn', 'winter'];
 const VALID_FACTIONS: PlayableFactionId[] = ['wei', 'shu', 'wu'];
 const VALID_TABS: SavedRightTab[] = ['city', 'heroes', 'tech', 'advisor', 'diplomacy', 'chronicle'];
 
+function levelOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(1, Math.min(ASPECT_MAX_LEVEL, Math.round(value)))
+    : fallback;
+}
+
+function scoreOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.min(100, Math.round(value)))
+    : fallback;
+}
+
+/**
+ * One saved city over its fresh catalogue entry. A save from before cities had farming, trade,
+ * drill and support carries a single `development` level instead: farming and trade both take
+ * that level, and drill and support start in the middle.
+ */
+function hydrateCity(cid: string, baseCity: City, savedC: Record<string, unknown>): City {
+  const { development: legacyLevel, ...saved } = savedC as Partial<City> & { development?: unknown };
+  const legacy = levelOr(legacyLevel, NaN);
+  // A governor's post, instruction and half-finished works are kept only in a form the rules accept.
+  const { governorId, focus, works, event, wallScar, ...plain } = saved;
+  const keptEvent =
+    isObject(event) &&
+    CITY_EVENT_KINDS.includes(event.kind as CityEventKind) &&
+    typeof event.seasonsLeft === 'number' &&
+    event.seasonsLeft >= 1
+      ? { kind: event.kind as CityEventKind, seasonsLeft: Math.min(4, Math.round(event.seasonsLeft)) }
+      : undefined;
+  const keptWorks: NonNullable<City['works']> = {};
+  if (isObject(works)) {
+    for (const task of ['farming', 'trade', 'walls'] as const) {
+      const n = (works as Record<string, unknown>)[task];
+      if (typeof n === 'number' && Number.isFinite(n) && n > 0) {
+        keptWorks[task] = Math.min(WORKS_PER_LEVEL - 1, Math.round(n));
+      }
+    }
+  }
+  return {
+    ...baseCity,
+    ...plain,
+    ...(typeof governorId === 'string' && governorId ? { governorId } : {}),
+    ...(GOVERNOR_FOCI.includes(focus as GovernorFocus) ? { focus: focus as GovernorFocus } : {}),
+    ...(Object.keys(keptWorks).length > 0 ? { works: keptWorks } : {}),
+    ...(keptEvent ? { event: keptEvent } : {}),
+    ...(typeof wallScar === 'number' && wallScar >= 1 ? { wallScar: Math.min(6, Math.round(wallScar)) } : {}),
+    id: cid,
+    neighbors: Array.isArray(saved.neighbors) ? (saved.neighbors as string[]) : baseCity.neighbors,
+    farming: levelOr(saved.farming, Number.isNaN(legacy) ? baseCity.farming : legacy),
+    trade: levelOr(saved.trade, Number.isNaN(legacy) ? baseCity.trade : legacy),
+    drill: scoreOr(saved.drill, DRILL_START),
+    support: scoreOr(saved.support, SUPPORT_START),
+  };
+}
+
 /**
  * Validates an untrusted JSON object and hydrates missing defaults so saves remain forward-compatible
  * across game updates while rejecting malformed or corrupted payloads cleanly.
@@ -294,16 +354,7 @@ export function validateAndHydrateGameState(raw: unknown): GameState {
   const hydratedCities: Record<string, City> = {};
   for (const [cid, baseCity] of Object.entries(baseCities)) {
     const savedC = raw.cities[cid];
-    hydratedCities[cid] = isObject(savedC)
-      ? {
-          ...baseCity,
-          ...(savedC as Partial<City>),
-          id: cid,
-          neighbors: Array.isArray((savedC as Partial<City>).neighbors)
-            ? ((savedC as Partial<City>).neighbors as string[])
-            : baseCity.neighbors,
-        }
-      : baseCity;
+    hydratedCities[cid] = isObject(savedC) ? hydrateCity(cid, baseCity, savedC) : baseCity;
   }
 
   const baseGenerals = createInitialGenerals();

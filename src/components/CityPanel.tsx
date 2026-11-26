@@ -4,17 +4,22 @@ import {
   Bomb,
   Building2,
   Coins,
+  Dumbbell,
+  HandHeart,
   Landmark,
   MapPin,
   Moon,
   Shield,
   Sparkles,
+  Sprout,
   Swords,
   UserPlus,
   Users,
   Wheat,
 } from 'lucide-react';
+import { ASPECT_MAX_LEVEL, UNREST_SUPPORT } from '../game/cityAspects.js';
 import { ACTION_COSTS, PROVINCES } from '../game/data.js';
+import { WORKS_PER_LEVEL, governorPlanOf } from '../game/governors.js';
 import {
   factionHasTech,
   getActiveBondsForHeroes,
@@ -24,15 +29,18 @@ import {
   isTruceActive,
   isYangtzePort,
 } from '../game/engine.js';
-import type { GameState, Language, MilitaryActionType } from '../game/types.js';
+import type { DomesticOrder, GameState, Language, MilitaryActionType } from '../game/types.js';
 import { TERRAIN_TEXT, UI_TEXT, tLoc } from '../i18n/translations.js';
+import { EVENT_TEXT, eventLasts } from './cityEventText.js';
+import { TASK_DOING } from './governorText.js';
 import { HeroAvatar } from './HeroAvatar.js';
 
 interface CityPanelProps {
   state: GameState;
   lang: Language;
   selectedCityId: string | null;
-  onDevelop: (cityId: string) => void;
+  /** Farming, trade, drill and relief: the orders that work on one of a city's aspects. */
+  onDomesticOrder: (cityId: string, order: DomesticOrder) => void;
   onFortify: (cityId: string) => void;
   onRecruit: (cityId: string) => void;
   onOpenMilitary: (
@@ -52,7 +60,7 @@ export function CityPanel({
   state,
   lang,
   selectedCityId,
-  onDevelop,
+  onDomesticOrder,
   onFortify,
   onRecruit,
   onOpenMilitary,
@@ -95,11 +103,13 @@ export function CityPanel({
       ? Math.round(ACTION_COSTS.recruitGold * 0.85)
       : ACTION_COSTS.recruitGold;
 
-  const canDevelop =
-    isOwned &&
-    state.actionPoints > 0 &&
-    city.development < 5 &&
-    playerFaction.gold >= ACTION_COSTS.developGold;
+  const canOrder = isOwned && state.actionPoints > 0;
+  const canFarm =
+    canOrder && city.farming < ASPECT_MAX_LEVEL && playerFaction.gold >= ACTION_COSTS.farmGold;
+  const canTrade =
+    canOrder && city.trade < ASPECT_MAX_LEVEL && playerFaction.gold >= ACTION_COSTS.tradeGold;
+  const canDrill = canOrder && city.drill < 100 && playerFaction.gold >= ACTION_COSTS.drillGold;
+  const canRelief = canOrder && city.support < 100 && playerFaction.food >= ACTION_COSTS.reliefFood;
   const canFortify =
     isOwned &&
     state.actionPoints > 0 &&
@@ -168,42 +178,103 @@ export function CityPanel({
         </button>
       )}
 
-      {/* Metrics Grid */}
-      <div className="grid grid-cols-2 gap-2.5">
-        <div className="rounded-xl bg-[#12100d]/80 border border-white/5 p-2.5">
-          <div className="flex items-center justify-between text-xs text-[#9ea3ae] mb-1.5">
-            <span>{tLoc(UI_TEXT.prosperity, lang)}</span>
-            <span className="text-[#d4a853] font-semibold">Lv.{city.development}/5</span>
+      {/* The city's five aspects */}
+      <div className="grid grid-cols-3 gap-2">
+        {(
+          [
+            [lang === 'zh' ? '农业' : 'Farming', city.farming, 'bg-lime-400', 'text-lime-300'],
+            [lang === 'zh' ? '商业' : 'Trade', city.trade, 'bg-[#d4a853]', 'text-[#d4a853]'],
+            [tLoc(UI_TEXT.defense, lang), city.defense, 'bg-sky-400', 'text-sky-400'],
+          ] as Array<[string, number, string, string]>
+        ).map(([label, level, bar, text]) => (
+          <div key={label} className="rounded-xl bg-[#12100d]/80 border border-white/5 p-2.5">
+            <div className="flex items-center justify-between text-xs text-[#9ea3ae] mb-1.5">
+              <span>{label}</span>
+              <span className={`${text} font-semibold`}>{level}/5</span>
+            </div>
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5].map((lv) => (
+                <div
+                  key={lv}
+                  className={`h-1.5 flex-1 rounded-full ${lv <= level ? bar : 'bg-white/10'}`}
+                />
+              ))}
+            </div>
           </div>
-          <div className="flex gap-1">
-            {[1, 2, 3, 4, 5].map((lv) => (
-              <div
-                key={lv}
-                className={`h-1.5 flex-1 rounded-full ${
-                  lv <= city.development ? 'bg-[#d4a853]' : 'bg-white/10'
-                }`}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-[#12100d]/80 border border-white/5 p-2.5">
-          <div className="flex items-center justify-between text-xs text-[#9ea3ae] mb-1.5">
-            <span>{tLoc(UI_TEXT.defense, lang)}</span>
-            <span className="text-sky-400 font-semibold">Lv.{city.defense}/5</span>
-          </div>
-          <div className="flex gap-1">
-            {[1, 2, 3, 4, 5].map((lv) => (
-              <div
-                key={lv}
-                className={`h-1.5 flex-1 rounded-full ${
-                  lv <= city.defense ? 'bg-sky-400' : 'bg-white/10'
-                }`}
-              />
-            ))}
-          </div>
-        </div>
+        ))}
       </div>
+      <div className="grid grid-cols-2 gap-2">
+        {(
+          [
+            [lang === 'zh' ? '训练' : 'Drill', city.drill, 'bg-rose-400', 'text-rose-300'],
+            [
+              lang === 'zh' ? '民心' : 'Support',
+              city.support,
+              city.support < UNREST_SUPPORT ? 'bg-red-500' : 'bg-emerald-400',
+              city.support < UNREST_SUPPORT ? 'text-red-400' : 'text-emerald-300',
+            ],
+          ] as Array<[string, number, string, string]>
+        ).map(([label, score, bar, text]) => (
+          <div key={label} className="rounded-xl bg-[#12100d]/80 border border-white/5 p-2.5">
+            <div className="flex items-center justify-between text-xs text-[#9ea3ae] mb-1.5">
+              <span>{label}</span>
+              <span className={`${text} font-semibold`}>{score}/100</span>
+            </div>
+            <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+              <div className={`h-full rounded-full ${bar}`} style={{ width: `${score}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      {city.owner !== 'neutral' &&
+        (() => {
+          const plan = governorPlanOf(state, city.id);
+          return (
+            <div className="rounded-lg bg-[#12100d]/80 border border-white/5 px-2.5 py-1.5 text-[11px] text-[#c9c2b2]">
+              <span className="text-[#9ea3ae]">{lang === 'zh' ? '太守 ' : 'Governor: '}</span>
+              {plan ? (
+                <>
+                  <span className="font-semibold text-[#f5ecd7]">{tLoc(plan.general.name, lang)}</span>
+                  {plan.acting && (lang === 'zh' ? '（暂摄）' : ' (acting)')}
+                  {lang === 'zh' ? ' · ' : ', '}
+                  {lang === 'zh' ? TASK_DOING[plan.task].zh : TASK_DOING[plan.task].en}
+                  {plan.task !== 'drill' && plan.task !== 'relief' && !plan.idle && ` ${plan.works}/${WORKS_PER_LEVEL}`}
+                  {plan.idle && (
+                    <span className="text-red-300">{lang === 'zh' ? '（无事可做）' : ' (nothing left to do)'}</span>
+                  )}
+                </>
+              ) : (
+                <span className="text-red-300">
+                  {lang === 'zh' ? '城中无将，诸事停滞' : 'no general here, so nothing goes forward'}
+                </span>
+              )}
+            </div>
+          );
+        })()}
+      {city.event && (
+        <div
+          className={`rounded-lg border px-2.5 py-1.5 text-[11px] ${
+            EVENT_TEXT[city.event.kind].good
+              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+              : 'border-red-500/40 bg-red-500/10 text-red-200'
+          }`}
+        >
+          <span className="font-bold">
+            {lang === 'zh' ? EVENT_TEXT[city.event.kind].name.zh : EVENT_TEXT[city.event.kind].name.en}
+          </span>
+          {lang === 'zh' ? '（' : ' ('}
+          {eventLasts(city.event.seasonsLeft, lang)}
+          {lang === 'zh' ? '）' : '). '}
+          {lang === 'zh' ? EVENT_TEXT[city.event.kind].effect.zh : EVENT_TEXT[city.event.kind].effect.en}
+        </div>
+      )}
+      {isOwned && city.support < UNREST_SUPPORT && (
+        <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-200">
+          {lang === 'zh'
+            ? '民怨沸腾：收入减少，每季有守军逃散。开仓赈济可回升民心。'
+            : 'Unrest: income is cut and part of the garrison deserts each season. Relief restores support.'}
+        </div>
+      )}
 
       {/* Wandering Legends Visiting This City! */}
       {wanderingHere.length > 0 && (
@@ -400,19 +471,6 @@ export function CityPanel({
             </button>
 
             <button
-              onClick={() => onDevelop(city.id)}
-              disabled={!canDevelop}
-              className="flex flex-col items-center gap-1 p-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/30 disabled:opacity-40 text-xs transition cursor-pointer"
-            >
-              <Building2 className="w-4 h-4 text-amber-300" />
-              <span className="font-semibold text-[#f5ecd7]">{tLoc(UI_TEXT.develop, lang)}</span>
-              <span className="text-[10px] text-[#b8b2a2] flex items-center gap-0.5">
-                <Coins className="w-2.5 h-2.5 text-yellow-400" />
-                {ACTION_COSTS.developGold}
-              </span>
-            </button>
-
-            <button
               onClick={() => onFortify(city.id)}
               disabled={!canFortify}
               className="flex flex-col items-center gap-1 p-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/30 disabled:opacity-40 text-xs transition cursor-pointer"
@@ -424,6 +482,32 @@ export function CityPanel({
                 {ACTION_COSTS.fortifyGold}
               </span>
             </button>
+            {(
+              [
+                ['farm', canFarm, Sprout, 'text-lime-300', lang === 'zh' ? '垦田' : 'Farm', 'gold', ACTION_COSTS.farmGold],
+                ['trade', canTrade, Building2, 'text-amber-300', lang === 'zh' ? '兴商' : 'Trade', 'gold', ACTION_COSTS.tradeGold],
+                ['drill', canDrill, Dumbbell, 'text-rose-300', lang === 'zh' ? '练兵' : 'Drill', 'gold', ACTION_COSTS.drillGold],
+                ['relief', canRelief, HandHeart, 'text-emerald-300', lang === 'zh' ? '赈济' : 'Relief', 'food', ACTION_COSTS.reliefFood],
+              ] as Array<[DomesticOrder, boolean, typeof Sprout, string, string, 'gold' | 'food', number]>
+            ).map(([order, enabled, Icon, tint, label, pays, cost]) => (
+              <button
+                key={order}
+                onClick={() => onDomesticOrder(city.id, order)}
+                disabled={!enabled}
+                className="flex flex-col items-center gap-1 p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 disabled:opacity-40 text-xs transition cursor-pointer"
+              >
+                <Icon className={`w-4 h-4 ${tint}`} />
+                <span className="font-semibold text-[#f5ecd7]">{label}</span>
+                <span className="text-[10px] text-[#b8b2a2] flex items-center gap-0.5">
+                  {pays === 'gold' ? (
+                    <Coins className="w-2.5 h-2.5 text-yellow-400" />
+                  ) : (
+                    <Wheat className="w-2.5 h-2.5 text-amber-400" />
+                  )}
+                  {cost}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
       )}

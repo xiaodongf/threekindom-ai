@@ -1,3 +1,4 @@
+import { cityMarkOf } from './cityEventText.js';
 import { isMythLook } from '../utils/artLook.js';
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -1236,6 +1237,21 @@ export function WebGLStrategyMap({
                         {city.troops.toLocaleString()}
                       </span>
                     )}
+                    {/* What is befalling the city: an event, or unrest among its people */}
+                    {!provinceLevel &&
+                      (() => {
+                        const mark = cityMarkOf(city, lang);
+                        return mark ? (
+                          <span
+                            title={mark.title}
+                            className={`px-1 py-0.5 text-[11px] font-bold leading-tight flex items-center text-white ${
+                              mark.good ? 'bg-emerald-700' : 'bg-rose-700'
+                            }`}
+                          >
+                            {mark.seal}
+                          </span>
+                        ) : null;
+                      })()}
                   </button>
                   {isSelected && !provinceLevel && !attackMode && onEnterCity && (
                     <button

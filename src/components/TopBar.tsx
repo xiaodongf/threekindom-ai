@@ -258,7 +258,7 @@ export function TopBar({
               <p className="mt-1.5">
                 {T('Raised by ', '可由')}
                 {governorTerm}
-                {T(' and development; spent on ', '与繁荣提升；用于')}
+                {T(', trade and the people\u2019s support; spent on ', '、商业与民心提升；用于')}
                 {ordersTerm}
                 {T(', research and rewards.', '、研造与赏赐。')}
               </p>
@@ -281,7 +281,7 @@ export function TopBar({
               <p className="mt-1.5">
                 {T('Raised by ', '可由')}
                 {governorTerm}
-                {T(' and development. Armies eat it on the march.', '与繁荣提升；大军出征即耗粮。')}
+                {T(', farming and the people\u2019s support. Armies eat it on the march.', '、农业与民心提升；大军出征即耗粮。')}
               </p>
             </>
           }

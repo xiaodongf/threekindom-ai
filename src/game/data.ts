@@ -1,3 +1,4 @@
+import { DRILL_START, SUPPORT_START } from './cityAspects.js';
 import { createInitialHeroes } from './heroes.js';
 import type {
   City,
@@ -40,7 +41,11 @@ export function rivalOrdersForRealmSize(cityCount: number): number {
 }
 
 export const ACTION_COSTS = {
-  developGold: 220,
+  /** Opening new fields or enlarging the market: one level of farming or of trade. */
+  farmGold: 120,
+  tradeGold: 120,
+  drillGold: 80,
+  reliefFood: 160,
   fortifyGold: 200,
   recruitGold: 180,
   recruitFood: 140,
@@ -392,7 +397,11 @@ export function createInitialCities(): Record<string, City> {
       owner,
       troops,
       defense,
-      development,
+      // Farming and trade start level with each other, so a city's income is what it always was.
+      farming: development,
+      trade: development,
+      drill: DRILL_START,
+      support: SUPPORT_START,
       baseGold,
       baseFood,
       terrain,

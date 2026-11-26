@@ -1,4 +1,13 @@
-import type { City, FactionId, Season, TerrainType } from '../../game/types.js';
+import { cityTier } from '../../game/cityAspects.js';
+import { UNREST_SUPPORT } from '../../game/cityAspects.js';
+import type {
+  City,
+  CityEventKind,
+  FactionId,
+  GovernorTask,
+  Season,
+  TerrainType,
+} from '../../game/types.js';
 
 /** The five parts of a city the player can open. */
 export type DistrictId = 'hall' | 'market' | 'fields' | 'barracks' | 'walls';
@@ -8,8 +17,12 @@ export const DISTRICT_ORDER: DistrictId[] = ['hall', 'market', 'fields', 'barrac
 export interface CitySpec {
   id: string;
   terrain: TerrainType;
-  /** 1 to 5, from prosperity */
+  /** 1 to 5, from prosperity: the size of the walled town and how full its wards are */
   tier: number;
+  /** 1 to 5: tilled fields and granaries */
+  farming: number;
+  /** 1 to 5: market shops and stalls, and the quays of a river port */
+  trade: number;
   /** 1 to 5 */
   defense: number;
   owner: FactionId;
@@ -19,20 +32,50 @@ export interface CitySpec {
   troops: number;
   season: Season;
   myth: boolean;
+  /** What is befalling the city: floodwater on the fields, a fair at the gate, a riot... */
+  event: CityEventKind | null;
+  /** The people are close to rising: a crowd before the hall, smoke over the wards, a thin market */
+  unrest: boolean;
+  /** The people are devoted: lanterns along the avenue and a full street */
+  thriving: boolean;
+  /** How well the garrison is drilled, 0 raw to 3 veteran: how its ranks stand on the drill ground */
+  drillBand: number;
+  /** What the governor is working on this season, shown as work under way; null with no governor */
+  works: GovernorTask | null;
+  /** A stretch of the south wall is down and being patched */
+  breached: boolean;
 }
 
-export function citySpecOf(city: City, season: Season, river: boolean, myth: boolean): CitySpec {
+function level(n: number): number {
+  return Math.max(1, Math.min(5, Math.round(n)));
+}
+
+export function citySpecOf(
+  city: City,
+  season: Season,
+  river: boolean,
+  myth: boolean,
+  works: GovernorTask | null = null
+): CitySpec {
   return {
     id: city.id,
     terrain: city.terrain,
-    tier: Math.max(1, Math.min(5, Math.round(city.development))),
-    defense: Math.max(1, Math.min(5, Math.round(city.defense))),
+    tier: cityTier(city),
+    farming: level(city.farming),
+    trade: level(city.trade),
+    defense: level(city.defense),
     owner: city.owner,
     capital: Boolean(city.isCapital),
     river,
     troops: city.troops,
     season,
     myth,
+    event: city.event?.kind ?? null,
+    unrest: city.owner !== 'neutral' && city.support < UNREST_SUPPORT,
+    thriving: city.owner !== 'neutral' && city.support >= 75,
+    drillBand: city.drill < 25 ? 0 : city.drill < 50 ? 1 : city.drill < 75 ? 2 : 3,
+    works,
+    breached: Boolean(city.wallScar),
   };
 }
 
@@ -42,6 +85,8 @@ export function citySpecKey(spec: CitySpec): string {
     spec.id,
     spec.terrain,
     spec.tier,
+    spec.farming,
+    spec.trade,
     spec.defense,
     spec.owner,
     spec.capital ? 1 : 0,
@@ -49,6 +94,12 @@ export function citySpecKey(spec: CitySpec): string {
     Math.round(spec.troops / 1000),
     spec.season,
     spec.myth ? 1 : 0,
+    spec.event ?? '',
+    spec.unrest ? 1 : 0,
+    spec.thriving ? 1 : 0,
+    spec.drillBand,
+    spec.works ?? '',
+    spec.breached ? 1 : 0,
   ].join(':');
 }
 
