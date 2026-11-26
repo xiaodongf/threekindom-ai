@@ -1,0 +1,946 @@
+import * as THREE from 'three';
+import type { Season } from '../../game/types.js';
+import { DisposeBag } from '../duel/duelGeometry3D.js';
+import { createDustPuffTexture, createGlowTexture } from '../duel/duelTextures3D.js';
+import { FACTION_PIGMENT } from '../map/mapTerrain.js';
+import { buildEnvironment } from './cityEnvironment.js';
+import {
+  cityLayoutOf,
+  inRect,
+  type CityLayout,
+  type CitySpec,
+  type DistrictId,
+  type Rect,
+} from './cityLayout.js';
+import {
+  createCityBuildKit,
+  frameToWorld,
+  hashString,
+  ridgeHalfOf,
+  seeded,
+  type CityKit,
+} from './cityParts.js';
+
+/**
+ * One city, built from its own numbers. Prosperity sets how large the walled town is and how full
+ * its wards, market and fields are; defence sets the height and furniture of the walls; the
+ * garrison fills the drill ground; the season colours the country; the owner flies the banners.
+ */
+export interface CityWorld {
+  group: THREE.Group;
+  layout: CityLayout;
+  fog: THREE.FogExp2;
+  exposure: number;
+  /** Where each district's label stands, and how close the camera comes when it is opened. */
+  districts: Record<DistrictId, { anchor: THREE.Vector3; focus: THREE.Vector3; dist: number }>;
+  hitMeshes: THREE.Mesh[];
+  /** Sets how brightly each district's ground is lit: 0 off, 1 fully chosen. */
+  setGlow(id: DistrictId, level: number): void;
+  update(dt: number, elapsed: number, still: boolean): void;
+  dispose(): void;
+}
+
+const C = {
+  rammed: 0xb39c74,
+  brick: 0x8e8b84,
+  walk: 0x7c725f,
+  plaster: 0xd8ccb2,
+  plasterDim: 0xbdaf93,
+  mudWall: 0xa48f68,
+  timber: 0x4a2c1e,
+  lacquer: 0x7e2a1e,
+  tile: 0x454a4e,
+  thatch: 0x9d8a58,
+  stone: 0x8e887a,
+  pavement: 0xa39b88,
+  packed: 0x8a7a5c,
+  road: 0xa3916c,
+  drill: 0xab9972,
+  wood: 0x6b5236,
+  canvas: 0xc9bc9c,
+  gold: 0xc9a04a,
+  bronze: 0x6a5a3a,
+  dark: 0x15120e,
+};
+const HOUSE_TILES = [0x4b4f52, 0x57524b, 0x44494c, 0x514e49];
+const CLOTH = [0x8f3a2c, 0xa3823a, 0x3f5a6c, 0x6c4a34, 0x7a6a3a, 0x4a6650];
+const FIELD: Record<Season, number[]> = {
+  spring: [0x86a552, 0x94ae5c, 0x6f9148, 0x7a6446],
+  summer: [0x4f7f3a, 0x5e8c40, 0x6c9646, 0x47733a],
+  autumn: [0xc4a74e, 0xb8963e, 0xd0b35a, 0x9a8a46],
+  winter: [0x8a7b60, 0x93866c, 0xa49b88, 0x7c6e56],
+};
+
+interface Extras {
+  flags: Array<{ p: THREE.Vector3; size: number }>;
+  lamps: THREE.Vector3[];
+  smoke: THREE.Vector3[];
+  soldiers: Array<{ x: number; z: number; r: number }>;
+  people: Array<{ x: number; z: number; r: number }>;
+  trees: Array<{ x: number; z: number; s: number }>;
+}
+
+const mixHex = (a: number, b: number, t: number) =>
+  new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
+
+/** A timber hall: lacquered frame, plaster panels, tiled roof with its ridge. Returns its height. */
+function hallBlock(
+  kit: CityKit,
+  parent: THREE.Object3D,
+  o: {
+    x: number;
+    z: number;
+    w: number;
+    d: number;
+    h: number;
+    roofH: number;
+    roof: THREE.Material;
+    rot?: number;
+    base?: number;
+    double?: boolean;
+    lift?: number;
+    crest?: THREE.Material;
+  }
+): number {
+  const f = kit.frame(parent, o.x, o.z, o.rot ?? 0);
+  const y0 = o.base ?? 0;
+  const lacquer = kit.paint(C.lacquer);
+  const plaster = kit.paint(C.plaster);
+  const crest = o.crest ?? kit.paint(C.tile);
+  const lift = o.lift ?? 0.5;
+
+  const storey = (w: number, d: number, h: number, y: number) => {
+    kit.box(f, lacquer, w, h, d, 0, y, 0);
+    kit.box(f, plaster, w * 0.84, h * 0.5, d + 0.08, 0, y + h * 0.3, 0);
+    kit.box(f, plaster, w + 0.08, h * 0.5, d * 0.6, 0, y + h * 0.3, 0);
+  };
+  const cap = (w: number, d: number, h: number, y: number) => {
+    kit.roof(f, o.roof, w, d, h, 0, y, 0, 0, { lift });
+    const half = ridgeHalfOf(w, d);
+    kit.box(f, crest, half * 2 + 0.5, 0.34, 0.34, 0, y + h - 0.12, 0);
+    for (const s of [-1, 1]) kit.box(f, crest, 0.3, 0.62, 0.3, s * (half + 0.15), y + h - 0.12, 0);
+  };
+
+  storey(o.w, o.d, o.h, y0);
+  kit.box(f, kit.paint(C.dark), o.w * 0.2, o.h * 0.72, 0.1, 0, y0, o.d / 2 + 0.07);
+  let y = y0 + o.h;
+  if (o.double) {
+    kit.roof(f, o.roof, o.w + 3.8, o.d + 3.8, o.roofH * 0.5, 0, y, 0, 0, { lift, ridge: 0.8 });
+    const w2 = o.w * 0.8;
+    const d2 = o.d * 0.74;
+    y += o.roofH * 0.26;
+    storey(w2, d2, 1.7, y);
+    y += 1.7;
+    cap(w2 + 3.2, d2 + 3.2, o.roofH, y);
+  } else {
+    cap(o.w + 3.2, o.d + 3.2, o.roofH, y);
+  }
+  return y + o.roofH;
+}
+
+export function buildCityWorld(spec: CitySpec): CityWorld {
+  const bag = new DisposeBag();
+  const kit = createCityBuildKit(bag);
+  const L = cityLayoutOf(spec);
+  const rnd = seeded(hashString(spec.id));
+  const pigment = FACTION_PIGMENT[spec.owner];
+  const H = L.half;
+  const { wallH, wallT, crossZ } = L;
+  const tier = spec.tier;
+  const def = spec.defense;
+
+  const group = new THREE.Group();
+  const town = new THREE.Group();
+  group.add(town);
+  const extras: Extras = { flags: [], lamps: [], smoke: [], soldiers: [], people: [], trees: [] };
+  const districts = {} as CityWorld['districts'];
+  const hitMeshes: THREE.Mesh[] = [];
+
+  const officialRoof = kit.paint(mixHex(C.tile, pigment, 0.32), 'roof');
+  const dark = kit.paint(C.dark);
+  const wood = kit.paint(C.wood);
+  const paved = tier >= 3;
+
+  // --- hit volumes and the light that marks a district as chosen
+  const hitGeo = bag.add(new THREE.BoxGeometry(1, 1, 1));
+  const hitMat = bag.add(new THREE.MeshBasicMaterial({ visible: false }));
+  const hit = (id: DistrictId, x: number, z: number, w: number, h: number, d: number) => {
+    const m = new THREE.Mesh(hitGeo, hitMat);
+    m.scale.set(w, h, d);
+    m.position.set(x, h / 2, z);
+    m.userData.district = id;
+    group.add(m);
+    hitMeshes.push(m);
+  };
+  const glowCanvas = document.createElement('canvas');
+  glowCanvas.width = 128;
+  glowCanvas.height = 128;
+  {
+    const ctx = glowCanvas.getContext('2d')!;
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillRect(0, 0, 128, 128);
+    for (let i = 0; i < 14; i++) {
+      ctx.strokeStyle = `rgba(255,255,255,${0.62 * (1 - i / 14) ** 2})`;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(i + 0.5, i + 0.5, 127 - i * 2, 127 - i * 2);
+    }
+  }
+  const glowTex = bag.add(new THREE.CanvasTexture(glowCanvas));
+  const glowGeo = bag.add(new THREE.PlaneGeometry(1, 1));
+  glowGeo.rotateX(-Math.PI / 2);
+  const glowMats = {} as Record<DistrictId, THREE.MeshBasicMaterial>;
+  for (const id of ['hall', 'market', 'fields', 'barracks', 'walls'] as DistrictId[]) {
+    glowMats[id] = bag.add(
+      new THREE.MeshBasicMaterial({
+        map: glowTex,
+        color: 0xffc56a,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: false,
+      })
+    );
+  }
+  const glow = (id: DistrictId, x: number, y: number, z: number, w: number, d: number) => {
+    const m = new THREE.Mesh(glowGeo, glowMats[id]);
+    m.scale.set(w, 1, d);
+    m.position.set(x, y, z);
+    m.renderOrder = 4;
+    group.add(m);
+  };
+
+  // =============================================================== walls
+  const wallMat = kit.paint(def >= 5 ? C.brick : C.rammed, 'wall');
+  const walkMat = kit.paint(C.walk, 'wall');
+  const stone = kit.paint(C.stone, 'wall');
+  const wallCentre = H + wallT / 2;
+  const span = L.outer * 2;
+  let gateTop = wallH;
+
+  const merlons = (f: THREE.Object3D, x0: number, x1: number, y: number, z: number) => {
+    const n = Math.max(1, Math.floor((x1 - x0) / 1.9));
+    for (let i = 0; i < n; i++) {
+      kit.box(f, wallMat, 1.05, 0.95, 0.55, x0 + ((i + 0.5) * (x1 - x0)) / n, y, z);
+    }
+  };
+  const run = (f: THREE.Object3D, x0: number, x1: number) => {
+    const len = x1 - x0;
+    const cx = (x0 + x1) / 2;
+    kit.batter(f, wallMat, len, wallH, wallT, cx, 0, 0);
+    kit.box(f, walkMat, len, 0.22, wallT * 0.8, cx, wallH, 0);
+    kit.box(f, wallMat, len, 0.5, 0.32, cx, wallH + 0.22, -wallT * 0.4 + 0.16);
+    if (def >= 2) merlons(f, x0, x1, wallH + 0.22, wallT * 0.4 - 0.28);
+    else kit.box(f, wallMat, len, 0.55, 0.4, cx, wallH + 0.22, wallT * 0.4 - 0.2);
+    if (def >= 4) {
+      // Towers standing out from the face, so the foot of the wall can be covered
+      const count = Math.floor(len / 24);
+      for (let j = 0; j < count; j++) {
+        const x = x0 + ((j + 1) * len) / (count + 1);
+        const z = wallT * 0.5 + 1.3;
+        kit.batter(f, wallMat, 5.4, wallH + 0.55, 3.6, x, 0, z);
+        kit.box(f, walkMat, 5.2, 0.22, 3.0, x, wallH + 0.55, z);
+        merlons(f, x - 2.6, x + 2.6, wallH + 0.77, z + 1.2);
+        if (def >= 5) {
+          kit.box(f, kit.paint(C.lacquer), 3.0, 1.9, 2.0, x, wallH + 0.77, z - 0.3);
+          kit.roof(f, officialRoof, 4.8, 3.8, 1.5, x, wallH + 2.67, z - 0.3, 0, { lift: 0.4 });
+        }
+      }
+    }
+  };
+
+  const side = (name: 's' | 'n' | 'e' | 'w', x: number, z: number, rot: number) => {
+    const f = kit.frame(town, x, z, rot);
+    const gated = L.gates[name];
+    const main = name === 's';
+    if (!gated) {
+      run(f, -span / 2, span / 2);
+      return;
+    }
+    const gw = main ? 12 : 9.6;
+    const gd = wallT + 2.8;
+    const gh = wallH + 1.7;
+    run(f, -span / 2, -gw / 2 + 0.3);
+    run(f, gw / 2 - 0.3, span / 2);
+
+    // The gatehouse: a block thicker and taller than the wall, pierced by the gateway
+    kit.batter(f, wallMat, gw, gh, gd, 0, 0, 0);
+    kit.box(f, walkMat, gw - 0.5, 0.25, gd * 0.8, 0, gh, 0);
+    merlons(f, -gw / 2 + 0.3, gw / 2 - 0.3, gh + 0.25, gd * 0.4 - 0.3);
+    const dw = main ? 4.4 : 3.4;
+    const dh = Math.min(5.2, gh * 0.62);
+    kit.box(f, dark, dw, dh, gd + 0.24, 0, 0, 0);
+    kit.box(f, stone, dw + 1.3, 0.55, gd + 0.4, 0, dh, 0);
+    for (const s of [-1, 1]) {
+      kit.box(f, stone, 0.55, dh, gd + 0.4, s * (dw / 2 + 0.27), 0, 0);
+      // Leaves swung open against the jambs
+      kit.box(f, kit.paint(C.lacquer), 0.16, dh * 0.94, dw * 0.46, s * (dw / 2 + 0.7), 0, gd / 2 + dw * 0.23);
+    }
+
+    // The tower over the gate
+    const storeys = main ? (def >= 4 || spec.capital ? 2 : def >= 2 ? 1 : 0) : def >= 5 ? 2 : def >= 3 ? 1 : 0;
+    let y = gh + 0.25;
+    if (storeys === 0) {
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) kit.box(f, kit.paint(C.timber), 0.3, 2.2, 0.3, sx * (gw * 0.36), y, sz * (gd * 0.24));
+      }
+      kit.roof(f, kit.paint(C.thatch), gw * 0.9, gd * 0.9, 1.5, 0, y + 2.2, 0, 0, { lift: 0.1 });
+      y += 3.7;
+    } else {
+      y = hallBlock(kit, f, {
+        x: 0,
+        z: 0,
+        w: gw * 0.74,
+        d: gd * 0.5,
+        h: 2.9,
+        roofH: 2.3,
+        roof: officialRoof,
+        base: y,
+        double: storeys === 2,
+      });
+    }
+    if (main) gateTop = y;
+    for (const s of [-1, 1]) {
+      kit.box(f, kit.paint(C.timber), 0.16, 5.4, 0.16, s * (gw / 2 - 0.7), gh, gd * 0.3);
+      extras.flags.push({ p: frameToWorld(f, s * (gw / 2 - 0.7), gh + 4.6, gd * 0.3), size: main ? 1.25 : 1 });
+      kit.cyl(f, kit.paint(C.bronze, 'metal'), 0.42, 0.3, 1.3, s * (dw / 2 + 2.2), 0, gd / 2 + 2.4);
+      extras.lamps.push(frameToWorld(f, s * (dw / 2 + 2.2), 1.75, gd / 2 + 2.4));
+    }
+
+    // The road out, and a bridge where it meets the moat
+    const road = kit.paint(C.road, 'earth');
+    let length = main || spec.terrain === 'fortress' ? 300 : 120;
+    if (name === 'e' && L.river) length = L.river.x - L.river.half - L.outer + 2;
+    kit.box(f, road, 5.2, 0.07, length, 0, 0, wallT / 2 + length / 2);
+    if (L.moat) {
+      const mz = wallT / 2 + (L.moat.inner - L.outer) + L.moat.width / 2;
+      kit.box(f, kit.paint(C.stone, 'pave'), 6, 0.42, L.moat.width + 3, 0, 0, mz);
+      for (const s of [-1, 1]) kit.box(f, stone, 0.3, 0.6, L.moat.width + 3, s * 3, 0.42, mz);
+    }
+  };
+  side('s', 0, wallCentre, 0);
+  side('n', 0, -wallCentre, Math.PI);
+  side('e', wallCentre, 0, Math.PI / 2);
+  side('w', -wallCentre, 0, -Math.PI / 2);
+
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const x = sx * wallCentre;
+      const z = sz * wallCentre;
+      if (def >= 3) {
+        const size = wallT + 2.8;
+        const th = wallH + 1.3;
+        kit.box(town, wallMat, size, th, size, x, 0, z);
+        kit.box(town, walkMat, size + 0.3, 0.22, size + 0.3, x, th, z);
+        for (const k of [-1, 0, 1]) {
+          kit.box(town, wallMat, 0.95, 0.9, 0.5, x + k * (size / 3), th + 0.22, z + sz * (size / 2 - 0.2));
+          kit.box(town, wallMat, 0.5, 0.9, 0.95, x + sx * (size / 2 - 0.2), th + 0.22, z + k * (size / 3));
+        }
+        kit.box(town, kit.paint(C.lacquer), 3.4, 2.2, 3.4, x, th + 0.22, z);
+        kit.roof(town, officialRoof, 6.2, 6.2, 2.3, x, th + 2.42, z, 0, { ridge: 0.06, lift: 0.5 });
+      } else {
+        kit.box(town, wallMat, wallT + 0.7, wallH + 0.35, wallT + 0.7, x, 0, z);
+      }
+    }
+  }
+  for (const [x, z, w, d] of [
+    [0, wallCentre, span, wallT + 3],
+    [0, -wallCentre, span, wallT + 3],
+    [wallCentre, 0, wallT + 3, span],
+    [-wallCentre, 0, wallT + 3, span],
+  ] as const) {
+    hit('walls', x, z, w, wallH + 1.2, d);
+    glow('walls', x, wallH + 0.6, z, w + 2, d + 2);
+  }
+  hit('walls', 0, wallCentre, 13, gateTop, wallT + 4);
+  districts.walls = {
+    anchor: new THREE.Vector3(-wallCentre, wallH + (def >= 3 ? 6 : 2.4), wallCentre),
+    focus: new THREE.Vector3(0, wallH * 0.5, wallCentre - 6),
+    dist: H * 1.7,
+  };
+
+  // =============================================================== streets
+  kit.box(town, kit.paint(C.packed, 'earth'), H * 2, 0.05, H * 2, 0, 0, 0);
+  const street = paved ? kit.paint(C.pavement, 'pave') : kit.paint(C.road, 'earth');
+  const cw = Math.max(26, Math.min(56, H * 0.95));
+  const cd = Math.max(21, Math.min(42, H * 0.7));
+  const hz = -H * 0.44;
+  const hallFront = hz + cd / 2;
+  kit.box(town, street, 5.6, 0.08, H - hallFront, 0, 0, (H + hallFront) / 2);
+  const hallBack = hz - cd / 2;
+  if (L.gates.n) {
+    // From the north gate the way runs behind the hall and down its east side
+    kit.box(town, street, 4.4, 0.08, hallBack + H, 0, 0, (hallBack - H) / 2);
+    kit.box(town, street, cw / 2 + 9, 0.08, 3.6, cw / 4 + 2.3, 0, hallBack - 2.3);
+    kit.box(town, street, 4.4, 0.08, crossZ - hallBack + 4.1, cw / 2 + 4.6, 0, (crossZ + hallBack - 4.1) / 2);
+  }
+  kit.box(town, street, H * 2, 0.08, 4.6, 0, 0, crossZ);
+  // The open court before the hall
+  kit.box(town, kit.paint(C.pavement, 'pave'), cw, 0.09, crossZ - 2.3 - hallFront, 0, 0, (hallFront + crossZ - 2.3) / 2);
+
+  // =============================================================== the hall
+  {
+    const f = kit.frame(town, 0, hz, 0);
+    const cap = kit.paint(C.tile, 'roof');
+    const plaster = kit.paint(C.plaster);
+    const fence = (x: number, z: number, w: number, d: number) => {
+      kit.box(f, plaster, w, 2.3, d, x, 0, z);
+      kit.box(f, cap, w + 0.5, 0.3, d + 0.5, x, 2.3, z);
+    };
+    fence(0, -cd / 2, cw, 0.5);
+    fence(-cw / 2, 0, 0.5, cd);
+    fence(cw / 2, 0, 0.5, cd);
+    fence(-(cw / 4 + 1.6), cd / 2, cw / 2 - 3.2, 0.5);
+    fence(cw / 4 + 1.6, cd / 2, cw / 2 - 3.2, 0.5);
+    hallBlock(kit, f, { x: 0, z: cd / 2, w: 5.6, d: 2.6, h: 2.8, roofH: 1.9, roof: officialRoof });
+    kit.box(f, kit.paint(C.pavement, 'pave'), cw - 1, 0.1, cd - 1, 0, 0, 0);
+
+    const mw = Math.min(cw - 11, 12 + tier * 1.7 + (spec.capital ? 4 : 0));
+    const md = mw * 0.48;
+    const mz = -cd * 0.14;
+    const th = spec.capital ? 1.9 : 1.0;
+    kit.box(f, kit.paint(C.stone, 'pave'), mw + 5.4, th, md + 5.4, 0, 0, mz);
+    kit.box(f, kit.paint(C.stone, 'pave'), 4.6, th * 0.5, 1.8, 0, 0, mz + md / 2 + 3.5);
+    if (spec.capital) kit.box(f, kit.paint(C.stone, 'pave'), mw + 9, 0.7, md + 9, 0, 0, mz);
+    const gilt = kit.paint(C.gold, 'metal');
+    const top = hallBlock(kit, f, {
+      x: 0,
+      z: mz,
+      w: mw,
+      d: md,
+      h: spec.capital ? 4.1 : 3.3,
+      roofH: spec.capital ? 3.8 : 3.2,
+      roof: officialRoof,
+      base: th,
+      double: tier >= 4 || spec.capital,
+      lift: 0.7,
+      crest: spec.capital ? gilt : undefined,
+    });
+    if (tier >= 2) {
+      for (const s of [-1, 1]) {
+        hallBlock(kit, f, {
+          x: s * (cw / 2 - 4),
+          z: cd * 0.14,
+          w: Math.min(9, cd * 0.36),
+          d: 3.8,
+          h: 2.5,
+          roofH: 1.9,
+          roof: officialRoof,
+          rot: Math.PI / 2,
+        });
+      }
+    }
+    if (tier >= 3) {
+      hallBlock(kit, f, { x: 0, z: -cd / 2 + 3.6, w: mw * 0.7, d: 3.6, h: 2.5, roofH: 2.0, roof: officialRoof });
+    }
+    if (spec.capital) {
+      // Gate towers before the palace
+      for (const s of [-1, 1]) {
+        kit.box(f, kit.paint(C.stone, 'wall'), 2.6, 6.4, 2.6, s * 7.5, 0, cd / 2 + 3);
+        kit.box(f, kit.paint(C.lacquer), 2.1, 1.6, 2.1, s * 7.5, 6.4, cd / 2 + 3);
+        kit.roof(f, officialRoof, 4.2, 4.2, 1.6, s * 7.5, 8, cd / 2 + 3, 0, { ridge: 0.06, lift: 0.4 });
+      }
+    }
+    for (const s of [-1, 1]) {
+      kit.cyl(f, kit.paint(C.bronze, 'metal'), 0.5, 0.34, 1.2, s * (mw / 2 - 1), th, mz + md / 2 + 1.6);
+      extras.lamps.push(frameToWorld(f, s * (mw / 2 - 1), th + 1.7, mz + md / 2 + 1.6));
+      kit.box(f, kit.paint(C.timber), 0.18, 7, 0.18, s * (mw / 2 + 1.8), 0, mz + md / 2 + 2.4);
+      extras.flags.push({ p: frameToWorld(f, s * (mw / 2 + 1.8), 6, mz + md / 2 + 2.4), size: 1.4 });
+      extras.lamps.push(frameToWorld(f, s * 3.6, 1.6, cd / 2 + 1.4));
+    }
+    hit('hall', 0, hz, cw + 1, top, cd + 1);
+    glow('hall', 0, 0.24, hz, cw + 3, cd + 3);
+    districts.hall = {
+      anchor: new THREE.Vector3(0, top + 2.4, hz + mz),
+      focus: new THREE.Vector3(0, 3, hz + 2),
+      dist: Math.max(58, cw * 1.8),
+    };
+  }
+
+  // =============================================================== homes and granaries
+  const houses = (rect: Rect, skip: Rect[]) => {
+    const density = [0.44, 0.58, 0.72, 0.85, 0.95][tier - 1];
+    const wealth = 0.2 + tier * 0.15;
+    const cellW = 6.6;
+    const cellD = 5.9;
+    const cols = Math.floor((rect.x1 - rect.x0) / cellW);
+    const rows = Math.floor((rect.z1 - rect.z0) / cellD);
+    if (cols < 1 || rows < 1) return;
+    const padX = (rect.x1 - rect.x0 - cols * cellW) / 2;
+    const padZ = (rect.z1 - rect.z0 - rows * cellD) / 2;
+    for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < rows; r++) {
+        const x = rect.x0 + padX + (c + 0.5) * cellW + (rnd() - 0.5) * 1.1;
+        const z = rect.z0 + padZ + (r + 0.5) * cellD + (rnd() - 0.5) * 0.9;
+        if (skip.some((s) => inRect(s, x, z, 2.5))) continue;
+        if (rnd() > density) {
+          if (rnd() < 0.3) extras.trees.push({ x, z, s: 0.9 + rnd() * 0.5 });
+          continue;
+        }
+        const poor = rnd() > wealth;
+        const w = 3.6 + rnd() * 1.5;
+        const d = 2.8 + rnd() * 0.8;
+        const h = 1.7 + rnd() * 0.5;
+        const f = kit.frame(town, x, z, rnd() < 0.72 ? 0 : Math.PI / 2);
+        kit.box(f, kit.paint(poor ? C.mudWall : rnd() < 0.5 ? C.plaster : C.plasterDim), w, h, d, 0, 0, 0);
+        if (!poor) kit.box(f, kit.paint(C.timber), w + 0.08, 0.16, d + 0.08, 0, h - 0.16, 0);
+        kit.box(f, dark, 0.7, 1.15, 0.08, (rnd() - 0.5) * w * 0.4, 0, d / 2 + 0.03);
+        if (poor) kit.roof(f, kit.paint(C.thatch), w + 1.0, d + 1.1, 1.35, 0, h, 0, 0, { ridge: 0.72, lift: 0.04 });
+        else {
+          const tile = HOUSE_TILES[Math.floor(rnd() * HOUSE_TILES.length)];
+          kit.roof(f, kit.paint(tile, 'roof'), w + 1.1, d + 1.2, 1.25, 0, h, 0, 0, { ridge: 0.78, lift: 0.22 });
+        }
+        if (rnd() < 0.16) extras.smoke.push(new THREE.Vector3(x, h + 1.8, z));
+      }
+    }
+  };
+  const granaryCount = Math.min(1 + tier, Math.max(1, Math.floor((H - 3 - (cw / 2 + 3)) / 4.2)) * 2);
+  const granaryRect: Rect = {
+    x0: cw / 2 + 8,
+    x1: cw / 2 + 8 + Math.ceil(granaryCount / 2) * 4.2,
+    z0: hz - 4.4,
+    z1: hz + 4.4,
+  };
+  for (let i = 0; i < granaryCount; i++) {
+    const x = granaryRect.x0 + 2.1 + Math.floor(i / 2) * 4.2;
+    const z = hz + (i % 2 === 0 ? -2.2 : 2.2);
+    kit.cyl(town, kit.paint(C.stone), 1.7, 1.7, 0.4, x, 0, z);
+    kit.cyl(town, kit.paint(C.mudWall), 1.5, 1.4, 2.5, x, 0.4, z);
+    kit.cyl(town, kit.paint(C.thatch), 0, 2.0, 1.6, x, 2.9, z);
+  }
+  const northStreet: Rect = { x0: cw / 2 + 2, x1: cw / 2 + 7.2, z0: -H, z1: crossZ };
+  houses({ x0: -H + 2.5, x1: -cw / 2 - 2.5, z0: -H + 2.5, z1: crossZ - 3.2 }, []);
+  houses({ x0: cw / 2 + 2.5, x1: H - 2.5, z0: -H + 2.5, z1: crossZ - 3.2 }, [granaryRect, northStreet]);
+  if (hallBack - 2.5 - (-H + 2.5) >= 5.6) {
+    houses({ x0: -cw / 2, x1: L.gates.n ? -3.4 : cw / 2, z0: -H + 2.5, z1: hallBack - 2.5 }, []);
+  }
+
+  // =============================================================== the market
+  {
+    const r: Rect = { x0: 4.2, x1: H - 2.5, z0: crossZ + 3.4, z1: H - 2.5 };
+    const w = r.x1 - r.x0;
+    const d = r.z1 - r.z0;
+    const cx = (r.x0 + r.x1) / 2;
+    const cz = (r.z0 + r.z1) / 2;
+    kit.box(town, kit.paint(paved ? C.pavement : C.road, paved ? 'pave' : 'earth'), w - 1, 0.09, d - 1, cx, 0, cz);
+
+    // Shops close the square on its north and east sides
+    const taken: Rect[] = [];
+    const shop = (x: number, z: number, len: number, rot: number) => {
+      const f = kit.frame(town, x, z, rot);
+      kit.box(f, kit.paint(C.plasterDim), len, 2.3, 3.4, 0, 0, 0);
+      kit.box(f, kit.paint(C.timber), len + 0.08, 0.18, 3.48, 0, 2.12, 0);
+      kit.roof(f, kit.paint(HOUSE_TILES[Math.floor(rnd() * 4)], 'roof'), len + 1.2, 4.8, 1.45, 0, 2.3, 0, 0, { ridge: 0.86, lift: 0.2 });
+      // An awning over the counter
+      kit.box(f, kit.paint(CLOTH[Math.floor(rnd() * CLOTH.length)]), len * 0.8, 0.08, 1.3, 0, 1.75, 2.3);
+      kit.box(f, wood, len * 0.7, 0.7, 0.6, 0, 0, 2.2);
+    };
+    if (tier >= 2) {
+      const n = Math.max(1, Math.floor((w - 3) / 8));
+      for (let i = 0; i < n; i++) shop(r.x0 + 1.5 + ((i + 0.5) * (w - 3)) / n, r.z0 + 2.2, (w - 3) / n - 0.9, 0);
+      taken.push({ x0: r.x0, x1: r.x1, z0: r.z0, z1: r.z0 + 6 });
+    }
+    if (tier >= 3) {
+      const n = Math.max(1, Math.floor((d - 10) / 8));
+      for (let i = 0; i < n; i++) {
+        shop(r.x1 - 2.2, r.z0 + 8 + ((i + 0.5) * (d - 10)) / n, (d - 10) / n - 0.9, -Math.PI / 2);
+      }
+      taken.push({ x0: r.x1 - 6, x1: r.x1, z0: r.z0, z1: r.z1 });
+      // The market tower, from which the wardens watch the square
+      const tx = cx - 1;
+      const tz = cz + 2;
+      kit.box(town, kit.paint(C.stone, 'wall'), 4.4, 3.2, 4.4, tx, 0, tz);
+      hallBlock(kit, town, { x: tx, z: tz, w: 3.4, d: 3.4, h: 2.4, roofH: 2.0, roof: officialRoof, base: 3.2, lift: 0.45 });
+      taken.push({ x0: tx - 4, x1: tx + 4, z0: tz - 4, z1: tz + 4 });
+      extras.lamps.push(new THREE.Vector3(tx + 2.8, 1.8, tz + 2.8), new THREE.Vector3(tx - 2.8, 1.8, tz + 2.8));
+    }
+
+    // Stalls in rows across what is left of the square
+    const want = [3, 7, 12, 18, 26][tier - 1];
+    let stalls = 0;
+    for (let z = r.z0 + 3.5; z < r.z1 - 2 && stalls < want; z += 4.4) {
+      for (let x = r.x0 + 3; x < r.x1 - 2 && stalls < want; x += 4.6) {
+        if (taken.some((t) => inRect(t, x, z, 1.6))) continue;
+        if (rnd() < 0.14) continue;
+        const f = kit.frame(town, x + (rnd() - 0.5) * 0.8, z + (rnd() - 0.5) * 0.6, rnd() < 0.8 ? 0 : Math.PI / 2);
+        for (const sx of [-1, 1]) {
+          for (const sz of [-1, 1]) kit.box(f, wood, 0.1, 1.7, 0.1, sx * 1.15, 0, sz * 0.8);
+        }
+        kit.roof(f, kit.paint(CLOTH[Math.floor(rnd() * CLOTH.length)]), 3.0, 2.3, 0.75, 0, 1.7, 0, 0, { ridge: 0.7, lift: 0.02 });
+        kit.box(f, wood, 2.0, 0.6, 1.0, 0, 0, 0);
+        for (let k = 0; k < 3; k++) {
+          kit.box(f, kit.paint(CLOTH[Math.floor(rnd() * CLOTH.length)]), 0.38, 0.26, 0.38, -0.6 + k * 0.6, 0.6, (rnd() - 0.5) * 0.4);
+        }
+        if (rnd() < 0.6) kit.cyl(f, kit.paint(0x6a4a34), 0.24, 0.32, 0.7, 1.6, 0, 0.6);
+        for (let k = 0; k < 2; k++) {
+          const p = frameToWorld(f, (rnd() - 0.5) * 2.6, 0, 1.5 + rnd() * 0.9);
+          extras.people.push({ x: p.x, z: p.z, r: rnd() * Math.PI * 2 });
+        }
+        stalls += 1;
+      }
+    }
+    if (tier >= 2) extras.smoke.push(new THREE.Vector3(cx + w * 0.2, 3, r.z0 + 2.2));
+    extras.lamps.push(new THREE.Vector3(r.x0 + 1.4, 1.8, r.z0 + 1.4), new THREE.Vector3(r.x1 - 1.4, 1.8, r.z1 - 1.4));
+    hit('market', cx, cz, w, tier >= 3 ? 8 : 4, d);
+    glow('market', cx, 0.26, cz, w + 1.5, d + 1.5);
+    districts.market = {
+      anchor: new THREE.Vector3(cx, tier >= 3 ? 11.5 : 6.5, cz),
+      focus: new THREE.Vector3(cx, 1.5, cz),
+      dist: Math.max(46, w * 1.9),
+    };
+  }
+
+  // =============================================================== the barracks
+  {
+    const r: Rect = { x0: -H + 2.5, x1: -4.2, z0: crossZ + 3.4, z1: H - 2.5 };
+    const w = r.x1 - r.x0;
+    const d = r.z1 - r.z0;
+    const cx = (r.x0 + r.x1) / 2;
+    const cz = (r.z0 + r.z1) / 2;
+    // A palisade with its gate on the avenue
+    const post = kit.paint(C.wood);
+    kit.box(town, post, w, 1.6, 0.3, cx, 0, r.z0);
+    kit.box(town, post, w, 1.6, 0.3, cx, 0, r.z1);
+    kit.box(town, post, 0.3, 1.6, d, r.x0, 0, cz);
+    kit.box(town, post, 0.3, 1.6, d / 2 - 2.2, r.x1, 0, r.z0 + (d / 2 - 2.2) / 2);
+    kit.box(town, post, 0.3, 1.6, d / 2 - 2.2, r.x1, 0, r.z1 - (d / 2 - 2.2) / 2);
+    for (const s of [-1, 1]) kit.box(town, kit.paint(C.timber), 0.4, 3, 0.4, r.x1, 0, cz + s * 2.2);
+    kit.box(town, kit.paint(C.timber), 0.4, 0.4, 4.8, r.x1, 3, cz);
+
+    // Barrack rows down the west side, one for every few thousand men
+    const rowDepth = 4.9;
+    const blocks = Math.max(1, Math.min(Math.floor((d - 2) / rowDepth), Math.ceil(spec.troops / 6000)));
+    const blockW = Math.min(10, w * 0.36);
+    for (let i = 0; i < blocks; i++) {
+      const z = r.z0 + 3 + i * rowDepth;
+      const f = kit.frame(town, r.x0 + 1.6 + blockW / 2, z, 0);
+      kit.box(f, kit.paint(C.mudWall), blockW, 2.1, 3.4, 0, 0, 0);
+      kit.box(f, kit.paint(C.timber), blockW + 0.08, 0.16, 3.48, 0, 1.94, 0);
+      kit.roof(f, kit.paint(0x3a3936, 'roof'), blockW + 1.1, 4.7, 1.3, 0, 2.1, 0, 0, { ridge: 0.88, lift: 0.12 });
+      for (let k = 0; k < 3; k++) kit.box(f, dark, 0.6, 1.1, 0.08, -blockW * 0.3 + k * blockW * 0.3, 0, 1.74);
+    }
+
+    // The drill ground and the men on it
+    const g0 = r.x0 + blockW + 4.4;
+    const ground: Rect = { x0: g0, x1: r.x1 - 1.6, z0: r.z0 + 1.6, z1: r.z1 - 5.4 };
+    const gw = ground.x1 - ground.x0;
+    const gd = ground.z1 - ground.z0;
+    if (gw > 3 && gd > 3) {
+      kit.box(town, kit.paint(C.drill, 'earth'), gw, 0.09, gd, (ground.x0 + ground.x1) / 2, 0, (ground.z0 + ground.z1) / 2);
+      const step = 1.2;
+      const cols = Math.max(1, Math.floor((gw - 1.2) / step));
+      const rows = Math.max(1, Math.floor((gd - 1.2) / step));
+      const men = Math.max(6, Math.min(cols * rows, 240, Math.round(spec.troops / 200)));
+      // Companies of five files with a lane between them
+      let placed = 0;
+      for (let row = 0; row < rows && placed < men; row++) {
+        for (let col = 0; col < cols && placed < men; col++) {
+          if (col % 6 === 5) continue;
+          extras.soldiers.push({ x: ground.x1 - 0.8 - col * step, z: ground.z0 + 0.8 + row * step, r: Math.PI / 2 });
+          placed += 1;
+        }
+      }
+      // Racks of polearms and a row of archery butts along the north side
+      for (let k = 0; k < 3; k++) {
+        const x = ground.x0 + 1.2 + k * 2.6;
+        if (x > ground.x1 - 1) break;
+        kit.box(town, wood, 1.8, 1.0, 0.16, x, 0, r.z0 + 0.8);
+        for (let j = 0; j < 4; j++) kit.box(town, kit.paint(0x9aa0a4, 'metal'), 0.06, 2.3, 0.06, x - 0.7 + j * 0.46, 0, r.z0 + 0.8);
+      }
+    }
+    // Tents along the south side
+    const tents = Math.max(2, Math.min(Math.floor((w - 3) / 3), Math.round(spec.troops / 1800)));
+    for (let i = 0; i < tents; i++) {
+      const x = r.x1 - 2.4 - i * 3;
+      const z = r.z1 - 2.5;
+      kit.cyl(town, kit.paint(C.canvas), 0, 1.25, 1.7, x, 0, z);
+      kit.box(town, kit.paint(C.timber), 0.07, 0.5, 0.07, x, 1.6, z);
+    }
+    // A watchtower in the corner
+    if (tier >= 2 || def >= 2) {
+      const tx = r.x0 + 2.4;
+      const tz = r.z1 - 2.6;
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) kit.box(town, kit.paint(C.timber), 0.26, 6.4, 0.26, tx + sx * 1.1, 0, tz + sz * 1.1);
+      }
+      kit.box(town, wood, 3.2, 0.2, 3.2, tx, 5, tz);
+      kit.box(town, wood, 3.2, 0.7, 0.12, tx, 5.2, tz + 1.55);
+      kit.box(town, wood, 3.2, 0.7, 0.12, tx, 5.2, tz - 1.55);
+      kit.roof(town, kit.paint(C.thatch), 4.2, 4.2, 1.5, tx, 6.4, tz, 0, { ridge: 0.06, lift: 0.1 });
+    }
+    for (let k = 0; k < 3; k++) {
+      const z = r.z0 + 2 + k * ((d - 9) / 2);
+      kit.box(town, kit.paint(C.timber), 0.16, 5.6, 0.16, g0 - 1.2, 0, z);
+      extras.flags.push({ p: new THREE.Vector3(g0 - 1.2, 4.9, z), size: 1 });
+    }
+    const fire = new THREE.Vector3(r.x1 - 3, 0.5, r.z1 - 5.6);
+    kit.cyl(town, kit.paint(C.bronze, 'metal'), 0.5, 0.34, 0.5, fire.x, 0, fire.z);
+    extras.lamps.push(fire.clone().setY(1.0));
+    extras.smoke.push(fire.clone().setY(1.4));
+    hit('barracks', cx, cz, w, 4.5, d);
+    glow('barracks', cx, 0.26, cz, w + 1.5, d + 1.5);
+    districts.barracks = {
+      anchor: new THREE.Vector3(cx, 8, cz),
+      focus: new THREE.Vector3(cx, 1.5, cz),
+      dist: Math.max(46, w * 1.9),
+    };
+  }
+
+  // =============================================================== farmland
+  {
+    const tones = FIELD[spec.season];
+    const paddies = spec.river && (spec.season === 'spring' || spec.season === 'summer');
+    const share = [0.5, 0.62, 0.74, 0.86, 0.96][tier - 1];
+    const path = kit.paint(C.road, 'earth');
+    let first: Rect | null = null;
+    for (const zone of L.fieldZones) {
+      const zw = zone.x1 - zone.x0;
+      const zd = zone.z1 - zone.z0;
+      if (zw < 12 || zd < 10) continue;
+      if (!first) first = zone;
+      const cols = Math.max(1, Math.round(zw / 19));
+      const rows = Math.max(1, Math.round(zd / 12.5));
+      const pw = zw / cols;
+      const pd = zd / rows;
+      kit.box(town, path, zw + 1, 0.05, zd + 1, (zone.x0 + zone.x1) / 2, 0, (zone.z0 + zone.z1) / 2);
+      for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < rows; r++) {
+          const x = zone.x0 + (c + 0.5) * pw;
+          const z = zone.z0 + (r + 0.5) * pd;
+          // Land nearest the gates is taken up first; the rest waits for a richer city
+          const far = Math.hypot(x, z - L.outer) / (L.outer + 90);
+          if (far * 0.75 + rnd() * 0.45 > share + 0.12) {
+            if (rnd() < 0.35) {
+              const f = kit.frame(town, x, z, rnd() < 0.5 ? 0 : Math.PI / 2);
+              kit.box(f, kit.paint(C.mudWall), 3.6, 1.7, 2.8, 0, 0, 0);
+              kit.roof(f, kit.paint(C.thatch), 4.7, 3.9, 1.35, 0, 1.7, 0, 0, { ridge: 0.72, lift: 0.04 });
+              if (spec.season === 'autumn' || spec.season === 'winter') {
+                kit.cyl(f, kit.paint(0xb39a52), 0, 0.9, 1.4, 3.2, 0, 0.6);
+              }
+              if (rnd() < 0.5) extras.smoke.push(new THREE.Vector3(x, 3.3, z));
+              extras.trees.push({ x: x - 3.4, z: z - 2.2, s: 1.1 + rnd() * 0.5 });
+            }
+            continue;
+          }
+          const wet = paddies && rnd() < 0.55;
+          const tone = wet ? mixHex(0x3d5a52, tones[0], 0.35) : tones[Math.floor(rnd() * tones.length)];
+          const turned = rnd() < 0.3;
+          kit.patch(
+            town,
+            kit.paint(tone, wet ? 'matte' : 'field'),
+            turned ? pd - 1.3 : pw - 1.3,
+            turned ? pw - 1.3 : pd - 1.3,
+            x,
+            0.08,
+            z,
+            turned ? Math.PI / 2 : 0
+          );
+        }
+      }
+      hit('fields', (zone.x0 + zone.x1) / 2, (zone.z0 + zone.z1) / 2, zw, 2.4, zd);
+      glow('fields', (zone.x0 + zone.x1) / 2, 0.3, (zone.z0 + zone.z1) / 2, zw + 3, zd + 3);
+    }
+    const zone = first ?? { x0: 8, x1: 30, z0: L.outer + 10, z1: L.outer + 40 };
+    const ax = (zone.x0 + zone.x1) / 2;
+    const az = Math.min((zone.z0 + zone.z1) / 2, zone.z0 + 20);
+    districts.fields = {
+      anchor: new THREE.Vector3(ax, 6, az),
+      focus: new THREE.Vector3(ax * 0.7, 1, (zone.z0 + zone.z1) / 2 - 8),
+      dist: Math.max(70, (zone.x1 - zone.x0) * 1.25),
+    };
+  }
+
+  // =============================================================== the waterfront
+  if (L.river) {
+    const bank = L.river.x - L.river.half - 2;
+    const plank = kit.paint(0x5c4832);
+    const quays = 2 + Math.round(tier / 2);
+    for (let i = 0; i < quays; i++) {
+      const z = (i - (quays - 1) / 2) * 17;
+      kit.box(town, plank, 18, 0.5, 3, bank + 5, -0.1, z);
+      for (let k = 0; k < 4; k++) {
+        for (const s of [-1, 1]) kit.cyl(town, kit.paint(C.timber), 0.2, 0.2, 2.6, bank - 2 + k * 5, -2, z + s * 1.3);
+      }
+      // A boat moored at each quay
+      const f = kit.frame(town, bank + 9 + (rnd() - 0.5) * 3, z + (i % 2 === 0 ? 4.4 : -4.4), (rnd() - 0.5) * 0.3);
+      const len = 8 + rnd() * 4 + tier * 0.6;
+      kit.box(f, kit.paint(0x4a3826), len, 1.0, 2.4, 0, -0.9, 0);
+      kit.box(f, kit.paint(0x4a3826), 1.6, 1.3, 1.9, len / 2 + 0.4, -0.8, 0);
+      kit.box(f, kit.paint(0x4a3826), 1.4, 1.5, 1.7, -len / 2 - 0.3, -0.8, 0);
+      kit.box(f, kit.paint(C.plasterDim), len * 0.36, 1.2, 1.9, -len * 0.14, 0.1, 0);
+      kit.roof(f, kit.paint(C.thatch), len * 0.44, 2.6, 0.8, -len * 0.14, 1.3, 0, 0, { ridge: 0.8, lift: 0.05 });
+      kit.box(f, kit.paint(C.timber), 0.18, 6.2, 0.18, len * 0.16, 0.1, 0);
+      kit.box(f, kit.paint(C.canvas), 0.1, 3.6, 3.0, len * 0.16 + 0.15, 2.2, 0);
+    }
+    // Warehouses behind the quays
+    for (const s of [-1, 1]) {
+      const f = kit.frame(town, bank - 9, s * (quays * 8.5 + 3), Math.PI / 2);
+      kit.box(f, kit.paint(C.mudWall), 11, 2.6, 4.4, 0, 0, 0);
+      kit.roof(f, kit.paint(HOUSE_TILES[1], 'roof'), 12.4, 5.8, 1.6, 0, 2.6, 0, 0, { ridge: 0.86, lift: 0.14 });
+    }
+    kit.box(town, kit.paint(C.road, 'earth'), 9, 0.07, quays * 17 + 16, bank - 3.5, 0, 0);
+    extras.lamps.push(new THREE.Vector3(bank - 1, 1.8, 8.5), new THREE.Vector3(bank - 1, 1.8, -8.5));
+  }
+
+  kit.finish(town);
+
+  // =============================================================== the living details
+  const env = buildEnvironment(spec, L, bag, extras.trees);
+  group.add(env.group);
+
+  // Figures: one small body for soldiers and townsfolk alike
+  const figure = (() => {
+    const body = new THREE.BoxGeometry(0.4, 0.74, 0.28);
+    body.translate(0, 0.37, 0);
+    const head = new THREE.SphereGeometry(0.17, 8, 6);
+    head.translate(0, 0.92, 0);
+    return { body: bag.add(body), head: bag.add(head) };
+  })();
+  const dummy = new THREE.Object3D();
+  const crowd = (
+    list: Array<{ x: number; z: number; r: number }>,
+    tones: number[],
+    spear: boolean
+  ) => {
+    if (list.length === 0) return;
+    const bodyMat = bag.add(new THREE.MeshStandardMaterial({ roughness: spear ? 0.55 : 0.9, metalness: spear ? 0.5 : 0 }));
+    const skin = bag.add(new THREE.MeshStandardMaterial({ color: spear ? 0x4a4744 : 0xb08a68, roughness: 0.8, metalness: spear ? 0.6 : 0 }));
+    const bodies = new THREE.InstancedMesh(figure.body, bodyMat, list.length);
+    const heads = new THREE.InstancedMesh(figure.head, skin, list.length);
+    const tint = new THREE.Color();
+    list.forEach((m, i) => {
+      dummy.position.set(m.x, 0.09, m.z);
+      dummy.rotation.set(0, m.r, 0);
+      dummy.scale.setScalar(spear ? 1.12 : 0.98 + (i % 5) * 0.03);
+      dummy.updateMatrix();
+      bodies.setMatrixAt(i, dummy.matrix);
+      heads.setMatrixAt(i, dummy.matrix);
+      bodies.setColorAt(i, tint.setHex(tones[i % tones.length]));
+    });
+    bodies.castShadow = true;
+    bag.add(bodies);
+    bag.add(heads);
+    group.add(bodies, heads);
+    if (spear) {
+      const shaft = bag.add(new THREE.BoxGeometry(0.05, 2.1, 0.05));
+      shaft.translate(0.26, 1.05, 0);
+      const spears = new THREE.InstancedMesh(shaft, bag.add(new THREE.MeshStandardMaterial({ color: 0x8a8f92, roughness: 0.4, metalness: 0.8 })), list.length);
+      list.forEach((m, i) => {
+        dummy.position.set(m.x, 0.09, m.z);
+        dummy.rotation.set(0, m.r, 0);
+        dummy.scale.setScalar(1.12);
+        dummy.updateMatrix();
+        spears.setMatrixAt(i, dummy.matrix);
+      });
+      bag.add(spears);
+      group.add(spears);
+    }
+  };
+  const iron = spec.myth ? 0x34373a : 0x55595c;
+  crowd(extras.soldiers, [mixHex(iron, pigment, 0.22), mixHex(iron, pigment, 0.38), iron], true);
+  crowd(extras.people, [0x6c5a44, 0x8a7a5c, 0x4f5a66, 0x7a4a3a, 0x9a8e74, 0x5a6650], false);
+
+  // Banners in the owner's colour
+  const flagGeo = bag.add(new THREE.PlaneGeometry(2.3, 1.35, 1, 1));
+  flagGeo.translate(1.15, 0, 0);
+  const flagMat = bag.add(
+    new THREE.MeshStandardMaterial({ color: pigment, roughness: 0.85, side: THREE.DoubleSide, emissive: pigment, emissiveIntensity: 0.08 })
+  );
+  const flags = extras.flags.map((flag, i) => {
+    const m = new THREE.Mesh(flagGeo, flagMat);
+    m.position.copy(flag.p);
+    m.scale.setScalar(flag.size);
+    m.rotation.y = 0.5 + (i % 3) * 0.2;
+    m.castShadow = true;
+    group.add(m);
+    return { mesh: m, base: m.rotation.y, phase: i * 1.7 };
+  });
+
+  // Braziers and lanterns
+  const glowTexture = createGlowTexture(bag);
+  const lampMat = bag.add(
+    new THREE.SpriteMaterial({
+      map: glowTexture,
+      color: new THREE.Color(0xff9a3c).multiplyScalar(spec.myth ? 3 : 1.6),
+      transparent: true,
+      opacity: spec.myth ? 0.95 : 0.6,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      fog: false,
+    })
+  );
+  const lamps = extras.lamps.map((p, i) => {
+    const s = new THREE.Sprite(lampMat);
+    s.position.copy(p);
+    s.scale.setScalar(2.6);
+    group.add(s);
+    return { sprite: s, phase: i * 2.3 };
+  });
+  // A few real lights, so the gate and the hall are warmed by their own fires
+  const warm = [districts.walls.anchor.clone().setY(3).add(new THREE.Vector3(0, 0, 5)), districts.hall.focus.clone().setY(4), districts.market.focus.clone().setY(4), districts.barracks.focus.clone().setY(3)];
+  for (const p of warm) {
+    const light = new THREE.PointLight(0xff9a48, spec.myth ? 46 : 20, 46, 1.8);
+    light.position.copy(p);
+    group.add(light);
+  }
+
+  // Hearth smoke
+  const smokeMat = bag.add(
+    new THREE.SpriteMaterial({
+      map: createDustPuffTexture(bag),
+      color: spec.myth ? 0x8f948f : 0xd8cfc0,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+    })
+  );
+  const PUFFS = 4;
+  const smoke = extras.smoke.slice(0, 16).flatMap((p, i) =>
+    Array.from({ length: PUFFS }, (_, k) => {
+      const mat = bag.add(smokeMat.clone());
+      const s = new THREE.Sprite(mat);
+      group.add(s);
+      return { sprite: s, mat, origin: p, phase: k / PUFFS + i * 0.37 };
+    })
+  );
+  const placeSmoke = (elapsed: number) => {
+    for (const puff of smoke) {
+      const t = (elapsed * 0.09 + puff.phase) % 1;
+      puff.sprite.position.set(puff.origin.x + t * t * 5, puff.origin.y + t * 9, puff.origin.z - t * 1.5);
+      const size = 1.2 + t * 4.6;
+      puff.sprite.scale.set(size, size, 1);
+      puff.mat.opacity = Math.sin(Math.PI * t) * (spec.myth ? 0.3 : 0.24);
+    }
+  };
+  placeSmoke(0);
+
+  const glowLevel: Record<DistrictId, number> = { hall: 0, market: 0, fields: 0, barracks: 0, walls: 0 };
+
+  return {
+    group,
+    layout: L,
+    fog: env.fog,
+    exposure: env.exposure,
+    districts,
+    hitMeshes,
+    setGlow: (id, level) => {
+      glowLevel[id] = level;
+    },
+    update: (dt, elapsed, still) => {
+      env.update(dt, elapsed, still);
+      const k = still ? 1 : 1 - Math.exp(-dt * 9);
+      for (const id of Object.keys(glowMats) as DistrictId[]) {
+        const pulse = still ? 1 : 0.86 + 0.14 * Math.sin(elapsed * 3.2);
+        const want = glowLevel[id] * 0.5 * pulse;
+        glowMats[id].opacity += (want - glowMats[id].opacity) * k;
+      }
+      if (still) return;
+      for (const f of flags) f.mesh.rotation.y = f.base + Math.sin(elapsed * 1.9 + f.phase) * 0.24;
+      for (const l of lamps) {
+        l.sprite.scale.setScalar(2.6 * (0.9 + 0.14 * Math.sin(elapsed * 7.3 + l.phase) + 0.06 * Math.sin(elapsed * 17.1 + l.phase)));
+      }
+      placeSmoke(elapsed);
+    },
+    dispose: () => bag.dispose(),
+  };
+}

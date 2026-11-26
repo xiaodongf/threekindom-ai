@@ -4,6 +4,7 @@ import {
   Bomb,
   Building2,
   Coins,
+  Landmark,
   MapPin,
   Moon,
   Shield,
@@ -41,6 +42,8 @@ interface CityPanelProps {
   ) => void;
   onReinforce: (fromCityId: string, toCityId: string) => void;
   onSelectCity: (cityId: string) => void;
+  /** Goes down into the city's close-up view. */
+  onEnterCity?: (cityId: string) => void;
   onInspectHero: (heroId: string) => void;
   onRecruitWanderingHero: (heroId: string) => void;
 }
@@ -55,6 +58,7 @@ export function CityPanel({
   onOpenMilitary,
   onReinforce,
   onSelectCity,
+  onEnterCity,
   onInspectHero,
   onRecruitWanderingHero,
 }: CityPanelProps) {
@@ -146,6 +150,23 @@ export function CityPanel({
           </div>
         </div>
       </div>
+
+      {onEnterCity && (
+        <button
+          type="button"
+          onClick={() => onEnterCity(city.id)}
+          className="w-full btn-gold rounded-md px-3 py-2 text-[13px] flex items-center justify-center gap-2 cursor-pointer"
+        >
+          <Landmark className="w-4 h-4" />
+          {lang === 'zh'
+            ? isOwned
+              ? '入城理事'
+              : '入城察看'
+            : isOwned
+              ? 'Enter the city'
+              : 'Look inside the city'}
+        </button>
+      )}
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-2 gap-2.5">

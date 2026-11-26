@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { getHeroDuelProfile } from '../game/heroDuelProfiles.js';
 import type { FactionId, GameState, General } from '../game/types.js';
+import { isMythLook } from '../utils/artLook.js';
 import { prefersReducedMotion } from '../utils/motion.js';
-import { getArenaLook } from './duel/duelArena3D.js';
+import { DARK_IRON, getArenaLook } from './duel/duelArena3D.js';
 import { DisposeBag } from './duel/duelGeometry3D.js';
 import { applyRigPose3D, buildMountedGeneralRig3D } from './duel/duelModels3D.js';
 import {
@@ -16,6 +17,7 @@ import {
   createSkyDomeTexture,
 } from './duel/duelTextures3D.js';
 import type { RiderFrameState } from './duel/duelTypes.js';
+import { createDuelPostFx } from './duel/duelVfx3D.js';
 import type { WarSceneConfig } from './WarSceneModal.js';
 
 interface WarStage3DProps {
@@ -160,6 +162,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
     const isRiver = scene.terrain === 'river' || scene.mode === 'river_strike';
     const isFortress = scene.terrain === 'fortress' || scene.mode === 'bombard';
     const look = getArenaLook(isRiver ? 'river' : scene.terrain, isNight);
+    const myth = isMythLook();
 
     const initW = Math.max(320, host.clientWidth || 960);
     const initH = Math.max(240, host.clientHeight || 520);
@@ -199,6 +202,14 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
     fill.position.set(-look.sunPos[0] * 0.6, 5, 14);
     world.add(fill);
 
+    // Dark look: firelight from the lens side, so the commanders and the front ranks stand
+    // out of the gloom instead of reading as silhouettes
+    if (isMythLook()) {
+      const torch = new THREE.PointLight('#ffb070', 46, 34, 1.5);
+      torch.position.set(0, 4.6, 7.5);
+      world.add(torch);
+    }
+
     const blastLight = new THREE.PointLight('#ff8a30', 0, 26, 1.7);
     blastLight.position.set(2, 3.2, 0);
     world.add(blastLight);
@@ -230,7 +241,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
           map: createPaintedPanoramaTexture(look.panoUrl, look.band, BACKDROP_ARC, bag),
           side: THREE.BackSide,
           fog: false,
-          color: new THREE.Color(1.08, 1.08, 1.08),
+          color: new THREE.Color(...look.panoTint).multiplyScalar(1.08),
         })
       )
     );
@@ -248,8 +259,9 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       waterBase = (waterGeo.attributes.position.array as Float32Array).slice();
       const wPos = waterGeo.attributes.position as THREE.BufferAttribute;
       const wCols = new Float32Array(wPos.count * 3);
-      const deep = new THREE.Color(isNight ? '#0e2433' : '#184a52');
-      const channel = new THREE.Color(isNight ? '#1b3e52' : '#2c767c');
+      const darkWater = isNight || myth;
+      const deep = new THREE.Color(myth ? '#0a1a1e' : isNight ? '#0e2433' : '#184a52');
+      const channel = new THREE.Color(myth ? '#1c3a3e' : isNight ? '#1b3e52' : '#2c767c');
       const tmpW = new THREE.Color();
       for (let i = 0; i < wPos.count; i++) {
         const band = Math.exp(-Math.pow(wPos.getZ(i) / 14, 2));
@@ -262,9 +274,9 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       const waterMat = bag.add(
         new THREE.MeshStandardMaterial({
           vertexColors: true,
-          emissive: isNight ? '#091b28' : '#123a40',
-          emissiveIntensity: 0.42,
-          roughness: 0.32,
+          emissive: darkWater ? '#091b28' : '#123a40',
+          emissiveIntensity: myth ? 0.22 : 0.42,
+          roughness: myth ? 0.24 : 0.32,
           metalness: 0.14,
         })
       );
@@ -513,10 +525,25 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
         ])
       );
 
-      const ironMat = bag.add(new THREE.MeshStandardMaterial({ color: '#78808a', metalness: 0.84, roughness: 0.38 }));
+      const ironMat = bag.add(
+        new THREE.MeshStandardMaterial({
+          color: new THREE.Color('#78808a').multiplyScalar(1 - look.armyIron * 0.3),
+          metalness: 0.84,
+          roughness: 0.38,
+        })
+      );
       const woodSkinMat = bag.add(new THREE.MeshStandardMaterial({ color: '#84593c', roughness: 0.84 }));
-      const atkArmorMat = bag.add(new THREE.MeshStandardMaterial({ color: atkPal.bg, roughness: 0.56, metalness: 0.28 }));
-      const defArmorMat = bag.add(new THREE.MeshStandardMaterial({ color: defPal.bg, roughness: 0.56, metalness: 0.28 }));
+      // Under the dark look the ranks wear blackened iron with only a cast of their realm's colour
+      const armorMat = (hex: string) =>
+        bag.add(
+          new THREE.MeshStandardMaterial({
+            color: new THREE.Color(hex).lerp(DARK_IRON, look.armyIron),
+            roughness: 0.56 - look.armyIron * 0.12,
+            metalness: 0.28 + look.armyIron * 0.42,
+          })
+        );
+      const atkArmorMat = armorMat(atkPal.bg);
+      const defArmorMat = armorMat(defPal.bg);
 
       const atkTotal = Math.max(18, Math.round(64 * Math.max(0.38, scene.attackerStartTroops / maxTroops)));
       const defTotal = Math.max(18, Math.round(64 * Math.max(0.38, scene.defenderStartTroops / maxTroops)));
@@ -885,6 +912,53 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       return { sp, mat, seed: i * 2.399 };
     });
 
+    // --- Dark look only: ground mist in slow banks, embers on the air, bloom and a film grade
+    const mistBanks =
+      look.mist > 0
+        ? Array.from({ length: 16 }, (_, i) => {
+            const mat = bag.add(
+              new THREE.SpriteMaterial({
+                map: dustTex,
+                color: look.mistColor,
+                transparent: true,
+                opacity: 0,
+                depthWrite: false,
+              })
+            );
+            const sp = new THREE.Sprite(mat);
+            world.add(sp);
+            return { sp, mat, seed: i * 2.399 + 0.7 };
+          })
+        : [];
+    const EMBERS = look.mist > 0 ? 70 : 0;
+    const emberGeo = bag.add(new THREE.BufferGeometry());
+    const emberPos = new Float32Array(EMBERS * 3);
+    emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPos, 3));
+    if (EMBERS > 0) {
+      const embers = new THREE.Points(
+        emberGeo,
+        bag.add(
+          new THREE.PointsMaterial({
+            color: new THREE.Color(look.ember).multiplyScalar(2.6),
+            size: 0.085,
+            sizeAttenuation: true,
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            fog: false,
+          })
+        )
+      );
+      embers.frustumCulled = false;
+      world.add(embers);
+    }
+    const post = myth ? createDuelPostFx(renderer, world, camera, initW, initH) : null;
+    if (post) {
+      post.grade.uniforms.uVignette.value = 0.5;
+      post.grade.uniforms.uSaturation.value = 1.02;
+    }
+
     // --- Resize handling
     const onResize = () => {
       if (!host) return;
@@ -893,6 +967,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      post?.setSize(w, h);
     };
     const ro = new ResizeObserver(onResize);
     ro.observe(host);
@@ -1224,7 +1299,33 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
         camera.lookAt(0, isRiver ? 1.1 : 1.7, -0.5);
       }
 
-      renderer.render(world, camera);
+      // 9. Dark look atmosphere: mist banks drifting across the field, embers climbing off it
+      for (let i = 0; i < mistBanks.length; i++) {
+        const m = mistBanks[i];
+        const drift = reducedMotion ? 0 : t * (0.35 + (i % 4) * 0.12);
+        const mx = ((m.seed * 9.7 + drift + 30) % 60) - 30;
+        const mz = -16 + ((i * 3.7) % 22);
+        const far = mz < -5 ? 1.5 : 1;
+        m.sp.position.set(mx, 0.9 + (i % 3) * 0.55, mz);
+        const ms = (9 + (i % 5) * 2.4) * far;
+        m.sp.scale.set(ms * 1.9, ms * 0.55, 1);
+        const edgeFade = 1 - Math.min(1, Math.abs(mx) / 30) ** 2;
+        m.mat.opacity = (0.17 + (i % 3) * 0.05) * look.mist * edgeFade * (mz > 3 ? 0.45 : far);
+      }
+      if (EMBERS > 0) {
+        const et = reducedMotion ? 0 : t;
+        for (let i = 0; i < EMBERS; i++) {
+          const seed = i * 12.9898;
+          const rise = (et * (0.5 + (i % 5) * 0.14) + (seed % 7)) % 7;
+          emberPos[i * 3] = Math.sin(seed) * 15 + Math.sin(et * 0.9 + seed) * 0.5 + rise * 0.28;
+          emberPos[i * 3 + 1] = 0.3 + rise;
+          emberPos[i * 3 + 2] = -7 + ((seed * 3.3) % 14) + Math.cos(et * 0.7 + seed) * 0.4;
+        }
+        emberGeo.attributes.position.needsUpdate = true;
+      }
+
+      if (post) post.render();
+      else renderer.render(world, camera);
       rafId = requestAnimationFrame(renderFrame);
     };
 
@@ -1233,6 +1334,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
     return () => {
       cancelAnimationFrame(rafId);
       ro.disconnect();
+      post?.dispose();
       bag.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === host) {

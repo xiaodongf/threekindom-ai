@@ -499,6 +499,19 @@
   animation: modalPopIn var(--dur-panel) var(--ease-out);
 }
 
+/* The city close-up comes up over the map as the map's camera drops onto the city. */
+@keyframes cityIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+.anim-city-in {
+  animation: cityIn 520ms var(--ease-out) both;
+}
+
 @keyframes sheetIn {
   0% {
     opacity: 0;
@@ -975,4 +988,173 @@
   animation: kingdomMoteFloat var(--mote-dur, 7.5s) ease-in-out infinite;
   animation-delay: var(--mote-delay, 0s);
   will-change: transform, opacity;
+}
+
+/*
+ * ---- Dark myth look (<html data-look="myth">) ----
+ *
+ * The same ink-on-paper language under low light: lacquer cools to black iron, paper ages to
+ * bone and old silk, gold tarnishes to bronze, cinnabar dries to blood-lacquer and malachite
+ * deepens to jade. Only the pigment values change, so every surface follows without new markup.
+ */
+@layer base {
+  :root[data-look='myth'] {
+    --color-slate-50: #f0ede1;
+    --color-slate-100: #e4e0d1;
+    --color-slate-200: #cfccbb;
+    --color-slate-300: #b0afa1;
+    --color-slate-400: #8b8c82;
+    --color-slate-500: #656761;
+    --color-slate-600: #434746;
+    --color-slate-700: #2c3031;
+    --color-slate-800: #1b1e1f;
+    --color-slate-900: #111314;
+    --color-slate-950: #08090a;
+
+    --color-zinc-600: #434746;
+    --color-zinc-900: #111314;
+
+    --color-amber-50: #f6f0df;
+    --color-amber-100: #ebdfbd;
+    --color-amber-200: #dcc792;
+    --color-amber-300: #ccae69;
+    --color-amber-400: #bd994e;
+    --color-amber-500: #a47e38;
+    --color-amber-600: #83632b;
+    --color-amber-700: #644c23;
+    --color-amber-800: #49381b;
+    --color-amber-900: #312613;
+    --color-amber-950: #1a150a;
+
+    --color-rose-50: #f8ebe7;
+    --color-rose-100: #f0d3cb;
+    --color-rose-200: #e3aa9c;
+    --color-rose-300: #d37f6d;
+    --color-rose-400: #c25945;
+    --color-rose-500: #ab3b29;
+    --color-rose-600: #8d2b1e;
+    --color-rose-700: #6f2118;
+    --color-rose-800: #531a14;
+    --color-rose-900: #39120e;
+    --color-rose-950: #200a08;
+
+    --color-emerald-50: #ebf4ef;
+    --color-emerald-100: #d1e6db;
+    --color-emerald-200: #a8cdbb;
+    --color-emerald-300: #7db19a;
+    --color-emerald-400: #58957c;
+    --color-emerald-500: #407a63;
+    --color-emerald-600: #32614f;
+    --color-emerald-700: #274d3f;
+    --color-emerald-800: #1d3a30;
+    --color-emerald-900: #142822;
+    --color-emerald-950: #0b1713;
+
+    --color-ink: #08090a;
+    --color-paper: #e4e0d1;
+    --color-gold: #bd994e;
+    --color-seal: #9c2f21;
+
+    --panel-border: rgba(189, 153, 78, 0.24);
+    --glow-border: rgba(204, 174, 105, 0.56);
+    --glow-shadow: rgba(214, 138, 60, 0.13);
+    --scroll-thumb: rgba(189, 153, 78, 0.36);
+    /* Paintings sit in the same low light as the scenes: less colour, deeper shadow */
+    --art-grade: saturate(0.8) contrast(1.1) brightness(0.93);
+  }
+
+  /* A cold sky above and a low fire below the horizon */
+  :root[data-look='myth'] body {
+    background:
+      var(--tex-grain),
+      radial-gradient(ellipse 90% 60% at 50% -10%, rgba(92, 116, 118, 0.17), transparent 62%),
+      radial-gradient(ellipse 70% 50% at 50% 112%, rgba(168, 74, 28, 0.14), transparent 60%),
+      linear-gradient(180deg, #0e1011 0%, #0a0b0c 55%, #050606 100%);
+    background-attachment: fixed;
+  }
+}
+
+@layer components {
+  /* Black-iron lacquer: colder and deeper, with the light falling off toward the edges */
+  :root[data-look='myth'] .ink-panel {
+    background:
+      var(--tex-grain),
+      radial-gradient(ellipse 120% 90% at 50% 0%, rgba(120, 132, 130, 0.06), transparent 60%),
+      linear-gradient(180deg, rgba(27, 30, 31, 0.95) 0%, rgba(11, 12, 13, 0.97) 100%);
+    box-shadow:
+      0 18px 46px rgba(0, 0, 0, 0.66),
+      inset 0 0 0 1px rgba(0, 0, 0, 0.6),
+      inset 0 1px 0 rgba(222, 228, 224, 0.05),
+      inset 0 0 70px rgba(0, 0, 0, 0.3);
+  }
+
+  :root[data-look='myth'] .gold-border-glow {
+    box-shadow:
+      0 0 0 3px rgba(8, 9, 10, 0.92),
+      0 0 0 4px rgba(189, 153, 78, 0.26),
+      0 0 34px var(--glow-shadow),
+      0 24px 60px rgba(0, 0, 0, 0.78),
+      inset 0 1px 0 rgba(222, 228, 224, 0.07);
+  }
+
+  /* Old silk: the reading sheet darkens and browns at its edges like something kept for centuries */
+  :root[data-look='myth'] .paper-sheet {
+    background:
+      var(--tex-fibre),
+      var(--tex-grain),
+      radial-gradient(ellipse 85% 75% at 50% 40%, rgba(232, 222, 198, 0.55), transparent 72%),
+      linear-gradient(180deg, #cfc5ab 0%, #bdb091 100%);
+    color: #241e17;
+    border-color: #8a7d5f;
+    box-shadow:
+      0 14px 36px rgba(0, 0, 0, 0.62),
+      inset 0 0 64px rgba(58, 42, 20, 0.36);
+  }
+
+  :root[data-look='myth'] .gold-rule {
+    background: linear-gradient(90deg, transparent, rgba(189, 153, 78, 0.55) 18%, rgba(189, 153, 78, 0.55) 82%, transparent);
+  }
+
+  :root[data-look='myth'] .seal {
+    background: linear-gradient(145deg, #ab3b29 0%, #7c2217 100%);
+    box-shadow:
+      inset 0 0 0 1.5px rgba(240, 230, 208, 0.78),
+      inset 0 0 0 3px #8d2b1e,
+      0 2px 10px rgba(0, 0, 0, 0.6);
+  }
+
+  /* Bronze, not gold leaf */
+  :root[data-look='myth'] .btn-gold {
+    background: linear-gradient(180deg, #d0b26c 0%, #9a7733 100%);
+    color: #120e07;
+    border-color: #e0c98c;
+    box-shadow:
+      0 6px 20px rgba(0, 0, 0, 0.6),
+      0 0 22px rgba(214, 138, 60, 0.12),
+      inset 0 1px 0 rgba(255, 244, 210, 0.5);
+  }
+
+  :root[data-look='myth'] .btn-seal {
+    background: linear-gradient(180deg, #ae3c2a 0%, #701d14 100%);
+    border-color: rgba(227, 170, 156, 0.5);
+    box-shadow:
+      0 6px 20px rgba(0, 0, 0, 0.6),
+      0 0 22px rgba(190, 60, 30, 0.16),
+      inset 0 1px 0 rgba(255, 214, 200, 0.28);
+  }
+
+  :root[data-look='myth'] .scroll-mount {
+    background: #08090a;
+    border-color: rgba(189, 153, 78, 0.4);
+    box-shadow:
+      0 0 0 4px #0e1011,
+      0 0 0 5px rgba(189, 153, 78, 0.18),
+      0 26px 64px rgba(0, 0, 0, 0.78);
+  }
+
+  :root[data-look='myth'] .map-table {
+    background:
+      var(--tex-fibre),
+      radial-gradient(ellipse 80% 70% at 50% 45%, #1b1f20 0%, #0e1011 62%, #050606 100%);
+  }
 }

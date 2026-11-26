@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { FactionId, General, TerrainType } from '../../game/types.js';
+import { isMythLook } from '../../utils/artLook.js';
 import type { DisposeBag } from './duelGeometry3D.js';
 import {
   createFortressWallTextures,
+  createDustPuffTexture,
   createGroundDetailTextures,
   createPaintedPanoramaTexture,
   createSilkBannerTexture,
@@ -34,9 +36,134 @@ export interface ArenaLook {
   dust: string;
   ember: string;
   torches: boolean;
+  /** Multiplies the painted backdrop: white leaves it as painted */
+  panoTint: [number, number, number];
+  /** How much ground mist hangs over the field, 0 to 1 */
+  mist: number;
+  /** Colour of that mist */
+  mistColor: string;
+  /** How far the rank and file's colours are pulled toward dark iron, 0 to 1 */
+  armyIron: number;
+}
+
+type BaseLook = Omit<ArenaLook, 'panoTint' | 'mist' | 'mistColor' | 'armyIron'>;
+
+/**
+ * Dark mythic realism: the same battlefields under a heavy sky. Colour is drained from the
+ * land and kept for fire, banners and gilt; a low gold or pale light rims the figures from
+ * behind, cold light fills the shadows, and mist swallows the middle distance.
+ */
+function mythLook(base: BaseLook, terrain: TerrainType, isNight: boolean): ArenaLook {
+  if (isNight) {
+    return {
+      ...base,
+      skyStops: ['#030406', '#0a1018', '#1a2530'],
+      fog: '#141c24',
+      fogDensity: 0.03,
+      groundInner: '#33342f',
+      groundOuter: '#12171c',
+      sunColor: '#b9cfe6',
+      sunIntensity: 2.0,
+      hemiSky: '#4d6480',
+      hemiGround: '#0d0b09',
+      hemiIntensity: 0.6,
+      fillColor: '#ff9a52',
+      fillIntensity: 0.9,
+      exposure: 1.2,
+      dust: '#6c7276',
+      ember: '#ffa24a',
+      torches: true,
+      panoTint: [0.42, 0.4, 0.38],
+      mist: 0.8,
+      mistColor: '#5d7186',
+      armyIron: 0.46,
+    };
+  }
+  if (terrain === 'mountain') {
+    return {
+      ...base,
+      skyStops: ['#0a0d10', '#272f35', '#69767a'],
+      fog: '#465154',
+      fogDensity: 0.03,
+      groundInner: '#4a4a42',
+      groundOuter: '#2a3134',
+      sunColor: '#e8ead6',
+      sunIntensity: 2.3,
+      sunPos: [9, 8, -13],
+      hemiSky: '#8a989d',
+      hemiGround: '#14120e',
+      hemiIntensity: 0.7,
+      fillColor: '#9fb3bd',
+      fillIntensity: 0.9,
+      exposure: 1.15,
+      dust: '#7f8683',
+      ember: '#ffb060',
+      torches: true,
+      panoTint: [0.3, 0.33, 0.35],
+      mist: 1,
+      mistColor: '#93a09f',
+      armyIron: 0.46,
+    };
+  }
+  if (terrain === 'river') {
+    return {
+      ...base,
+      skyStops: ['#040608', '#101a20', '#3a4c50'],
+      fog: '#22302f',
+      fogDensity: 0.026,
+      groundInner: '#3a3a34',
+      groundOuter: '#182022',
+      sunColor: '#cfe0e2',
+      sunIntensity: 2.4,
+      sunPos: [-1, 6.5, -16],
+      hemiSky: '#6d8790',
+      hemiGround: '#0d1110',
+      hemiIntensity: 0.66,
+      fillColor: '#ffa468',
+      fillIntensity: 0.95,
+      exposure: 1.2,
+      dust: '#8ea3a3',
+      ember: '#ffa860',
+      torches: false,
+      panoTint: [0.34, 0.43, 0.47],
+      mist: 0.9,
+      mistColor: '#7f9896',
+      armyIron: 0.42,
+    };
+  }
+  return {
+    ...base,
+    skyStops: ['#060708', '#1b1d20', '#56412c'],
+    fog: '#2d2b28',
+    fogDensity: terrain === 'fortress' ? 0.03 : 0.027,
+    groundInner: '#40382c',
+    groundOuter: '#1b1a18',
+    sunColor: '#ffb672',
+    sunIntensity: 2.9,
+    sunPos: [-9, 5.2, -14],
+    hemiSky: '#6c7a85',
+    hemiGround: '#110e0b',
+    hemiIntensity: 0.68,
+    fillColor: '#9db4c6',
+    fillIntensity: 0.85,
+    exposure: 1.18,
+    dust: '#75706a',
+    ember: '#ffae5a',
+    torches: true,
+    panoTint: [0.5, 0.45, 0.42],
+    mist: 0.75,
+    mistColor: '#8c8a84',
+    armyIron: 0.46,
+  };
 }
 
 export function getArenaLook(terrain: TerrainType, isNight: boolean): ArenaLook {
+  const base = baseArenaLook(terrain, isNight);
+  if (isMythLook()) return mythLook(base, terrain, isNight);
+  return { ...base, panoTint: [1, 1, 1], mist: 0, mistColor: '#ffffff', armyIron: 0 };
+}
+
+function baseArenaLook(terrain: TerrainType, isNight: boolean): BaseLook {
   if (isNight) {
     return {
       panoUrl: '/art/bg_night_raid.jpg',
@@ -133,6 +260,9 @@ export function getArenaLook(terrain: TerrainType, isNight: boolean): ArenaLook 
   };
 }
 
+/** The rank and file's faction colours sink toward this under the dark look */
+export const DARK_IRON = new THREE.Color('#1c1e21');
+
 export interface ArenaBanner3D {
   mesh: THREE.Mesh;
   basePositions: Float32Array;
@@ -209,7 +339,7 @@ export function buildDuelArena3D(
         map: panoTex,
         side: THREE.BackSide,
         fog: false,
-        color: new THREE.Color(1.12, 1.12, 1.12),
+        color: new THREE.Color(...look.panoTint).multiplyScalar(1.12),
       })
     )
   );
@@ -337,6 +467,29 @@ export function buildDuelArena3D(
     }
   }
 
+  // ------------------------------------------------------------ ground mist (dark look)
+  if (look.mist > 0) {
+    const mistTex = createDustPuffTexture(bag);
+    for (let i = 0; i < 14; i++) {
+      const ang = Math.PI * (0.08 + (i / 13) * 0.84);
+      const radius = 13 + (i % 4) * 3.2;
+      const mat = bag.add(
+        new THREE.SpriteMaterial({
+          map: mistTex,
+          color: look.mistColor,
+          transparent: true,
+          opacity: (0.18 + (i % 3) * 0.05) * look.mist,
+          depthWrite: false,
+        })
+      );
+      const bank = new THREE.Sprite(mat);
+      bank.position.set(Math.cos(ang) * radius * 1.25, 1.0 + (i % 3) * 0.6, -Math.sin(ang) * radius);
+      const size = 10 + (i % 5) * 2.2;
+      bank.scale.set(size * 1.9, size * 0.5, 1);
+      group.add(bank);
+    }
+  }
+
   // ------------------------------------------------------------ the two armies
   const leftSpectators = new THREE.Group();
   const rightSpectators = new THREE.Group();
@@ -374,7 +527,13 @@ export function buildDuelArena3D(
       part(new THREE.CylinderGeometry(0.02, 0.024, 3.35, 5), 0.2, 1.7, -0.3),
     ])
   );
-  const ironMatArmy = bag.add(new THREE.MeshStandardMaterial({ color: '#6f7680', metalness: 0.85, roughness: 0.4 }));
+  const ironMatArmy = bag.add(
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#6f7680').multiplyScalar(1 - look.armyIron * 0.3),
+      metalness: 0.85,
+      roughness: 0.4,
+    })
+  );
   const fleshWoodMat = bag.add(new THREE.MeshStandardMaterial({ color: '#7a5236', roughness: 0.85 }));
 
   const dummy = new THREE.Object3D();
@@ -382,7 +541,13 @@ export function buildDuelArena3D(
     const rows = 3;
     const perRow = 26;
     const count = rows * perRow;
-    const armorMat = bag.add(new THREE.MeshStandardMaterial({ color: bgHex, roughness: 0.6, metalness: 0.3 }));
+    const armorMat = bag.add(
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(bgHex).lerp(DARK_IRON, look.armyIron),
+        roughness: 0.6 - look.armyIron * 0.14,
+        metalness: 0.3 + look.armyIron * 0.4,
+      })
+    );
     const bodies = new THREE.InstancedMesh(bodyGeo, armorMat, count);
     const irons = new THREE.InstancedMesh(ironGeo, ironMatArmy, count);
     const rest = new THREE.InstancedMesh(fleshWoodGeo, fleshWoodMat, count);

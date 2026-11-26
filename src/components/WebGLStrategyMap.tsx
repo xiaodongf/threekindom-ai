@@ -1,3 +1,4 @@
+import { isMythLook } from '../utils/artLook.js';
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -55,6 +56,10 @@ interface WebGLStrategyMapProps {
   onSelectCity: (cityId: string) => void;
   onQuickTargetEnemy: (targetCityId: string) => void;
   onInspectHero?: (heroId: string) => void;
+  /** Goes down into a city's close-up: a double click, or pushing in past the nearest view. */
+  onEnterCity?: (cityId: string) => void;
+  /** The city whose close-up is open: the camera drops onto it while the close-up fades in. */
+  diveCityId?: string | null;
   onWebGLFallback?: () => void;
 }
 
@@ -127,6 +132,8 @@ export function WebGLStrategyMap({
   onSelectCity,
   onQuickTargetEnemy,
   onInspectHero,
+  onEnterCity,
+  diveCityId = null,
   onWebGLFallback,
 }: WebGLStrategyMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -157,6 +164,8 @@ export function WebGLStrategyMap({
     previewRoute,
     onSelectCity,
     onQuickTargetEnemy,
+    onEnterCity,
+    diveCityId,
   });
   live.current = {
     state,
@@ -170,7 +179,23 @@ export function WebGLStrategyMap({
     previewRoute,
     onSelectCity,
     onQuickTargetEnemy,
+    onEnterCity,
+    diveCityId,
   };
+  // A second click on the same city, on its model or its plaque, goes down into it
+  const lastCityClick = useRef({ id: '', at: 0 });
+  const clickCity = (cityId: string): boolean => {
+    const now = performance.now();
+    const twice = lastCityClick.current.id === cityId && now - lastCityClick.current.at < 480;
+    lastCityClick.current = twice ? { id: '', at: 0 } : { id: cityId, at: now };
+    if (twice && live.current.onEnterCity && !live.current.attackMode) {
+      live.current.onEnterCity(cityId);
+      return true;
+    }
+    return false;
+  };
+  const clickCityRef = useRef(clickCity);
+  clickCityRef.current = clickCity;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -202,7 +227,8 @@ export function WebGLStrategyMap({
     container.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x15110d);
+    const myth = isMythLook();
+    scene.background = new THREE.Color(myth ? 0x090a0b : 0x15110d);
 
     const camera = new THREE.PerspectiveCamera(36, width / height, 0.5, 600);
     // Start with the whole sheet in view; the paper map takes over a little beyond that.
@@ -233,28 +259,34 @@ export function WebGLStrategyMap({
     controls.target.set(realmView.x, 0, realmView.z);
     controls.update();
 
-    scene.add(new THREE.HemisphereLight(0xfff2d6, 0x4a4436, 1.25));
-    const sun = new THREE.DirectionalLight(0xffe4b4, 1.9);
+    scene.add(
+      myth
+        ? new THREE.HemisphereLight(0x9fb2bd, 0x1c1814, 0.7)
+        : new THREE.HemisphereLight(0xfff2d6, 0x4a4436, 1.25)
+    );
+    const sun = new THREE.DirectionalLight(myth ? 0xffc27a : 0xffe4b4, myth ? 1.7 : 1.9);
     sun.position.set(-58, 60, -55);
     scene.add(sun);
 
     // The table and the lacquer tray the map lies in
     const table = new THREE.Mesh(
       bag.add(new THREE.PlaneGeometry(900, 900)),
-      bag.add(new THREE.MeshBasicMaterial({ color: 0x15110d }))
+      bag.add(new THREE.MeshBasicMaterial({ color: myth ? 0x090a0b : 0x15110d }))
     );
     table.rotation.x = -Math.PI / 2;
     table.position.y = -1.1;
     scene.add(table);
     const tray = new THREE.Mesh(
       bag.add(new THREE.BoxGeometry(WORLD_W + 2.4, 1.1, WORLD_H + 2.4)),
-      bag.add(new THREE.MeshStandardMaterial({ color: 0x3b1a12, roughness: 0.42 }))
+      bag.add(new THREE.MeshStandardMaterial({ color: myth ? 0x1a1412 : 0x3b1a12, roughness: 0.42 }))
     );
     tray.position.y = -0.57;
     scene.add(tray);
     const rim = new THREE.Mesh(
       bag.add(new THREE.BoxGeometry(WORLD_W + 0.7, 0.06, WORLD_H + 0.7)),
-      bag.add(new THREE.MeshStandardMaterial({ color: 0xb98d38, roughness: 0.4, metalness: 0.8 }))
+      bag.add(
+        new THREE.MeshStandardMaterial({ color: myth ? 0x8a6a34 : 0xb98d38, roughness: 0.4, metalness: 0.8 })
+      )
     );
     rim.position.y = -0.035;
     scene.add(rim);
@@ -314,7 +346,7 @@ export function WebGLStrategyMap({
     };
     apiRef.current = api;
 
-    const aim = (e: PointerEvent) => {
+    const aim = (e: { clientX: number; clientY: number }) => {
       const rect = renderer.domElement.getBoundingClientRect();
       ndcVec.set(
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -322,7 +354,7 @@ export function WebGLStrategyMap({
       );
       raycaster.setFromCamera(ndcVec, camera);
     };
-    const pick = (e: PointerEvent): string | null => {
+    const pick = (e: { clientX: number; clientY: number }): string | null => {
       aim(e);
       for (const hit of raycaster.intersectObjects(hitMeshes, false)) {
         const id = hit.object.userData.cityId as string;
@@ -351,7 +383,7 @@ export function WebGLStrategyMap({
       const cur = live.current;
       if (cid) {
         if (cur.attackMode && cur.strikeableIds.has(cid)) cur.onQuickTargetEnemy(cid);
-        else cur.onSelectCity(cid);
+        else if (!clickCityRef.current(cid)) cur.onSelectCity(cid);
         return;
       }
       // A click on a province's ground opens that province
@@ -369,8 +401,36 @@ export function WebGLStrategyMap({
     const onPointerLeave = () => {
       hoverProvince = null;
     };
-    const onWheel = () => {
+    // Pushing in past the nearest view, three notches in a row, goes down into the city below
+    let pushes = 0;
+    let lastPush = 0;
+    const onWheel = (e: WheelEvent) => {
       fly = null;
+      const cur = live.current;
+      if (e.deltaY >= 0 || !cur.onEnterCity || cur.attackMode) {
+        pushes = 0;
+        return;
+      }
+      if (camera.position.distanceTo(controls.target) > controls.minDistance * 1.03) return;
+      const now = performance.now();
+      pushes = now - lastPush < 1100 ? pushes + 1 : 1;
+      lastPush = now;
+      if (pushes < 3) return;
+      pushes = 0;
+      // The city under the pointer, since that is what the zoom has been closing on
+      aim(e);
+      const under = raycaster.ray.intersectPlane(groundPlane, groundPoint) ?? controls.target;
+      let best: City | null = null;
+      let bestDist = 8;
+      for (const c of Object.values(cur.state.cities)) {
+        const { wx, wz } = mapToWorld(c.x, c.y);
+        const d = Math.hypot(wx - under.x, wz - under.z);
+        if (d < bestDist) {
+          bestDist = d;
+          best = c;
+        }
+      }
+      if (best) cur.onEnterCity(best.id);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
@@ -534,6 +594,7 @@ export function WebGLStrategyMap({
       let lastProvinceLevel = level > 0.5;
       let lastNearProvince: ProvinceId | null = null;
       let lastSelected = live.current.selectedCityId;
+      let lastDive: string | null = null;
       const camOffset = new THREE.Vector3();
       /** True when a city sits well inside the picture. */
       const inView = (city: City): boolean => {
@@ -585,6 +646,16 @@ export function WebGLStrategyMap({
               const { wx, wz } = mapToWorld(chosen.x, chosen.y);
               fly = { x: wx, z: wz, dist: camera.position.distanceTo(controls.target) };
             }
+          }
+        }
+
+        // Going down into a city: drop onto it while its close-up fades in over the map
+        if (cur.diveCityId !== lastDive) {
+          lastDive = cur.diveCityId;
+          const into = lastDive ? cur.state.cities[lastDive] : undefined;
+          if (into) {
+            const { wx, wz } = mapToWorld(into.x, into.y);
+            fly = { x: wx, z: wz, dist: controls.minDistance };
           }
         }
 
@@ -1041,7 +1112,7 @@ export function WebGLStrategyMap({
           const wandering = asDot || provinceLevel ? [] : getCityWanderingHeroes(state, city.id);
           const choose = () => {
             if (isStrikeTarget) onQuickTargetEnemy(city.id);
-            else onSelectCity(city.id);
+            else if (!clickCity(city.id)) onSelectCity(city.id);
           };
 
           return (
@@ -1166,6 +1237,16 @@ export function WebGLStrategyMap({
                       </span>
                     )}
                   </button>
+                  {isSelected && !provinceLevel && !attackMode && onEnterCity && (
+                    <button
+                      type="button"
+                      onClick={() => onEnterCity(city.id)}
+                      title={zh ? '入城细看（亦可双击此城）' : 'Go down into the city (or double-click it)'}
+                      className="mt-1 btn-gold rounded-sm px-2 py-0.5 text-[11px] leading-tight whitespace-nowrap cursor-pointer"
+                    >
+                      {zh ? '入城 ↓' : 'Enter ↓'}
+                    </button>
+                  )}
                   {paperShown && (
                     <span
                       aria-hidden="true"
@@ -1220,8 +1301,8 @@ export function WebGLStrategyMap({
 
       <div className="hidden @[1120px]:block pointer-events-none absolute bottom-2.5 right-3 z-20 text-[10px] text-slate-200/80 bg-slate-950/75 px-3 py-1 rounded-full border border-amber-400/25">
         {zh
-          ? '拖拽平移 · 右键拖拽旋转 · 滚轮缩放（拉远见州，推近见城）'
-          : 'Drag to pan · Right-drag to turn · Scroll to zoom (provinces from afar, cities up close)'}
+          ? '拖拽平移 · 右键拖拽旋转 · 滚轮缩放（拉远见州，推近见城）· 双击城池入城'
+          : 'Drag to pan · Right-drag to turn · Scroll to zoom (provinces from afar, cities up close) · Double-click a city to enter it'}
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isMythLook } from '../../utils/artLook.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -26,6 +27,7 @@ const GradeShader = {
     uSaturation: { value: 1.08 },
     uFlash: { value: 0 },
     uTint: { value: new THREE.Vector3(1, 1, 1) },
+    uMyth: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -43,6 +45,7 @@ const GradeShader = {
     uniform float uSaturation;
     uniform float uFlash;
     uniform vec3 uTint;
+    uniform float uMyth;
     varying vec2 vUv;
     void main() {
       vec2 dir = vUv - uCenter;
@@ -66,9 +69,18 @@ const GradeShader = {
       }
       float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
       col = mix(vec3(luma), col, uSaturation) * uTint;
+      if (uMyth > 0.0) {
+        // Dark mythic grade, in linear light before tone mapping: drain the colour, push the
+        // shadows toward cold jade and the lit side toward bronze, then deepen the low end.
+        float l2 = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        vec3 m = mix(vec3(l2), col, 0.74);
+        m *= mix(vec3(0.80, 0.96, 1.04), vec3(1.10, 1.0, 0.84), smoothstep(0.015, 0.42, l2));
+        m = pow(max(m, vec3(0.0)), vec3(1.07)) * 1.04;
+        col = mix(col, m, uMyth);
+      }
       col += uFlash;
       float d = length(dir * vec2(1.0, 0.82));
-      col *= 1.0 - uVignette * smoothstep(0.32, 0.92, d);
+      col *= 1.0 - min(0.9, uVignette + uMyth * 0.1) * smoothstep(0.32, 0.92, d);
       gl_FragColor = vec4(col, 1.0);
     }
   `,
@@ -99,6 +111,7 @@ export function createDuelPostFx(
   const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.28, 0.55, 1.18);
   composer.addPass(bloom);
   const grade = new ShaderPass(GradeShader);
+  grade.uniforms.uMyth.value = isMythLook() ? 1 : 0;
   composer.addPass(grade);
   composer.addPass(new OutputPass());
 

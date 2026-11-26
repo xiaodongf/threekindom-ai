@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { TacticalTile, TacticalTileType } from '../../game/tacticalTypes.js';
 import { bestArt } from '../../utils/art.js';
+import { isMythLook, useArtLook } from '../../utils/artLook.js';
 
 const ART: Record<TacticalTileType, string> = {
   plains: '/art/tile_plains.jpg',
@@ -432,9 +433,53 @@ async function paintBoard(canvas: HTMLCanvasElement, grid: TacticalTile[][], ali
     ctx.fillRect(0, 0, SIZE, SIZE);
   }
   ctx.restore();
+
+  // Dark look: the field under a heavy sky. Colour drains, shadows turn cold, and mist gathers
+  // over the water and in a few hollows; the frame closes in further than it does by day.
+  const myth = isMythLook();
+  if (myth) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'saturation';
+    ctx.fillStyle = 'rgba(128, 128, 128, 0.34)';
+    ctx.fillRect(0, 0, SIZE, SIZE);
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = 'rgb(190, 200, 204)';
+    ctx.fillRect(0, 0, SIZE, SIZE);
+    ctx.globalCompositeOperation = 'screen';
+    const mistAt = (x: number, y: number, radius: number, strength: number) => {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      g.addColorStop(0, `rgba(150, 172, 170, ${strength})`);
+      g.addColorStop(1, 'rgba(150, 172, 170, 0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    };
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c < N; c++) {
+        if (!isType(grid, r, c, ['water', 'ford'])) continue;
+        mistAt(
+          (c + 0.2 + rnd() * 0.6) * CELL,
+          (r + 0.2 + rnd() * 0.6) * CELL,
+          CELL * (0.9 + rnd() * 0.5),
+          0.1 + rnd() * 0.06
+        );
+      }
+    }
+    for (let i = 0; i < 6; i++) {
+      mistAt(rnd() * SIZE, rnd() * SIZE, CELL * (1.3 + rnd() * 1.2), 0.07 + rnd() * 0.05);
+    }
+    // One low, warm light from the south-west, as from a fire outside the frame
+    ctx.globalCompositeOperation = 'soft-light';
+    const glow = ctx.createRadialGradient(SIZE * 0.12, SIZE * 0.95, 0, SIZE * 0.12, SIZE * 0.95, SIZE * 0.85);
+    glow.addColorStop(0, 'rgba(255, 176, 96, 0.42)');
+    glow.addColorStop(1, 'rgba(255, 176, 96, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, SIZE, SIZE);
+    ctx.restore();
+  }
+
   const vignette = ctx.createRadialGradient(SIZE / 2, SIZE / 2, SIZE * 0.36, SIZE / 2, SIZE / 2, SIZE * 0.78);
   vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-  vignette.addColorStop(1, 'rgba(8, 6, 4, 0.5)');
+  vignette.addColorStop(1, myth ? 'rgba(4, 5, 6, 0.56)' : 'rgba(8, 6, 4, 0.5)');
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, SIZE, SIZE);
 
@@ -457,6 +502,8 @@ export function TacticalBoardCanvas({ grid }: { grid: TacticalTile[][] }) {
     .join('|');
   const gridRef = useRef(grid);
   gridRef.current = grid;
+  // The board is painted for the art look in force, so a change of look repaints it
+  const look = useArtLook();
 
   useEffect(() => {
     const canvas = ref.current;
@@ -468,7 +515,7 @@ export function TacticalBoardCanvas({ grid }: { grid: TacticalTile[][] }) {
     return () => {
       alive = false;
     };
-  }, [signature]);
+  }, [signature, look]);
 
   return (
     <canvas

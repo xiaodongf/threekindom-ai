@@ -1,3 +1,4 @@
+import { isMythLook } from '../../utils/artLook.js';
 import * as THREE from 'three';
 import { MAP_HEIGHT, MAP_WIDTH } from '../../game/mapGeo.js';
 import type { FactionId } from '../../game/types.js';
@@ -50,6 +51,7 @@ uniform float uSelected;
 uniform sampler2D uCities;
 // 0 = looking at cities, 1 = pulled back to the provinces
 uniform float uLevel;
+uniform float uMyth;
 uniform float uFocusProvince;
 uniform vec3 uFaction[4];
 
@@ -244,6 +246,31 @@ void main() {
   float haze = (1.0 - exp(-dist * dist * 0.00004)) * (1.0 - uPaper) * 0.45;
   col = mix(col, vec3(0.50, 0.47, 0.40), haze);
 
+  // Dark look. Terrain view: the land drained toward ink and jade, bronze light on the lit
+  // slopes, mist lying in the lowlands. Paper view: the sheet becomes old tea-stained silk read
+  // by lamplight, bright where the lamp stands and falling into shadow toward its edges.
+  // Realm washes and borders keep their place underneath both.
+  if (uMyth > 0.0) {
+    float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+    vec3 g = mix(vec3(l), col, 0.58);
+    g = pow(g, vec3(1.32)) * 0.82;
+    g *= mix(vec3(0.76, 0.93, 0.97), vec3(1.14, 1.02, 0.80), smoothstep(0.18, 0.62, l));
+    float mistField = fbm(uv * vec2(6.5, 4.6) + vec2(uTime * 0.007, -uTime * 0.004));
+    float lowland = 1.0 - smoothstep(150.0, 1500.0, metres);
+    float mist = smoothstep(0.42, 0.78, mistField) * lowland * land;
+    g = mix(g, vec3(0.50, 0.56, 0.55), mist * 0.3);
+
+    vec3 silk = mix(vec3(l), col, 0.62) * vec3(0.85, 0.79, 0.655);
+    silk = pow(silk, vec3(1.2));
+    silk *= 0.84 + 0.27 * fbm(uv * vec2(3.4, 2.6) + 4.7);
+    silk *= mix(vec3(0.86, 0.95, 0.99), vec3(1.06, 1.0, 0.9), smoothstep(0.12, 0.55, l));
+
+    g = mix(g, silk, uPaper);
+    float centre = length((uv - 0.5) * vec2(1.0, 0.85));
+    g *= 1.0 - smoothstep(0.26, 0.74, centre) * mix(0.38, 0.52, uPaper);
+    col = mix(col, g, uMyth);
+  }
+
   // The sheet darkens a little toward its edge, like a mounted painting
   float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
   col *= mix(0.7, 1.0, smoothstep(0.0, 0.035, edge));
@@ -309,6 +336,7 @@ export function buildMapTerrain(
         uSelected: { value: -1 },
         uCities: { value: cityTex },
         uLevel: { value: 0 },
+        uMyth: { value: isMythLook() ? 1 : 0 },
         uFocusProvince: { value: -1 },
         uFaction: {
           value: (['neutral', 'wei', 'shu', 'wu'] as FactionId[]).map((f) =>

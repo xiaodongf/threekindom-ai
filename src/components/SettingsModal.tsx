@@ -7,6 +7,7 @@ import type {
   Language,
 } from '../game/types.js';
 import { UI_TEXT, tLoc } from '../i18n/translations.js';
+import { getArtLook, setArtLook, type ArtLook } from '../utils/artLook.js';
 import {
   applyMotionPreference,
   loadMotionPreference,
@@ -17,6 +18,11 @@ const MOTION_OPTIONS: Array<{ id: MotionPreference; en: string; zh: string }> = 
   { id: 'system', en: 'Follow system', zh: '跟随系统' },
   { id: 'reduced', en: 'Reduced', zh: '减弱' },
   { id: 'full', en: 'Full', zh: '完整' },
+];
+
+const LOOK_OPTIONS: Array<{ id: ArtLook; en: string; zh: string }> = [
+  { id: 'myth', en: 'Dark myth', zh: '玄暗神话' },
+  { id: 'classic', en: 'Classic ink', zh: '经典水墨' },
 ];
 
 interface SettingsModalProps {
@@ -39,6 +45,7 @@ export function SettingsModal({
   const [apiKey, setApiKey] = useState(currentConfig.apiKey || '');
   const [baseUrl, setBaseUrl] = useState(currentConfig.baseUrl || '');
   const [motion, setMotion] = useState<MotionPreference>(() => loadMotionPreference());
+  const [look, setLook] = useState<ArtLook>(() => getArtLook());
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
@@ -176,6 +183,38 @@ export function SettingsModal({
                 }}
                 className={`py-1.5 rounded-md border text-xs font-semibold cursor-pointer ${
                   motion === opt.id
+                    ? 'border-amber-300 bg-amber-400/15 text-amber-100'
+                    : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                }`}
+              >
+                {lang === 'zh' ? opt.zh : opt.en}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Art style: switches at once; battle scenes pick it up the next time they open */}
+        <div className="border-t border-white/10 pt-4">
+          <div className="text-xs font-semibold text-[#f5ecd7] mb-1">
+            {lang === 'zh' ? '美术风格' : 'Art style'}
+          </div>
+          <p className="text-[11px] text-[#b8b2a2] mb-2">
+            {lang === 'zh'
+              ? '玄暗神话：低调光影、冷雾、乌铁与火光。经典水墨：暖色夕照与青绿设色。'
+              : 'Dark myth: low light, cold mist, black iron and firelight. Classic ink: warm sunsets and blue-green pigments.'}
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {LOOK_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                aria-pressed={look === opt.id}
+                onClick={() => {
+                  setLook(opt.id);
+                  setArtLook(opt.id);
+                }}
+                className={`py-1.5 rounded-md border text-xs font-semibold cursor-pointer ${
+                  look === opt.id
                     ? 'border-amber-300 bg-amber-400/15 text-amber-100'
                     : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
                 }`}

@@ -37,6 +37,7 @@ import type {
   PlayableFactionId,
 } from '../game/types.js';
 import { TERRAIN_TEXT, tLoc } from '../i18n/translations.js';
+import { useArtLook } from '../utils/artLook.js';
 import { MapAtmosphereCanvas } from './MapAtmosphereCanvas.js';
 import { WebGLStrategyMap, type MapViewMode } from './WebGLStrategyMap.js';
 
@@ -62,6 +63,10 @@ interface StrategyMapProps {
   onSelectCity: (cityId: string) => void;
   onQuickTargetEnemy: (targetCityId: string) => void;
   onInspectHero?: (heroId: string) => void;
+  /** Goes down into a city's close-up view. */
+  onEnterCity?: (cityId: string) => void;
+  /** The city whose close-up is open; the map flies down to it as the close-up fades in. */
+  diveCityId?: string | null;
   /** True while a battle or duel covers the map, so the 3D view can stop drawing. */
   paused?: boolean;
   /** A march being planned, to be drawn before it is ordered. */
@@ -173,10 +178,14 @@ export function StrategyMap({
   onSelectCity,
   onQuickTargetEnemy,
   onInspectHero,
+  onEnterCity,
+  diveCityId = null,
   paused = false,
   previewRoute = null,
 }: StrategyMapProps) {
   const cities = Object.values(state.cities);
+  // The 3D map reads the art look when it is built, so a change of look rebuilds it.
+  const artLook = useArtLook();
   const selectedCity = selectedCityId ? state.cities[selectedCityId] : null;
   const strikeableIds = new Set(getStrikeableEnemyCityIds(state, state.playerFaction));
 
@@ -463,6 +472,7 @@ export function StrategyMap({
       >
         {mapMode === 'webgl' ? (
           <WebGLStrategyMap
+            key={artLook}
             state={state}
             lang={lang}
             selectedCityId={selectedCityId}
@@ -471,6 +481,8 @@ export function StrategyMap({
             onSelectCity={onSelectCity}
             onQuickTargetEnemy={onQuickTargetEnemy}
             onInspectHero={onInspectHero}
+            onEnterCity={onEnterCity}
+            diveCityId={diveCityId}
             viewMode={viewMode}
             showRealms={showTerritory}
             paused={paused}

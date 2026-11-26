@@ -19,6 +19,8 @@ import { AuthModal } from './components/AuthModal.js';
 import { BattleReportModal } from './components/BattleModal.js';
 import { ChronicleLog } from './components/ChronicleLog.js';
 import { CityPanel } from './components/CityPanel.js';
+import { CityView } from './components/CityView.js';
+import { DISTRICT_ORDER, type DistrictId } from './components/city/cityLayout.js';
 import { DiplomacyPanel } from './components/DiplomacyPanel.js';
 import { DuelModal } from './components/DuelModal.js';
 import { FactionSelect } from './components/FactionSelect.js';
@@ -390,6 +392,31 @@ export default function App() {
     setSheetOpen(true);
   };
   const [focusedHeroId, setFocusedHeroId] = useState<string | null>(null);
+  // The city the player has gone down into: the third level of the map
+  const [cityViewId, setCityViewId] = useState<string | null>(() =>
+    new URLSearchParams(window.location.search).get('demoCity')
+  );
+  // ?demoCity=luoyang&demoDistrict=walls opens a city with one of its panels, for looking at it
+  const [demoDistrict] = useState<DistrictId | null>(() => {
+    const asked = new URLSearchParams(window.location.search).get('demoDistrict');
+    return DISTRICT_ORDER.find((id) => id === asked) ?? null;
+  });
+  // Once the close-up has faded in over the map, the map underneath can stop drawing
+  const [cityViewCovers, setCityViewCovers] = useState(false);
+  useEffect(() => {
+    if (!cityViewId) {
+      setCityViewCovers(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setCityViewCovers(true), 700);
+    return () => window.clearTimeout(timer);
+  }, [cityViewId]);
+  const enterCity = (cityId: string) => {
+    setSelectedCityId(cityId);
+    setCityViewId(cityId);
+    setSheetOpen(false);
+    setAttackMode(false);
+  };
   const [attackMode, setAttackMode] = useState<boolean>(
     () => new URLSearchParams(window.location.search).get('attackMode') === '1'
   );
@@ -1079,6 +1106,7 @@ export default function App() {
     setHeroEncounter(null);
     setWarQueue([]);
     setWarStage('idle');
+    setCityViewId(null);
     setGameState(null);
     if (currentUser) void refreshPersistenceLists(currentUser.id);
   }
@@ -1634,6 +1662,8 @@ export default function App() {
     ) {
       return;
     }
+    // The season's marches and battles are watched from the map
+    setCityViewId(null);
 
     if (activeMpRoom) {
       if (!isMyTurnInMp) return;
@@ -1904,13 +1934,53 @@ export default function App() {
               setAttackMode(false);
             }}
             onInspectHero={handleInspectHero}
+            onEnterCity={enterCity}
+            diveCityId={cityViewId}
             previewRoute={orderRoute ? { ...orderRoute, coverRightPx: 600 } : null}
             paused={
+              cityViewCovers ||
               Boolean(activeDuel) ||
               Boolean(activeTactical) ||
               (warStage !== 'idle' && warStage !== 'march')
             }
           />
+
+          {cityViewId && gameState.cities[cityViewId] && (
+            <CityView
+              state={gameState}
+              lang={lang}
+              cityId={cityViewId}
+              canIssueOrders={canIssueOrders}
+              initialDistrict={demoDistrict}
+              onExit={() => setCityViewId(null)}
+              onChangeCity={(cid) => {
+                setSelectedCityId(cid);
+                setCityViewId(cid);
+              }}
+              onDevelop={(cid) => {
+                if (!canIssueOrders) return;
+                commitCampaignState(performDevelopCity(gameState, gameState.playerFaction, cid, true));
+              }}
+              onFortify={(cid) => {
+                if (!canIssueOrders) return;
+                commitCampaignState(performFortifyCity(gameState, gameState.playerFaction, cid, true));
+              }}
+              onRecruit={(cid) => {
+                if (!canIssueOrders) return;
+                commitCampaignState(performRecruitTroops(gameState, gameState.playerFaction, cid, true));
+              }}
+              onReinforce={handleReinforce}
+              onOpenMilitary={(targetCityId, fromCityId, action) => {
+                if (!canIssueOrders) return;
+                setPendingMilitary({ targetCityId, fromCityId, action });
+              }}
+              onInspectHero={handleInspectHero}
+              onRecruitWanderingHero={(heroId) => {
+                if (!canIssueOrders) return;
+                setHeroEncounter({ heroId, mode: 'recruit' });
+              }}
+            />
+          )}
 
           {gameState.chronicle[0] && (
             <div className="absolute left-3 bottom-3 z-20 max-w-[min(640px,calc(100%-1.5rem))] ink-panel rounded-md px-3.5 py-2 flex items-center justify-between gap-3 text-xs">
@@ -1981,6 +2051,7 @@ export default function App() {
                 }}
                 onReinforce={handleReinforce}
                 onSelectCity={handleSelectCity}
+                onEnterCity={enterCity}
                 onInspectHero={handleInspectHero}
                 onRecruitWanderingHero={(heroId) => {
                   if (!canIssueOrders) return;
