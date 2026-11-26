@@ -21,6 +21,7 @@ import {
 import { ACTION_COSTS, TACTICS } from '../game/data.js';
 import {
   canSeeHeroWeakness,
+  cityRiverStrikeFoodCost,
   estimateBattlePreview,
   factionHasTech,
   getActiveBondsForHeroes,
@@ -302,7 +303,7 @@ export function MilitaryModal({
               playerFaction.gold >= ACTION_COSTS.discordGold
             : canRiver &&
               Boolean(activeFromCity) &&
-              playerFaction.food >= ACTION_COSTS.riverStrikeFood);
+              playerFaction.food >= cityRiverStrikeFoodCost(activeFromCity));
 
   const canDuel = isCombatAssault && canAffordCurrent && Boolean(leadHero && defenderHero);
 

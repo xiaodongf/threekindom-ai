@@ -332,7 +332,11 @@ export function DuelModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/88 backdrop-blur-md flex items-center justify-center p-2.5 sm:p-4">
-      <div className="ink-panel gold-border-glow rounded-2xl max-w-4xl w-full overflow-hidden shadow-2xl animate-modal-in relative border border-[#d4a853]/45">
+      {/* As wide as the window's height allows the 21:10 stage to grow, and never narrower than before */}
+      <div
+        className="ink-panel gold-border-glow rounded-2xl w-full overflow-hidden shadow-2xl animate-modal-in relative border border-[#d4a853]/45"
+        style={{ maxWidth: 'max(56rem, min(80rem, calc((100vh - 400px) * 2.1 + 2.5rem)))' }}
+      >
         <div className="p-3.5 sm:p-5 space-y-3 bg-gradient-to-b from-[#0d111a] via-[#0b0f17] to-[#080b11]">
           {/* Top Cinema Control Bar */}
           <div className="flex flex-wrap items-center justify-between gap-2">

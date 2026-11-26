@@ -47,6 +47,8 @@ export const ACTION_COSTS = {
   drillGold: 80,
   reliefFood: 160,
   fortifyGold: 200,
+  mendBreachGold: 80,
+  specializeGold: 240,
   recruitGold: 180,
   recruitFood: 140,
   recruitTroops: 3500,

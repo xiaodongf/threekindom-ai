@@ -18,7 +18,6 @@ import {
   ASPECT_MAX_LEVEL,
   DRILL_ORDER_GAIN,
   DRILL_SEASON_DRIFT,
-  RAW_LEVY_DRILL,
   RELIEF_ORDER_GAIN,
   SUPPORT_COST_LEVY,
   SUPPORT_SEASON_DRIFT,
@@ -44,12 +43,28 @@ import {
   governorPlanOf,
 } from '../game/governors.js';
 import {
+  CITY_SPECIALTIES,
+  CITY_SPECIALTY_IDS,
+  SPECIALTY_PROSPERITY_MIN,
+  WALL_SCAR_GATE_FACTOR,
+  canCharterSpecialty,
+  canScoutCityDetails,
+  cityEconomyOrderGoldCost,
+  cityExtraGateHp,
+  cityExtraRampartDef,
+  cityRawLevyDrill,
+  cityRecruitFoodCost,
+  cityUpkeepFactor,
   factionHasTech,
+  formatScoutedTroops,
+  getCityCrisisOptions,
   getCityGenerals,
+  getCityLandmark,
   getCityWanderingHeroes,
   getEligibleStagingCities,
   getFactionCities,
   getFactionIncomeBreakdown,
+  getSummonableGeneralsForCity,
   isTruceActive,
   isYangtzePort,
   levySizeOf,
@@ -62,7 +77,9 @@ import {
 } from '../game/tacticalEngine.js';
 import type {
   City,
+  CityCrisisResolutionKind,
   CityEventKind,
+  CitySpecialtyId,
   DomesticOrder,
   GameState,
   GovernorFocus,
@@ -101,6 +118,10 @@ interface CityViewProps {
   onOpenMilitary: (targetCityId: string, fromCityId?: string, action?: MilitaryActionType) => void;
   onInspectHero: (heroId: string) => void;
   onRecruitWanderingHero: (heroId: string) => void;
+  onSummonOfficer?: (heroId: string, targetCityId: string) => void;
+  onMendBreach?: (cityId: string) => void;
+  onResolveCrisis?: (cityId: string, choice: CityCrisisResolutionKind) => void;
+  onCharterSpecialty?: (cityId: string, specialty: CitySpecialtyId) => void;
 }
 
 const PANEL_WIDTH = 372;
@@ -181,6 +202,10 @@ export function CityView({
   onOpenMilitary,
   onInspectHero,
   onRecruitWanderingHero,
+  onSummonOfficer,
+  onMendBreach,
+  onResolveCrisis,
+  onCharterSpecialty,
 }: CityViewProps) {
   const zh = lang === 'zh';
   const look = useArtLook();
@@ -210,16 +235,29 @@ export function CityView({
       : state.season;
   }, [state.season]);
   const governorTask = city && city.owner !== 'neutral' ? (governorPlanOf(state, city.id)?.task ?? null) : null;
+  const specGovernor = city ? getCityGovernor(state, city.id)?.general : undefined;
+  const specWanderingCount = city ? getCityWanderingHeroes(state, city.id).length : 0;
+  const specHasBalloon = Boolean(city && city.owner !== 'neutral' && factionHasTech(state, city.owner, 'balloon'));
+  const specHasAgriculture = Boolean(
+    city && city.owner !== 'neutral' && factionHasTech(state, city.owner, 'agriculture')
+  );
+  const specHasSteamship = Boolean(
+    city &&
+      city.owner !== 'neutral' &&
+      factionHasTech(state, city.owner, 'steamship') &&
+      (city.terrain === 'river' || isYangtzePort(city.id))
+  );
   const spec = useMemo(() => {
     if (!city) return null;
-    const base = citySpecOf(
-      city,
-      season,
-      city.terrain === 'river' || isYangtzePort(city.id),
-      look === 'myth',
-      governorTask
-    );
-    // ?demoScene=flood,breached,unrest,works:walls,drill:3 dresses the scene for a look at it
+    const isRiverCity = city.terrain === 'river' || isYangtzePort(city.id);
+    const base = citySpecOf(city, season, isRiverCity, look === 'myth', governorTask, {
+      hasBalloon: specHasBalloon,
+      hasAgriculture: specHasAgriculture,
+      hasSteamship: specHasSteamship,
+      governorChar: specGovernor ? specGovernor.name.zh.slice(0, 1) : null,
+      hasWanderingHero: specWanderingCount > 0,
+    });
+    // ?demoScene=flood,breached,unrest,works:walls,drill:3,balloon,agriculture,steamship,wayfarer dresses the scene
     const asked = new URLSearchParams(window.location.search).get('demoScene');
     if (!asked) return base;
     const dressed = { ...base };
@@ -228,16 +266,36 @@ export function CityView({
       else if (word === 'unrest') dressed.unrest = true;
       else if (word === 'thriving') dressed.thriving = true;
       else if (word === 'breached') dressed.breached = true;
-      else if (word.startsWith('works:') && (GOVERNOR_TASKS as string[]).includes(word.slice(6))) {
+      else if (word === 'balloon') dressed.hasBalloon = true;
+      else if (word === 'agriculture') dressed.hasAgriculture = true;
+      else if (word === 'steamship') dressed.hasSteamship = true;
+      else if (word === 'wayfarer') dressed.hasWanderingHero = true;
+      else if (
+        word.startsWith('spec:') &&
+        (CITY_SPECIALTY_IDS as string[]).includes(word.slice(5))
+      ) {
+        dressed.specialty = word.slice(5) as CitySpecialtyId;
+      } else if (word.startsWith('works:') && (GOVERNOR_TASKS as string[]).includes(word.slice(6))) {
         dressed.works = word.slice(6) as GovernorTask;
       } else if (/^drill:[0-3]$/.test(word)) dressed.drillBand = Number(word.slice(6));
     }
     return dressed;
-  }, [city, season, look, governorTask]);
+  }, [
+    city,
+    season,
+    look,
+    governorTask,
+    specHasBalloon,
+    specHasAgriculture,
+    specHasSteamship,
+    specGovernor?.id,
+    specWanderingCount,
+  ]);
 
   if (!city || !spec) return null;
 
   const owned = city.owner === state.playerFaction;
+  const scouted = canScoutCityDetails(state, state.playerFaction, city.id);
   const player = state.factions[state.playerFaction];
   const orders = state.actionPoints;
   const mayOrder = canIssueOrders && owned && orders > 0;
@@ -246,8 +304,13 @@ export function CityView({
   const governing = getCityGovernor(state, city.id);
   const governor = governing?.general;
   const plan = governorPlanOf(state, city.id);
+  const crisisOptions = owned ? getCityCrisisOptions(state, city.id) : [];
+  const summonable =
+    owned && onSummonOfficer
+      ? getSummonableGeneralsForCity(state, state.playerFaction, city.id)
+      : [];
   const income =
-    city.owner === 'neutral'
+    !scouted || city.owner === 'neutral'
       ? null
       : getFactionIncomeBreakdown(state, city.owner).find((row) => row.cityId === city.id) ?? null;
   // What the city would bring in with some of its numbers changed, by the rule the season uses
@@ -258,13 +321,19 @@ export function CityView({
           { ...state, cities: { ...state.cities, [city.id]: { ...city, ...patch } } },
           city.owner
         ).find((row) => row.cityId === city.id) ?? null;
-  const upkeep = Math.round(city.troops * 0.008);
+  const upkeep = Math.round(city.troops * 0.008 * cityUpkeepFactor(city));
+  const landmark = getCityLandmark(city.id);
+  const activeSpec = city.specialty ? CITY_SPECIALTIES[city.specialty] : undefined;
 
   const recruitGold =
     state.playerFaction === 'wei' ? Math.round(ACTION_COSTS.recruitGold * 0.85) : ACTION_COSTS.recruitGold;
+  const recruitFood = cityRecruitFoodCost(city);
+  const farmGold = cityEconomyOrderGoldCost(city, 'farming');
+  const tradeGold = cityEconomyOrderGoldCost(city, 'trade');
+  const rawDrillHere = cityRawLevyDrill(city);
   const bestCharisma = generals.reduce((max, g) => Math.max(max, g.charisma), 60);
   const levy = levySizeOf(city, bestCharisma);
-  const drillAfterLevy = mixDrill(city.troops, city.drill, levy, RAW_LEVY_DRILL);
+  const drillAfterLevy = mixDrill(city.troops, city.drill, levy, rawDrillHere);
   const drillmaster = [...generals].sort((a, b) => b.command - a.command)[0];
   const drillGain = DRILL_ORDER_GAIN + drillOfficerBonus(drillmaster?.command ?? 0);
   const steward = [...generals].sort((a, b) => b.charisma - a.charisma)[0];
@@ -299,15 +368,21 @@ export function CityView({
     hall: {
       seal: DISTRICT_NAME.hall.seal,
       title: city.isCapital ? (zh ? '宫城' : 'Palace') : zh ? DISTRICT_NAME.hall.zh : 'Hall',
-      value: unrest
-        ? zh
-          ? `民心 ${city.support} · 动荡`
-          : `Support ${city.support} · unrest`
-        : governor
+      value: !scouted
+        ? governor
           ? tLoc(governor.name, lang)
           : zh
-            ? '无人主政'
-            : 'No governor',
+            ? '探报未详'
+            : 'Unscouted'
+        : unrest
+          ? zh
+            ? `民心 ${city.support} · 动荡`
+            : `Support ${city.support} · unrest`
+          : governor
+            ? tLoc(governor.name, lang)
+            : zh
+              ? '无人主政'
+              : 'No governor',
     },
     market: {
       seal: DISTRICT_NAME.market.seal,
@@ -322,14 +397,18 @@ export function CityView({
     barracks: {
       seal: DISTRICT_NAME.barracks.seal,
       title: zh ? DISTRICT_NAME.barracks.zh : DISTRICT_NAME.barracks.en,
-      value: zh
-        ? `${city.troops.toLocaleString()} 人 · 训练 ${city.drill}`
-        : `${city.troops.toLocaleString()} men · drill ${city.drill}`,
+      value: !scouted
+        ? `${formatScoutedTroops(city.troops, lang)}${zh ? ' 人' : ' men'}`
+        : zh
+          ? `${city.troops.toLocaleString()} 人 · 训练 ${city.drill}`
+          : `${city.troops.toLocaleString()} men · drill ${city.drill}`,
     },
     walls: {
       seal: DISTRICT_NAME.walls.seal,
       title: zh ? DISTRICT_NAME.walls.zh : 'Walls',
-      value: zh ? `城防 ${city.defense} 级` : `Level ${city.defense}`,
+      value: zh
+        ? `城防 ${city.defense} 级${city.wallScar ? ' · 缺口' : ''}`
+        : `Level ${city.defense}${city.wallScar ? ' · breached' : ''}`,
     },
   };
 
@@ -349,12 +428,13 @@ export function CityView({
     if (player.food < needFood) return zh ? `粮草不足（需 ${needFood} 粮）` : `Not enough grain (needs ${needFood})`;
     return null;
   };
-  const farmBlock = blocked(ACTION_COSTS.farmGold, 0, city.farming >= ASPECT_MAX_LEVEL);
-  const tradeBlock = blocked(ACTION_COSTS.tradeGold, 0, city.trade >= ASPECT_MAX_LEVEL);
+  const farmBlock = blocked(farmGold, 0, city.farming >= ASPECT_MAX_LEVEL);
+  const tradeBlock = blocked(tradeGold, 0, city.trade >= ASPECT_MAX_LEVEL);
   const drillBlock = blocked(ACTION_COSTS.drillGold, 0, city.drill >= 100);
   const reliefBlock = blocked(0, ACTION_COSTS.reliefFood, city.support >= 100);
   const fortifyBlock = blocked(ACTION_COSTS.fortifyGold, 0, city.defense >= 5);
-  const recruitBlock = blocked(recruitGold, ACTION_COSTS.recruitFood);
+  const mendBreachBlock = blocked(ACTION_COSTS.mendBreachGold, 0, !city.wallScar || city.wallScar <= 0);
+  const recruitBlock = blocked(recruitGold, recruitFood);
 
   const order = (
     label: string,
@@ -420,7 +500,7 @@ export function CityView({
   const moreFarming = city.farming < ASPECT_MAX_LEVEL ? incomeWith({ farming: city.farming + 1 }) : null;
   const tradeOrder = order(
     zh ? '扩建市集' : 'Enlarge the market',
-    costOf(ACTION_COSTS.tradeGold),
+    costOf(tradeGold),
     tradeBlock,
     () => onDomesticOrder(city.id, 'trade'),
     moreTrade && income
@@ -431,7 +511,7 @@ export function CityView({
   );
   const farmOrder = order(
     zh ? '开垦屯田' : 'Open new fields',
-    costOf(ACTION_COSTS.farmGold),
+    costOf(farmGold),
     farmBlock,
     () => onDomesticOrder(city.id, 'farm'),
     moreFarming && income
@@ -482,7 +562,7 @@ export function CityView({
       : undefined
   );
 
-  const peopleBlock = (
+  const peopleBlock = scouted ? (
     <Section title={zh ? '民心' : 'The people'}>
       <div className="space-y-1.5">
         <Row label={zh ? '民心' : 'Support'}>
@@ -502,6 +582,14 @@ export function CityView({
           : zh
             ? `每季向 ${supportRest} 靠拢 ${SUPPORT_SEASON_DRIFT} 点${supportRest > 50 && steward ? `（${tLoc(steward.name, lang)}魅力 ${steward.charisma}）` : ''}。募兵、围城与敌方离间会折损民心。`
             : `Each season it moves ${SUPPORT_SEASON_DRIFT} toward ${supportRest}${supportRest > 50 && steward ? ` (${tLoc(steward.name, lang)}, charm ${steward.charisma})` : ''}. Levies, sieges and enemy plots wear it down.`}
+      </p>
+    </Section>
+  ) : (
+    <Section title={zh ? '民心' : 'The people'}>
+      <p className="text-[12px] text-slate-400 leading-snug">
+        {zh
+          ? '此城远离我方疆界：需据有邻接城池，或研造【千里镜 / 热气球】方可侦知城中民心与岁入实数。'
+          : 'Beyond scout reach: capture an adjacent city or unlock Spyglass / Recon Balloon to inspect internal Support and tax figures.'}
       </p>
     </Section>
   );
@@ -588,6 +676,39 @@ export function CityView({
                 {zh ? '撤去任命，由政务最高者暂摄' : 'Withdraw the appointment and let the best administrator act'}
               </button>
             )}
+          </div>
+        )}
+        {owned && onSummonOfficer && summonable.length > 0 && (
+          <div className="pt-1.5 space-y-1">
+            <div className="text-[11px] text-slate-400">
+              {zh ? '自他城调将入驻（消耗 1 行动力）' : 'Summon an officer from another city (1 order)'}
+            </div>
+            <select
+              aria-label={zh ? '调将入城' : 'Summon officer'}
+              disabled={!mayOrder}
+              value=""
+              onChange={(e) => {
+                if (e.target.value) onSummonOfficer(e.target.value, city.id);
+              }}
+              className="w-full rounded-md border border-amber-400/40 bg-slate-950/80 px-2 py-1.5 text-[12px] text-amber-100 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+            >
+              <option value="">
+                {zh
+                  ? generals.length === 0
+                    ? '＋ 调将入城主政（1 行动力）'
+                    : '＋ 调将入驻此城（1 行动力）'
+                  : generals.length === 0
+                    ? '+ Summon officer to govern (1 order)'
+                    : '+ Summon officer here (1 order)'}
+              </option>
+              {summonable.map((cand) => (
+                <option key={cand.general.id} value={cand.general.id}>
+                  {zh
+                    ? `${tLoc(cand.general.name, lang)} · 政${cand.general.politics} 统${cand.general.command} 魅${cand.general.charisma}（自${cand.fromCity.name.zh}${cand.leavesOriginEmpty ? '·调后空城' : ''}）`
+                    : `${tLoc(cand.general.name, lang)} · Rule ${cand.general.politics}, Lead ${cand.general.command} (from ${cand.fromCity.name.en}${cand.leavesOriginEmpty ? ' · leaves empty' : ''})`}
+                </option>
+              ))}
+            </select>
           </div>
         )}
       </Section>
@@ -726,37 +847,49 @@ export function CityView({
   const barracksPanel = (
     <>
       <Section title={zh ? '守军' : 'Garrison'}>
-        <Row label={zh ? '兵力' : 'Under arms'}>{city.troops.toLocaleString()}</Row>
-        <Row label={zh ? '耗粮' : 'Eats'}>{`${grain(upkeep)} ${perSeason}`}</Row>
+        <Row label={zh ? '兵力' : 'Under arms'}>
+          {scouted ? city.troops.toLocaleString() : formatScoutedTroops(city.troops, lang)}
+        </Row>
+        {scouted && <Row label={zh ? '耗粮' : 'Eats'}>{`${grain(upkeep)} ${perSeason}`}</Row>}
         <Row label={zh ? '统兵' : 'Commanders'}>
           {generals.length > 0 ? generals.map((g) => tLoc(g.name, lang)).join(zh ? '、' : ', ') : zh ? '无' : 'None'}
         </Row>
       </Section>
       <Section title={zh ? '训练' : 'Drill'}>
-        <div className="space-y-1.5">
-          <Row label={zh ? '训练度' : 'Drill'}>
-            {city.drill} / 100 · {zh ? DRILL_TEXT[aspectBand(city.drill)].zh : DRILL_TEXT[aspectBand(city.drill)].en}
-          </Row>
-          <ScoreBar score={city.drill} tone="bg-rose-400" />
-        </div>
-        <Row label={zh ? '临阵士气' : 'Morale in battle'}>
-          <span className={morale < 0 ? 'text-rose-300' : morale > 0 ? 'text-emerald-300' : undefined}>
-            {morale >= 0 ? '+' : ''}
-            {morale}
-          </span>
-        </Row>
-        <p className="text-[12px] text-slate-400 leading-snug">
-          {zh
-            ? `此城之兵出征或守城，皆以此士气临阵。每季向 50 回落或回升 ${DRILL_SEASON_DRIFT} 点；新募之兵训练仅 ${RAW_LEVY_DRILL}，会拉低全军。`
-            : `Men from this city attack and defend with this morale. Each season drill moves ${DRILL_SEASON_DRIFT} back toward 50, and new levies arrive at ${RAW_LEVY_DRILL} and pull the garrison down.`}
-        </p>
+        {scouted ? (
+          <>
+            <div className="space-y-1.5">
+              <Row label={zh ? '训练度' : 'Drill'}>
+                {city.drill} / 100 · {zh ? DRILL_TEXT[aspectBand(city.drill)].zh : DRILL_TEXT[aspectBand(city.drill)].en}
+              </Row>
+              <ScoreBar score={city.drill} tone="bg-rose-400" />
+            </div>
+            <Row label={zh ? '临阵士气' : 'Morale in battle'}>
+              <span className={morale < 0 ? 'text-rose-300' : morale > 0 ? 'text-emerald-300' : undefined}>
+                {morale >= 0 ? '+' : ''}
+                {morale}
+              </span>
+            </Row>
+            <p className="text-[12px] text-slate-400 leading-snug">
+              {zh
+                ? `此城之兵出征或守城，皆以此士气临阵。每季向 50 回落或回升 ${DRILL_SEASON_DRIFT} 点；新募之兵训练为 ${rawDrillHere}，会拉低全军。`
+                : `Men from this city attack and defend with this morale. Each season drill moves ${DRILL_SEASON_DRIFT} back toward 50, and new levies arrive at ${rawDrillHere} and pull the garrison down.`}
+            </p>
+          </>
+        ) : (
+          <p className="text-[12px] text-slate-400 leading-snug">
+            {zh
+              ? '远处斥候难辨敌军操练深浅；占领邻接城池或研造【千里镜 / 热气球】后可洞察守军训练度。'
+              : 'Distant scouts cannot gauge garrison drill; capture an adjacent city or unlock Spyglass / Recon Balloon to inspect it.'}
+          </p>
+        )}
       </Section>
       {owned && (
         <>
           <Section title={zh ? '下令' : 'Order'}>
             {order(
               zh ? '募兵' : 'Raise a levy',
-              costOf(recruitGold, ACTION_COSTS.recruitFood),
+              costOf(recruitGold, recruitFood),
               recruitBlock,
               () => onRecruit(city.id),
               zh
@@ -766,7 +899,7 @@ export function CityView({
             {drillOrder}
           </Section>
           {ownNeighbours.some((n) => n.owner === state.playerFaction) && (
-            <Section title={zh ? '分兵增援（调四成守军）' : 'Send two fifths of the garrison'}>
+            <Section title={zh ? '分兵增援（调遣兵马与随军武将）' : 'Dispatch reinforcements & officers'}>
               <div className="space-y-1.5">
                 {ownNeighbours
                   .filter((n) => n.owner === state.playerFaction)
@@ -778,7 +911,7 @@ export function CityView({
                       </span>
                       <button
                         type="button"
-                        disabled={!mayOrder || city.troops <= 2500}
+                        disabled={!mayOrder || city.troops <= 2000}
                         onClick={() => onReinforce(city.id, n.id)}
                         className="flex items-center gap-1 rounded-md border border-sky-400/40 bg-sky-600/20 hover:bg-sky-600/35 px-2.5 py-1.5 text-[12px] font-semibold text-sky-100 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
                       >
@@ -812,6 +945,12 @@ export function CityView({
     </button>
   );
 
+  const fullGateHp = GATE_BASE_HP + city.defense * GATE_HP_PER_DEFENSE + cityExtraGateHp(city);
+  const effectiveGateHp =
+    city.wallScar && city.wallScar > 0
+      ? Math.max(1, Math.round(fullGateHp * WALL_SCAR_GATE_FACTOR))
+      : fullGateHp;
+
   const wallsPanel = (
     <>
       <Section title={zh ? '城防' : 'Defences'}>
@@ -820,14 +959,35 @@ export function CityView({
           <LevelBar level={city.defense} tone="bg-sky-400" />
         </div>
         <Row label={zh ? '城门坚固' : 'Gate strength'}>
-          {(GATE_BASE_HP + city.defense * GATE_HP_PER_DEFENSE).toLocaleString()}
+          {city.wallScar && city.wallScar > 0 ? (
+            <span className="text-amber-300">
+              {effectiveGateHp.toLocaleString()} / {fullGateHp.toLocaleString()} (-
+              {Math.round((1 - WALL_SCAR_GATE_FACTOR) * 100)}%)
+            </span>
+          ) : (
+            fullGateHp.toLocaleString()
+          )}
         </Row>
         <Row label={zh ? '守军据墙之利' : 'Cover for the defenders'}>
-          {Math.round((RAMPART_BASE_DEF + RAMPART_DEF_PER_LEVEL * city.defense) * 100)}%
+          {Math.round(
+            (RAMPART_BASE_DEF + RAMPART_DEF_PER_LEVEL * city.defense + cityExtraRampartDef(city)) * 100
+          )}
+          %
         </Row>
       </Section>
       {owned && (
         <Section title={zh ? '下令' : 'Order'}>
+          {Boolean(city.wallScar && city.wallScar > 0) &&
+            onMendBreach &&
+            order(
+              zh ? '抢修城垣缺口' : 'Mend breached ramparts',
+              costOf(ACTION_COSTS.mendBreachGold),
+              mendBreachBlock,
+              () => onMendBreach(city.id),
+              zh
+                ? `立即修复城墙缺口（城门耐久恢复至 ${fullGateHp.toLocaleString()}，民心 +3）。`
+                : `Immediately restores full Gate HP (${fullGateHp.toLocaleString()}) and adds +3 Support.`
+            )}
           {order(
             zh ? '加固城防' : 'Strengthen the walls',
             costOf(ACTION_COSTS.fortifyGold),
@@ -969,29 +1129,55 @@ export function CityView({
                 {ownerName}
               </span>
               <span>
-                {zh ? '守军' : 'Garrison'} <b className="text-amber-200">{city.troops.toLocaleString()}</b>
+                {zh ? '守军' : 'Garrison'}{' '}
+                <b className="text-amber-200">
+                  {scouted ? city.troops.toLocaleString() : formatScoutedTroops(city.troops, lang)}
+                </b>
               </span>
               {(
                 [
-                  [zh ? '农' : 'Farming', city.farming, false],
-                  [zh ? '商' : 'Trade', city.trade, false],
-                  [zh ? '城防' : 'Walls', city.defense, false],
-                  [zh ? '训练' : 'Drill', city.drill, false],
-                  [zh ? '民心' : 'Support', city.support, unrest],
-                ] as Array<[string, number, boolean]>
+                  [zh ? '农' : 'Farming', String(city.farming), false],
+                  [zh ? '商' : 'Trade', String(city.trade), false],
+                  [zh ? '城防' : 'Walls', String(city.defense), false],
+                  [zh ? '训练' : 'Drill', scouted ? String(city.drill) : '?', false],
+                  [zh ? '民心' : 'Support', scouted ? String(city.support) : '?', scouted && unrest],
+                ] as Array<[string, string, boolean]>
               ).map(([label, value, bad]) => (
                 <span key={label}>
                   {label} <b className={bad ? 'text-rose-300' : 'text-amber-200'}>{value}</b>
                 </span>
               ))}
+              {landmark && (
+                <button
+                  type="button"
+                  onClick={() => setDistrict(landmark.district)}
+                  title={tLoc(landmark.summary, lang)}
+                  className="rounded-sm px-1.5 py-px font-semibold bg-cyan-800/80 hover:bg-cyan-700 text-cyan-100 cursor-pointer"
+                >
+                  ◆ {tLoc(landmark.name, lang)}
+                </button>
+              )}
+              {scouted && activeSpec && (
+                <button
+                  type="button"
+                  onClick={() => setDistrict(activeSpec.district)}
+                  title={tLoc(activeSpec.summary, lang)}
+                  className="rounded-sm px-1.5 py-px font-semibold bg-amber-600/85 hover:bg-amber-500 text-slate-950 cursor-pointer"
+                >
+                  {tLoc(activeSpec.name, lang)}
+                </button>
+              )}
               {eventText && (
-                <span
-                  className={`rounded-sm px-1.5 py-px font-semibold text-white ${
-                    eventText.good ? 'bg-emerald-700' : 'bg-rose-700'
+                <button
+                  type="button"
+                  onClick={() => setDistrict(eventText.district)}
+                  className={`rounded-sm px-1.5 py-px font-semibold text-white cursor-pointer ${
+                    eventText.good ? 'bg-emerald-700 hover:bg-emerald-600' : 'bg-rose-700 hover:bg-rose-600'
                   }`}
                 >
                   {zh ? eventText.name.zh : eventText.name.en}
-                </span>
+                  {owned && crisisOptions.length > 0 && (zh ? ' · 颁令赈灾' : ' · Resolve')}
+                </button>
               )}
             </div>
           </div>
@@ -1065,19 +1251,70 @@ export function CityView({
           </header>
           <div className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-4">
             {eventText && city.event && (
-              <p
-                className={`rounded-md border px-2.5 py-2 text-[12px] leading-snug ${
+              <div
+                className={`rounded-md border px-2.5 py-2 text-[12px] leading-snug space-y-2 ${
                   eventText.good
                     ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-100'
                     : 'border-rose-400/30 bg-rose-500/10 text-rose-100'
                 }`}
               >
-                <b>{zh ? eventText.name.zh : eventText.name.en}</b>
-                {zh ? '（' : ' ('}
-                {eventLasts(city.event.seasonsLeft, lang)}
-                {zh ? '）' : '). '}
-                {zh ? eventText.effect.zh : eventText.effect.en}
-              </p>
+                <p>
+                  <b>{zh ? eventText.name.zh : eventText.name.en}</b>
+                  {zh ? '（' : ' ('}
+                  {eventLasts(city.event.seasonsLeft, lang)}
+                  {zh ? '）' : '). '}
+                  {zh ? eventText.effect.zh : eventText.effect.en}
+                </p>
+                {owned && onResolveCrisis && crisisOptions.length > 0 && (
+                  <div className="space-y-1.5 pt-1.5 border-t border-white/10">
+                    <div className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-200">
+                      {zh ? '郡府应急政令（不耗行动力）' : 'Magistrate Crisis Edict (0 orders)'}
+                    </div>
+                    {crisisOptions.map((opt) => {
+                      const canPay =
+                        canIssueOrders &&
+                        player.gold >= opt.goldCost &&
+                        player.food >= opt.foodCost;
+                      return (
+                        <button
+                          key={opt.choice}
+                          type="button"
+                          disabled={!canPay}
+                          onClick={() => onResolveCrisis(city.id, opt.choice)}
+                          className="w-full text-left rounded-md bg-slate-950/75 hover:bg-slate-900 border border-amber-400/40 disabled:opacity-45 px-2.5 py-1.5 cursor-pointer disabled:cursor-not-allowed"
+                        >
+                          <div className="flex items-center justify-between gap-2 font-bold text-slate-50">
+                            <span>{tLoc(opt.title, lang)}</span>
+                            <span className="text-[11px] text-amber-200 flex items-center gap-1 tabular-nums">
+                              {opt.goldCost > 0 && (
+                                <>
+                                  <Coins className="w-3 h-3" />
+                                  {opt.goldCost}
+                                </>
+                              )}
+                              {opt.foodCost > 0 && (
+                                <>
+                                  <Wheat className="w-3 h-3 ml-0.5" />
+                                  {opt.foodCost}
+                                </>
+                              )}
+                              {opt.goldCost === 0 && opt.foodCost === 0 && (
+                                <span className="text-rose-300">{zh ? '免耗钱粮' : '0 Cost'}</span>
+                              )}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-300 mt-0.5">{tLoc(opt.desc, lang)}</div>
+                          {opt.discountReason && (
+                            <div className="text-[10.5px] text-emerald-300 mt-0.5">
+                              ✦ {tLoc(opt.discountReason, lang)}
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             )}
             {city.wallScar && district === 'walls' && (
               <p className="rounded-md border border-slate-400/25 bg-white/5 px-2.5 py-2 text-[12px] text-slate-200 leading-snug">
@@ -1093,7 +1330,90 @@ export function CityView({
                   : `This city is held by ${ownerName}. What follows is what your scouts report; you give no orders here.`}
               </p>
             )}
+            {landmark && (district === landmark.district || district === 'hall') && (
+              <div className="rounded-md border border-cyan-400/35 bg-cyan-500/10 px-2.5 py-2 text-[12px] space-y-1">
+                <div className="font-bold text-cyan-200 flex items-center justify-between">
+                  <span>◆ {tLoc(landmark.name, lang)}</span>
+                  <span className="text-[10px] uppercase tracking-wider text-cyan-300/80">
+                    {zh ? '千古名胜' : 'Landmark'}
+                  </span>
+                </div>
+                <p className="text-slate-200 leading-snug">{tLoc(landmark.summary, lang)}</p>
+                <p className="text-[11px] text-slate-400 leading-snug">{tLoc(landmark.lore, lang)}</p>
+              </div>
+            )}
+            {scouted && activeSpec && (district === activeSpec.district || district === 'hall') && (
+              <div className="rounded-md border border-amber-400/40 bg-amber-500/12 px-2.5 py-2 text-[12px] space-y-1">
+                <div className="font-bold text-amber-200 flex items-center justify-between">
+                  <span>{tLoc(activeSpec.name, lang)}</span>
+                  <span className="rounded bg-amber-500/25 px-1.5 py-px text-[10px] text-amber-100">
+                    {tLoc(activeSpec.seal, lang)}
+                  </span>
+                </div>
+                <p className="text-slate-200 leading-snug">{tLoc(activeSpec.summary, lang)}</p>
+                <p className="text-[11px] text-slate-400 leading-snug">{tLoc(activeSpec.lore, lang)}</p>
+              </div>
+            )}
             {panels[district]}
+            {owned && onCharterSpecialty && (
+              <Section
+                title={
+                  zh
+                    ? '郡国专署（5选1 · 240金 · 1行动力）'
+                    : 'Commandery Specialization (1 of 5 · 240 gold · 1 order)'
+                }
+              >
+                <div className="space-y-1.5">
+                  {CITY_SPECIALTY_IDS.filter(
+                    (spId) => district === 'hall' || CITY_SPECIALTIES[spId].district === district
+                  ).map((spId) => {
+                    const def = CITY_SPECIALTIES[spId];
+                    const isCurrent = city.specialty === spId;
+                    const eligible = canCharterSpecialty(city, spId);
+                    const canBuy =
+                      mayOrder &&
+                      !isCurrent &&
+                      eligible &&
+                      player.gold >= ACTION_COSTS.specializeGold;
+                    return (
+                      <button
+                        key={spId}
+                        type="button"
+                        disabled={!canBuy}
+                        onClick={() => onCharterSpecialty(city.id, spId)}
+                        className={`w-full text-left rounded-md border px-2.5 py-2 text-[12px] transition cursor-pointer disabled:cursor-not-allowed ${
+                          isCurrent
+                            ? 'border-amber-300 bg-amber-400/15 text-amber-100'
+                            : eligible
+                              ? 'border-white/15 bg-white/5 hover:border-amber-300/60 text-slate-100 disabled:opacity-45'
+                              : 'border-white/10 bg-black/20 text-slate-500 opacity-55'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 font-bold">
+                          <span>
+                            [{tLoc(def.seal, lang)}] {tLoc(def.name, lang)}
+                          </span>
+                          <span className="text-[11px] text-amber-200 tabular-nums">
+                            {isCurrent
+                              ? zh
+                                ? '已设此署'
+                                : 'Active'
+                              : !eligible
+                                ? zh
+                                  ? `需农+商≥${SPECIALTY_PROSPERITY_MIN}`
+                                  : `Need Farm+Trade ≥ ${SPECIALTY_PROSPERITY_MIN}`
+                                : `${ACTION_COSTS.specializeGold} ${zh ? '金' : 'gold'}`}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-300 mt-0.5 leading-snug">
+                          {tLoc(def.summary, lang)}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Section>
+            )}
           </div>
         </aside>
       )}

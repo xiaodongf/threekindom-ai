@@ -3,6 +3,8 @@ import type { Season } from '../../game/types.js';
 import { DisposeBag } from '../duel/duelGeometry3D.js';
 import { createDustPuffTexture, createGlowTexture } from '../duel/duelTextures3D.js';
 import { FACTION_PIGMENT } from '../map/mapTerrain.js';
+import { buildCityFlags } from './cityFlags.js';
+import { buildCityPeople } from './cityPeople.js';
 import { buildEnvironment } from './cityEnvironment.js';
 import {
   cityLayoutOf,
@@ -1041,6 +1043,313 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
     }
     kit.box(town, kit.paint(C.road, 'earth'), 9, 0.07, quays * 17 + 16, bank - 3.5, 0, 0);
     extras.lamps.push(new THREE.Vector3(bank - 1, 1.8, 8.5), new THREE.Vector3(bank - 1, 1.8, -8.5));
+
+    // Time-Traveler Paddlewheel Steamship moored at the main river berth
+    if (spec.hasSteamship) {
+      const sx = bank + 14.5;
+      const sz = 0;
+      const sf = kit.frame(town, sx, sz, 0.06);
+      const ironHull = kit.paint(0x2d3238, 'metal');
+      const brass = kit.paint(C.gold, 'metal');
+      kit.box(sf, ironHull, 17.5, 1.45, 3.8, 0, -0.85, 0);
+      kit.box(sf, ironHull, 2.6, 1.5, 2.8, 9.4, -0.75, 0);
+      kit.box(sf, ironHull, 2.2, 1.5, 2.8, -9.2, -0.75, 0);
+      // Armored deckhouse & wheelhouse
+      kit.box(sf, kit.paint(0x464b52, 'wall'), 8.8, 1.7, 3.1, -0.4, 0.6, 0);
+      kit.box(sf, kit.paint(C.timber), 2.8, 1.3, 2.4, 2.2, 2.3, 0);
+      kit.box(sf, brass, 3.1, 0.18, 2.7, 2.2, 3.6, 0);
+      // Paddlewheel sponsons
+      for (const side of [-1, 1]) {
+        kit.box(sf, ironHull, 3.8, 1.1, 0.9, -0.6, 0.4, side * 2.25);
+      }
+      // Twin iron funnels with brass collars & coal smoke
+      for (const fx of [-2.4, -0.2]) {
+        kit.cyl(sf, kit.paint(0x1f2226, 'metal'), 0.42, 0.48, 5.2, fx, 2.2, 0);
+        kit.cyl(sf, brass, 0.47, 0.47, 0.28, fx, 6.4, 0);
+        extras.smoke.unshift(frameToWorld(sf, fx, 7.5, 0));
+      }
+      hit('market', sx, sz, 19, 6, 6);
+    }
+  }
+
+  // =============================================================== time-traveler props & hero beacons
+  const waterwheelSpots: Array<{ x: number; z: number; rot: number }> = [];
+  if (spec.hasAgriculture && L.fieldZones.length > 0) {
+    const stone = kit.paint(C.stone, 'wall');
+    const sluiceWood = kit.paint(C.timber);
+    for (let i = 0; i < Math.min(2, L.fieldZones.length); i++) {
+      const zf = L.fieldZones[i];
+      const wx = i === 0 ? zf.x0 + 3.2 : zf.x1 - 3.2;
+      const wz = zf.z0 + 4.5;
+      // Stone aqueduct channel & timber axle trestles
+      kit.box(town, stone, 2.6, 0.9, 9.5, wx, 0, wz);
+      kit.box(town, kit.paint(0x3b666b), 1.6, 0.2, 9.1, wx, 0.82, wz);
+      for (const s of [-1, 1]) {
+        kit.box(town, sluiceWood, 0.28, 3.1, 0.28, wx + s * 1.15, 0.8, wz);
+      }
+      waterwheelSpots.push({ x: wx, z: wz, rot: i === 0 ? 0 : Math.PI });
+    }
+  }
+
+  const balloonAnchor = spec.hasBalloon
+    ? new THREE.Vector3(H - 2.2, L.wallH, -H + 2.2)
+    : null;
+  if (balloonAnchor) {
+    // Timber winch capstan & brazier platform on the northeast bastion
+    kit.box(town, kit.paint(C.stone, 'wall'), 4.6, 0.45, 4.6, balloonAnchor.x, balloonAnchor.y, balloonAnchor.z);
+    kit.box(town, kit.paint(C.timber), 1.8, 1.1, 1.2, balloonAnchor.x, balloonAnchor.y + 0.45, balloonAnchor.z);
+  }
+
+  const govBannerSpot = spec.governorChar
+    ? new THREE.Vector3(Math.min(cw / 2 - 1.2, 5.4), 0, hallFront + 1.8)
+    : null;
+  if (govBannerSpot) {
+    kit.cyl(town, kit.paint(C.stone, 'wall'), 0.65, 0.8, 0.55, govBannerSpot.x, 0, govBannerSpot.z);
+    kit.box(town, kit.paint(C.lacquer), 0.22, 8.8, 0.22, govBannerSpot.x, 0.5, govBannerSpot.z);
+    kit.box(town, kit.paint(C.gold, 'metal'), 2.3, 0.16, 0.16, govBannerSpot.x + 1.05, 8.7, govBannerSpot.z);
+    kit.cyl(town, kit.paint(C.gold, 'metal'), 0, 0.34, 0.65, govBannerSpot.x, 9.3, govBannerSpot.z);
+  }
+
+  const wayfarerSpot = spec.hasWanderingHero
+    ? new THREE.Vector3(9.8, 0, (L.moat ? L.moat.inner + L.moat.width : L.outer) + 5.4)
+    : null;
+  if (wayfarerSpot) {
+    // Golden Wayfarer Pavilion outside the south gate
+    const wf = kit.frame(town, wayfarerSpot.x, wayfarerSpot.z, 0.2);
+    kit.cyl(wf, kit.paint(C.stone, 'pave'), 2.7, 3.0, 0.45, 0, 0, 0);
+    for (let k = 0; k < 4; k++) {
+      const ang = (k * Math.PI) / 2 + Math.PI / 4;
+      kit.box(wf, kit.paint(C.lacquer), 0.2, 2.5, 0.2, Math.cos(ang) * 1.85, 0.45, Math.sin(ang) * 1.85);
+    }
+    kit.roof(wf, kit.paint(C.gold, 'metal'), 4.8, 4.8, 1.55, 0, 2.95, 0, 0, { ridge: 0.08, lift: 0.45 });
+    kit.box(wf, kit.paint(C.lacquer), 0.16, 5.8, 0.16, -2.8, 0, 1.4);
+    extras.gathered.push(
+      { x: wayfarerSpot.x - 0.5, z: wayfarerSpot.z + 0.4, r: 0.8 },
+      { x: wayfarerSpot.x + 0.6, z: wayfarerSpot.z - 0.3, r: -2.1 }
+    );
+    hit('hall', wayfarerSpot.x, wayfarerSpot.z, 6.5, 6.2, 6.5);
+  }
+
+  // =============================================================== commandery specialty wards (B1)
+  const southEdge = (L.moat ? L.moat.inner + L.moat.width : L.outer) + 4.5;
+  let armillarySpot: THREE.Vector3 | null = null;
+  if (spec.specialty === 'granary' && L.fieldZones.length > 0) {
+    const zf = L.fieldZones[0];
+    const gx = Math.min(zf.x1 - 5, zf.x0 + 10.5);
+    const gz = zf.z0 + 8.5;
+    const gf = kit.frame(town, gx, gz, 0);
+    kit.box(gf, kit.paint(C.stone, 'pave'), 11.5, 0.55, 8.2, 0, 0, 0);
+    for (let i = -1; i <= 1; i++) {
+      kit.cyl(gf, kit.paint(C.stone, 'wall'), 1.65, 1.8, 3.2, i * 3.4, 0.55, -0.8);
+      kit.cyl(gf, kit.paint(HOUSE_TILES[0], 'roof'), 0, 2.15, 1.5, i * 3.4, 3.75, -0.8);
+    }
+    kit.box(gf, wood, 2.4, 0.7, 1.4, -2.2, 0.55, 2.4);
+    for (let k = 0; k < 4; k++) {
+      kit.box(gf, kit.paint(C.canvas), 0.65, 0.45, 0.5, 1.2 + (k % 2) * 0.85, 0.55 + Math.floor(k / 2) * 0.45, 2.3);
+    }
+    hit('fields', gx, gz, 12.5, 5.8, 9.2);
+  } else if (spec.specialty === 'emporium') {
+    const ex = Math.min(H - 8.5, 11.5);
+    const ez = Math.min(H - 8.5, crossZ + 7.2);
+    const gilt = kit.paint(C.gold, 'metal');
+    const topY = hallBlock(kit, town, {
+      x: ex,
+      z: ez,
+      w: 7.4,
+      d: 5.2,
+      h: 3.1,
+      roofH: 2.4,
+      roof: kit.paint(HOUSE_TILES[1], 'roof'),
+      double: true,
+      lift: 0.55,
+      crest: gilt,
+    });
+    extras.flags.push({ p: new THREE.Vector3(ex + 4.1, topY - 1.2, ez + 2.6), size: 1.15 });
+    extras.lanterns.push(new THREE.Vector3(ex - 2.6, 2.6, ez + 3.0), new THREE.Vector3(ex + 2.6, 2.6, ez + 3.0));
+    hit('market', ex, ez, 9, topY + 1, 7);
+  } else if (spec.specialty === 'armory') {
+    const ax = -13.5;
+    const az = southEdge + 5.8;
+    const af = kit.frame(town, ax, az, 0);
+    // Timber warhorse corral + blacksmith forge shed
+    kit.box(af, kit.paint(C.packed, 'earth'), 12.5, 0.14, 9.5, 0, 0, 0);
+    kit.box(af, wood, 12.2, 1.2, 0.2, 0, 0, -4.5);
+    kit.box(af, wood, 12.2, 1.2, 0.2, 0, 0, 4.5);
+    kit.box(af, wood, 0.2, 1.2, 9.0, -6.0, 0, 0);
+    kit.box(af, kit.paint(C.stone, 'wall'), 4.6, 2.5, 3.8, 3.4, 0, -1.8);
+    kit.roof(af, kit.paint(C.tile, 'roof'), 5.6, 4.8, 1.35, 3.4, 2.5, -1.8, 0, { ridge: 0.8 });
+    kit.cyl(af, kit.paint(0x2d2a28, 'wall'), 0.48, 0.62, 4.2, 4.8, 1.2, -2.6);
+    // Stylized warhorse silhouettes inside paddock
+    for (let k = 0; k < 3; k++) {
+      const hx = -3.8 + k * 2.3;
+      const hz2 = 0.6 + (k % 2) * 1.6;
+      kit.box(af, kit.paint(k === 1 ? 0x7c4a2d : 0x4b3425), 1.45, 0.95, 0.52, hx, 0.55, hz2);
+      kit.box(af, kit.paint(k === 1 ? 0x7c4a2d : 0x4b3425), 0.45, 0.75, 0.42, hx + 0.65, 1.15, hz2);
+    }
+    extras.fires.push(new THREE.Vector3(ax + 4.8, 1.8, az - 1.2));
+    extras.smoke.unshift(new THREE.Vector3(ax + 4.8, 5.4, az - 2.6));
+    hit('barracks', ax, az, 13.5, 5.5, 10.5);
+  } else if (spec.specialty === 'academy') {
+    const acx = -Math.min(H - 6.5, cw / 2 + 5.8);
+    const acz = hz + 2.2;
+    const af = kit.frame(town, acx, acz, 0);
+    kit.cyl(af, kit.paint(C.stone, 'pave'), 4.2, 4.6, 0.65, 0, 0, 0);
+    kit.cyl(af, kit.paint(C.lacquer), 2.8, 2.8, 2.7, 0, 0.65, 0);
+    kit.roof(af, kit.paint(C.tile, 'roof'), 6.8, 6.8, 2.1, 0, 3.35, 0, 0, { ridge: 0.08, lift: 0.5 });
+    // Stone plinth south of pavilion for the rotating bronze armillary sphere
+    kit.box(af, kit.paint(C.stone, 'wall'), 1.8, 1.2, 1.8, 0, 0, 4.6);
+    armillarySpot = new THREE.Vector3(acx, 2.35, acz + 4.6);
+    hit('hall', acx, acz + 1.5, 9.5, 6.5, 11.5);
+  } else if (spec.specialty === 'bastion') {
+    // Outer stone barbican (瓮城) bastions & rampart counterweight trebuchets
+    const wallMat = kit.paint(C.brick, 'wall');
+    for (const sx of [-1, 1]) {
+      const bx = sx * 6.8;
+      const bz = L.outer + 2.6;
+      kit.box(town, wallMat, 4.2, L.wallH * 0.92, 5.2, bx, 0, bz);
+      // Counterweight trebuchet on the south wall walk
+      const tx = sx * 12.5;
+      const tz = L.half + L.wallT * 0.5;
+      kit.box(town, kit.paint(C.timber), 1.6, 2.4, 2.2, tx, L.wallH, tz);
+      kit.box(town, kit.paint(C.timber), 0.22, 4.6, 0.22, tx, L.wallH + 1.8, tz + 0.4);
+      kit.box(town, kit.paint(C.stone, 'wall'), 0.9, 0.9, 0.9, tx, L.wallH + 1.2, tz - 0.7);
+    }
+    hit('walls', 0, L.outer + 2.5, 19, L.wallH + 4, 8);
+  }
+
+  // =============================================================== historical landmarks (B2)
+  if (spec.landmarkId === 'imperial_que') {
+    // Luoyang: Vermilion Twin Imperial Que (皇城双阙) flanking the royal avenue
+    const gilt = kit.paint(C.gold, 'metal');
+    for (const sx of [-1, 1]) {
+      const qx = sx * 5.8;
+      const qz = crossZ - 2.4;
+      kit.box(town, kit.paint(C.stone, 'wall'), 3.4, 5.2, 3.4, qx, 0, qz);
+      kit.box(town, kit.paint(C.lacquer), 2.8, 2.4, 2.8, qx, 5.2, qz);
+      kit.roof(town, kit.paint(C.tile, 'roof'), 5.0, 5.0, 2.0, qx, 7.6, qz, 0, { ridge: 0.1, lift: 0.55 });
+      kit.cyl(town, gilt, 0, 0.35, 0.9, qx, 9.6, qz);
+    }
+  } else if (spec.landmarkId === 'weiyang_arsenal') {
+    // Chang'an: Monumental Bell-and-Drum Arsenal Tower
+    const wx = -Math.min(H - 6.5, 8.2);
+    const wz = hallFront + 3.4;
+    kit.box(town, kit.paint(C.stone, 'wall'), 6.2, 3.8, 6.2, wx, 0, wz);
+    const top = hallBlock(kit, town, {
+      x: wx,
+      z: wz,
+      w: 4.8,
+      d: 4.8,
+      h: 2.8,
+      roofH: 2.4,
+      roof: kit.paint(C.tile, 'roof'),
+      base: 3.8,
+      double: true,
+      crest: kit.paint(C.bronze, 'metal'),
+    });
+    hit('walls', wx, wz, 7.5, top + 1, 7.5);
+  } else if (spec.landmarkId === 'bronze_sparrow') {
+    // Ye: Soaring Triple-Platform Bronze Sparrow Terrace (铜雀三台) on the northwest rampart
+    const bx = -H * 0.52;
+    const bz = -H + 3.2;
+    kit.box(town, kit.paint(C.brick, 'wall'), 9.6, L.wallH + 3.6, 6.8, bx, 0, bz);
+    const top = hallBlock(kit, town, {
+      x: bx,
+      z: bz,
+      w: 7.2,
+      d: 4.8,
+      h: 3.2,
+      roofH: 2.8,
+      roof: kit.paint(C.tile, 'roof'),
+      base: L.wallH + 3.6,
+      double: true,
+      lift: 0.65,
+      crest: kit.paint(C.gold, 'metal'),
+    });
+    kit.cyl(town, kit.paint(C.gold, 'metal'), 0, 0.55, 1.6, bx, top, bz);
+    hit('hall', bx, bz, 11, top + 2, 8);
+  } else if (spec.landmarkId === 'yingchuan_granary' && L.fieldZones.length > 0) {
+    // Xuchang: Grand Walled Imperial Granary Compound
+    const zf = L.fieldZones[0];
+    const gx = zf.x0 + 14;
+    const gz = zf.z0 + 16;
+    const gf = kit.frame(town, gx, gz, 0);
+    kit.box(gf, kit.paint(C.mudWall, 'wall'), 13, 1.8, 0.4, 0, 0, -5);
+    kit.box(gf, kit.paint(C.mudWall, 'wall'), 13, 1.8, 0.4, 0, 0, 5);
+    for (const sx of [-3.4, 3.4]) {
+      for (const sz of [-2.2, 2.2]) {
+        kit.cyl(gf, kit.paint(C.plaster), 1.8, 1.9, 3.0, sx, 0, sz);
+        kit.cyl(gf, kit.paint(C.thatch), 0, 2.3, 1.6, sx, 3.0, sz);
+      }
+    }
+    hit('fields', gx, gz, 14, 5.5, 11);
+  } else if (spec.landmarkId === 'dujiangyan') {
+    // Chengdu: Dujiangyan Bamboo-Gabion Diversion Weir & Brocade Drying Racks
+    const dx = -14.5;
+    const dz = southEdge + 8.5;
+    const df = kit.frame(town, dx, dz, 0.25);
+    kit.box(df, kit.paint(0x3a6b70), 16, 0.22, 7.5, 0, 0.08, 0);
+    // Fish-mouth gabion levee
+    kit.box(df, kit.paint(0x9a8858, 'wall'), 12.5, 1.15, 2.1, -1.2, 0.1, 0);
+    kit.cyl(df, kit.paint(0x9a8858, 'wall'), 0.9, 1.2, 1.15, 5.4, 0.1, 0);
+    // Colorful Shu brocade silk racks nearby
+    for (let k = 0; k < 3; k++) {
+      const rx = dx + 4 + k * 2.8;
+      const rz = dz - 6.8;
+      kit.box(town, wood, 2.2, 2.1, 0.14, rx, 0, rz);
+      kit.box(town, kit.paint(CLOTH[k % CLOTH.length]), 1.9, 1.5, 0.08, rx, 0.45, rz);
+    }
+    hit('fields', dx, dz - 2, 18, 4, 14);
+  } else if (spec.landmarkId === 'sword_gate') {
+    // Jiange: Towering Sword Gate Crags & Cliffside Timber Plank Gallery (剑门栈道)
+    const rock = kit.paint(0x5b554c, 'wall');
+    for (const sx of [-1, 1]) {
+      const cx2 = sx * (L.outer + 6.5);
+      const cz2 = L.outer - 2;
+      kit.box(town, rock, 9.5, L.wallH + 11.5, 11.5, cx2, 0, cz2);
+      kit.box(town, rock, 6.2, L.wallH + 15.5, 7.2, cx2 + sx * 2.2, 0, cz2 - 1.5);
+      // Cliffside plank road gallery brackets
+      kit.box(town, kit.paint(C.timber), 2.4, 0.28, 10.8, cx2 - sx * 5.2, 4.2, cz2);
+      for (let p = -4; p <= 4; p += 2) {
+        kit.box(town, kit.paint(C.timber), 1.8, 2.2, 0.2, cx2 - sx * 4.6, 2.2, cz2 + p);
+      }
+    }
+    hit('walls', 0, L.outer, (L.outer + 12) * 2, L.wallH + 16, 14);
+  } else if (spec.landmarkId === 'stone_citadel' && L.river) {
+    // Jianye: Red-Sandstone Shitoucheng Bluff Citadel overlooking the Yangtze
+    const bank = L.river.x - L.river.half - 5.5;
+    const sz = -22;
+    kit.box(town, kit.paint(0x8c4b38, 'wall'), 11.5, 6.8, 10.5, bank, 0, sz);
+    kit.box(town, kit.paint(C.brick, 'wall'), 9.2, 3.2, 8.2, bank, 6.8, sz);
+    kit.roof(town, kit.paint(C.tile, 'roof'), 7.4, 6.6, 2.2, bank, 10.0, sz, 0, { lift: 0.45 });
+    extras.flags.push({ p: new THREE.Vector3(bank + 3.8, 11.2, sz + 3.2), size: 1.35 });
+    hit('walls', bank, sz, 12.5, 13, 11.5);
+  } else if (spec.landmarkId === 'red_cliffs_yard' && L.river) {
+    // Chaisang: Fortified Yangtze Naval Stockade (赤壁水寨) & Admiral Watchtower
+    const bank = L.river.x - L.river.half + 3.5;
+    const nz = 21;
+    kit.box(town, kit.paint(C.timber), 13.5, 1.9, 0.35, bank, -0.4, nz - 5.5);
+    kit.box(town, kit.paint(C.timber), 13.5, 1.9, 0.35, bank, -0.4, nz + 5.5);
+    kit.box(town, kit.paint(C.timber), 0.35, 1.9, 11.0, bank + 6.6, -0.4, nz);
+    kit.box(town, kit.paint(C.timber), 3.4, 6.5, 3.4, bank - 3.5, 0, nz);
+    kit.roof(town, kit.paint(C.thatch), 4.8, 4.8, 1.7, bank - 3.5, 6.5, nz, 0, { lift: 0.3 });
+    extras.flags.push({ p: new THREE.Vector3(bank - 3.5, 8.4, nz), size: 1.4 });
+    hit('barracks', bank, nz, 15, 9.5, 12.5);
+  } else if (spec.landmarkId === 'han_citadel') {
+    // Xiangyang: Fortified Han River Customs Bridgehead
+    const hx = 6.2;
+    const hz2 = southEdge + 1.5;
+    kit.box(town, kit.paint(C.stone, 'wall'), 5.2, 5.8, 5.2, hx, 0, hz2);
+    kit.roof(town, kit.paint(C.tile, 'roof'), 6.6, 6.6, 2.0, hx, 5.8, hz2, 0, { lift: 0.45 });
+    hit('walls', hx, hz2, 6.8, 8.2, 6.8);
+  } else if (spec.landmarkId === 'hexi_pastures') {
+    // Wuwei: Tall Western Rammed-Earth Silk Road Beacon Tower (烽燧)
+    const bx = -16.5;
+    const bz = southEdge + 9.5;
+    kit.box(town, kit.paint(C.rammed, 'wall'), 4.6, 8.8, 4.6, bx, 0, bz);
+    kit.box(town, kit.paint(C.rammed, 'wall'), 3.4, 3.4, 3.4, bx, 8.8, bz);
+    extras.fires.push(new THREE.Vector3(bx, 12.6, bz));
+    extras.smoke.unshift(new THREE.Vector3(bx, 13.0, bz));
+    hit('barracks', bx, bz, 7, 13.5, 7);
   }
 
   kit.finish(town);
@@ -1049,63 +1358,24 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
   const env = buildEnvironment(spec, L, bag, extras.trees);
   group.add(env.group);
 
-  // Figures: one small body for soldiers and townsfolk alike
-  const figure = (() => {
-    const body = new THREE.BoxGeometry(0.4, 0.74, 0.28);
-    body.translate(0, 0.37, 0);
-    const head = new THREE.SphereGeometry(0.17, 8, 6);
-    head.translate(0, 0.92, 0);
-    return { body: bag.add(body), head: bag.add(head) };
-  })();
-  const dummy = new THREE.Object3D();
-  const crowd = (
-    list: Array<{ x: number; z: number; r: number; y?: number }>,
-    tones: number[],
-    spear: boolean
-  ): THREE.InstancedMesh[] => {
-    if (list.length === 0) return [];
-    const bodyMat = bag.add(new THREE.MeshStandardMaterial({ roughness: spear ? 0.55 : 0.9, metalness: spear ? 0.5 : 0 }));
-    const skin = bag.add(new THREE.MeshStandardMaterial({ color: spear ? 0x4a4744 : 0xb08a68, roughness: 0.8, metalness: spear ? 0.6 : 0 }));
-    const bodies = new THREE.InstancedMesh(figure.body, bodyMat, list.length);
-    const heads = new THREE.InstancedMesh(figure.head, skin, list.length);
-    const tint = new THREE.Color();
-    list.forEach((m, i) => {
-      dummy.position.set(m.x, 0.09 + (m.y ?? 0), m.z);
-      dummy.rotation.set(0, m.r, 0);
-      dummy.scale.setScalar(spear ? 1.12 : 0.98 + (i % 5) * 0.03);
-      dummy.updateMatrix();
-      bodies.setMatrixAt(i, dummy.matrix);
-      heads.setMatrixAt(i, dummy.matrix);
-      bodies.setColorAt(i, tint.setHex(tones[i % tones.length]));
-    });
-    bodies.castShadow = true;
-    bag.add(bodies);
-    bag.add(heads);
-    group.add(bodies, heads);
-    const meshes = [bodies, heads];
-    if (spear) {
-      const shaft = bag.add(new THREE.BoxGeometry(0.05, 2.1, 0.05));
-      shaft.translate(0.26, 1.05, 0);
-      const spears = new THREE.InstancedMesh(shaft, bag.add(new THREE.MeshStandardMaterial({ color: 0x8a8f92, roughness: 0.4, metalness: 0.8 })), list.length);
-      list.forEach((m, i) => {
-        dummy.position.set(m.x, 0.09, m.z);
-        dummy.rotation.set(0, m.r, 0);
-        dummy.scale.setScalar(1.12);
-        dummy.updateMatrix();
-        spears.setMatrixAt(i, dummy.matrix);
-      });
-      bag.add(spears);
-      group.add(spears);
-      meshes.push(spears);
-    }
-    return meshes;
-  };
-  const iron = spec.myth ? 0x34373a : 0x55595c;
-  const ranks = crowd(extras.soldiers, [mixHex(iron, pigment, 0.22), mixHex(iron, pigment, 0.38), iron], true);
+  // The garrison and the townsfolk, drawn with the shared figure kit.
   // In a frightened or sickened city most people stay indoors
   const abroad = spec.event === 'plague' ? 0.25 : riot ? 0.3 : spec.unrest ? 0.5 : 1;
   const townsfolk = extras.people.filter((_, i) => ((i * 7) % 20) / 20 < abroad).concat(extras.gathered);
-  crowd(townsfolk, [0x6c5a44, 0x8a7a5c, 0x4f5a66, 0x7a4a3a, 0x9a8e74, 0x5a6650], false);
+  const people = buildCityPeople(
+    {
+      soldiers: extras.soldiers,
+      townsfolk,
+      gathered: extras.gathered.length,
+      drillBand: spec.drillBand,
+      drilling: spec.works === 'drill',
+      agitated: riot,
+      realm: pigment,
+      myth: spec.myth,
+    },
+    bag,
+    group
+  );
 
   // Floodwater standing on the fields
   if (spec.event === 'flood') {
@@ -1133,28 +1403,17 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
     }
   }
 
-  // Banners in the owner's colour
-  const flagGeo = bag.add(new THREE.PlaneGeometry(2.3, 1.35, 1, 1));
-  flagGeo.translate(1.15, 0, 0);
-  const flagMat = bag.add(
-    new THREE.MeshStandardMaterial({ color: pigment, roughness: 0.85, side: THREE.DoubleSide, emissive: pigment, emissiveIntensity: 0.08 })
-  );
-  const flags = extras.flags.map((flag, i) => {
-    const m = new THREE.Mesh(flagGeo, flagMat);
-    m.position.copy(flag.p);
-    m.scale.setScalar(flag.size);
-    m.rotation.y = 0.5 + (i % 3) * 0.2;
-    m.castShadow = true;
-    group.add(m);
-    return { mesh: m, base: m.rotation.y, phase: i * 1.7 };
-  });
+  // Banners in the owner's colour, flying in the city's wind
+  const flagSet = buildCityFlags(extras.flags, spec.owner, pigment, env.wind, bag, group);
 
   // Braziers and lanterns
+  const LAMP_GLOW = 1.6;
   const glowTexture = createGlowTexture(bag);
   const lampMat = bag.add(
     new THREE.SpriteMaterial({
       map: glowTexture,
-      color: new THREE.Color(0xff9a3c).multiplyScalar(spec.myth ? 3 : 1.6),
+      // Bright enough to glow, not so bright that bloom burns the lamp to a white ball
+      color: new THREE.Color(0xff9a3c).multiplyScalar(spec.myth ? 1.9 : 1.3),
       transparent: true,
       opacity: spec.myth ? 0.95 : 0.6,
       blending: THREE.AdditiveBlending,
@@ -1165,7 +1424,8 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
   const lamps = extras.lamps.map((p, i) => {
     const s = new THREE.Sprite(lampMat);
     s.position.copy(p);
-    s.scale.setScalar(2.6);
+    // The glow is sized to the brazier it sits on
+    s.scale.setScalar(LAMP_GLOW);
     group.add(s);
     return { sprite: s, phase: i * 2.3 };
   });
@@ -1265,6 +1525,241 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
   };
   placeSmoke(0);
 
+  // =============================================================== animated anachronisms & beacons
+  const wheelTimberMat = bag.add(
+    new THREE.MeshStandardMaterial({ color: C.timber, roughness: 0.82, metalness: 0.08 })
+  );
+  const wheelIronMat = bag.add(
+    new THREE.MeshStandardMaterial({ color: 0x2a2f35, roughness: 0.52, metalness: 0.65 })
+  );
+
+  const waterwheels: THREE.Group[] = [];
+  if (waterwheelSpots.length > 0) {
+    const rimGeo = bag.add(new THREE.TorusGeometry(2.05, 0.14, 8, 20));
+    rimGeo.rotateY(Math.PI / 2);
+    const spokeGeo = bag.add(new THREE.BoxGeometry(0.12, 4.1, 0.14));
+    const bucketGeo = bag.add(new THREE.BoxGeometry(0.9, 0.28, 0.32));
+    for (const spot of waterwheelSpots) {
+      const wheel = new THREE.Group();
+      wheel.position.set(spot.x, 3.2, spot.z);
+      wheel.rotation.y = spot.rot;
+      for (const sx of [-0.45, 0.45]) {
+        const rim = new THREE.Mesh(rimGeo, wheelTimberMat);
+        rim.position.x = sx;
+        rim.castShadow = true;
+        wheel.add(rim);
+      }
+      for (let k = 0; k < 4; k++) {
+        const sp = new THREE.Mesh(spokeGeo, wheelTimberMat);
+        sp.rotation.x = (k * Math.PI) / 4;
+        wheel.add(sp);
+      }
+      for (let k = 0; k < 8; k++) {
+        const ang = (k * Math.PI) / 4;
+        const bk = new THREE.Mesh(bucketGeo, wheelTimberMat);
+        bk.position.set(0, Math.sin(ang) * 2.05, Math.cos(ang) * 2.05);
+        bk.rotation.x = -ang;
+        wheel.add(bk);
+      }
+      group.add(wheel);
+      waterwheels.push(wheel);
+    }
+  }
+
+  const paddleWheels: THREE.Group[] = [];
+  if (spec.hasSteamship && L.river) {
+    const bank = L.river.x - L.river.half - 2;
+    const pRimGeo = bag.add(new THREE.TorusGeometry(1.35, 0.1, 6, 16));
+    const pBladeGeo = bag.add(new THREE.BoxGeometry(0.16, 2.7, 0.58));
+    const shipRoot = new THREE.Group();
+    shipRoot.position.set(bank + 14.5, 0.25, 0);
+    shipRoot.rotation.y = 0.06;
+    for (const side of [-1, 1]) {
+      const pw = new THREE.Group();
+      pw.position.set(-0.6, 0, side * 2.25);
+      const rim = new THREE.Mesh(pRimGeo, wheelIronMat);
+      pw.add(rim);
+      for (let k = 0; k < 4; k++) {
+        const bl = new THREE.Mesh(pBladeGeo, wheelTimberMat);
+        bl.rotation.z = (k * Math.PI) / 4;
+        pw.add(bl);
+      }
+      shipRoot.add(pw);
+      paddleWheels.push(pw);
+    }
+    group.add(shipRoot);
+  }
+
+  let balloonGroup: THREE.Group | null = null;
+  let balloonBurner: THREE.Sprite | null = null;
+  const balloonBaseY = balloonAnchor ? balloonAnchor.y + 18.5 : 0;
+  if (balloonAnchor) {
+    balloonGroup = new THREE.Group();
+    balloonGroup.position.set(balloonAnchor.x, balloonBaseY, balloonAnchor.z);
+
+    // Silk envelope with faction equatorial band
+    const envGeo = bag.add(new THREE.SphereGeometry(4.1, 18, 14));
+    envGeo.scale(1, 1.24, 1);
+    const silkMat = bag.add(
+      new THREE.MeshStandardMaterial({
+        color: mixHex(0xd49a56, pigment, 0.32),
+        roughness: 0.72,
+        emissive: 0xff7b29,
+        emissiveIntensity: spec.myth ? 0.28 : 0.16,
+      })
+    );
+    const envelope = new THREE.Mesh(envGeo, silkMat);
+    envelope.castShadow = true;
+    balloonGroup.add(envelope);
+
+    const bandGeo = bag.add(new THREE.CylinderGeometry(4.15, 4.05, 1.15, 18, 1, true));
+    const bandMat = bag.add(
+      new THREE.MeshStandardMaterial({
+        color: pigment,
+        roughness: 0.7,
+        side: THREE.DoubleSide,
+        emissive: pigment,
+        emissiveIntensity: 0.14,
+      })
+    );
+    balloonGroup.add(new THREE.Mesh(bandGeo, bandMat));
+
+    const throatGeo = bag.add(new THREE.CylinderGeometry(1.3, 0.95, 1.2, 12));
+    const throat = new THREE.Mesh(throatGeo, wheelTimberMat);
+    throat.position.y = -4.9;
+    balloonGroup.add(throat);
+
+    // Wicker scout gondola + suspension ropes
+    const basketGeo = bag.add(new THREE.BoxGeometry(1.55, 1.15, 1.55));
+    const basketMat = bag.add(new THREE.MeshStandardMaterial({ color: 0x8b6b3e, roughness: 0.9 }));
+    const basket = new THREE.Mesh(basketGeo, basketMat);
+    basket.position.y = -7.3;
+    basket.castShadow = true;
+    balloonGroup.add(basket);
+
+    const ropeGeo = bag.add(new THREE.CylinderGeometry(0.035, 0.035, 2.5, 5));
+    for (const rx of [-0.65, 0.65]) {
+      for (const rz of [-0.65, 0.65]) {
+        const rope = new THREE.Mesh(ropeGeo, wheelTimberMat);
+        rope.position.set(rx, -6.0, rz);
+        balloonGroup.add(rope);
+      }
+    }
+
+    // Taut winch tether cable down to rampart bastion
+    const tetherLen = 11.2;
+    const tetherGeo = bag.add(new THREE.CylinderGeometry(0.04, 0.04, tetherLen, 5));
+    const tether = new THREE.Mesh(tetherGeo, wheelTimberMat);
+    tether.position.y = -7.9 - tetherLen / 2;
+    balloonGroup.add(tether);
+
+    const burnerMat = bag.add(
+      new THREE.SpriteMaterial({
+        map: glowTexture,
+        color: new THREE.Color(0xff9436).multiplyScalar(spec.myth ? 3.2 : 2.1),
+        transparent: true,
+        opacity: 0.92,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: false,
+      })
+    );
+    balloonBurner = new THREE.Sprite(burnerMat);
+    balloonBurner.position.set(0, -5.4, 0);
+    balloonBurner.scale.setScalar(4.4);
+    balloonGroup.add(balloonBurner);
+
+    group.add(balloonGroup);
+  }
+
+  let govBannerMesh: THREE.Mesh | null = null;
+  if (govBannerSpot && spec.governorChar && typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const baseCol = new THREE.Color(pigment);
+      ctx.fillStyle = `#${baseCol.getHexString()}`;
+      ctx.fillRect(0, 0, 128, 256);
+      ctx.strokeStyle = '#e0b861';
+      ctx.lineWidth = 10;
+      ctx.strokeRect(8, 8, 112, 240);
+      ctx.strokeStyle = 'rgba(245, 236, 215, 0.45)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(18, 18, 92, 220);
+      ctx.fillStyle = '#f8efd9';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = 'bold 78px "Noto Serif SC", "Songti SC", serif';
+      ctx.fillText(spec.governorChar.slice(0, 1), 64, 108);
+      ctx.fillStyle = '#e0b861';
+      ctx.font = 'bold 26px "Noto Serif SC", "Songti SC", serif';
+      ctx.fillText('太守', 64, 198);
+    }
+    const bannerTex = bag.add(new THREE.CanvasTexture(canvas));
+    bannerTex.colorSpace = THREE.SRGBColorSpace;
+    const bGeo = bag.add(new THREE.PlaneGeometry(1.9, 3.8, 1, 4));
+    bGeo.translate(0.95, -1.9, 0);
+    const bMat = bag.add(
+      new THREE.MeshStandardMaterial({
+        map: bannerTex,
+        roughness: 0.78,
+        side: THREE.DoubleSide,
+        emissive: pigment,
+        emissiveIntensity: 0.1,
+      })
+    );
+    govBannerMesh = new THREE.Mesh(bGeo, bMat);
+    govBannerMesh.position.set(govBannerSpot.x + 0.12, 8.65, govBannerSpot.z);
+    govBannerMesh.castShadow = true;
+    group.add(govBannerMesh);
+  }
+
+  let wayfarerBeacon: THREE.Sprite | null = null;
+  if (wayfarerSpot) {
+    const wfMat = bag.add(
+      new THREE.SpriteMaterial({
+        map: glowTexture,
+        color: new THREE.Color(0xffdf6e).multiplyScalar(spec.myth ? 3.5 : 2.3),
+        transparent: true,
+        opacity: 0.95,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: false,
+      })
+    );
+    wayfarerBeacon = new THREE.Sprite(wfMat);
+    wayfarerBeacon.position.set(wayfarerSpot.x - 2.8, 5.9, wayfarerSpot.z + 1.4);
+    wayfarerBeacon.scale.setScalar(4.8);
+    group.add(wayfarerBeacon);
+
+    const wfLight = new THREE.PointLight(0xffcf58, spec.myth ? 55 : 28, 34, 1.8);
+    wfLight.position.set(wayfarerSpot.x, 4.2, wayfarerSpot.z);
+    group.add(wfLight);
+  }
+
+  let armillaryOuter: THREE.Mesh | null = null;
+  let armillaryInner: THREE.Mesh | null = null;
+  if (armillarySpot) {
+    const bronzeMat = bag.add(
+      new THREE.MeshStandardMaterial({
+        color: 0xc9a04a,
+        roughness: 0.35,
+        metalness: 0.85,
+        emissive: 0x5c4214,
+        emissiveIntensity: 0.18,
+      })
+    );
+    const outerGeo = bag.add(new THREE.TorusGeometry(1.05, 0.07, 8, 24));
+    const innerGeo = bag.add(new THREE.TorusGeometry(0.78, 0.06, 8, 20));
+    armillaryOuter = new THREE.Mesh(outerGeo, bronzeMat);
+    armillaryOuter.position.copy(armillarySpot);
+    armillaryInner = new THREE.Mesh(innerGeo, bronzeMat);
+    armillaryInner.position.copy(armillarySpot);
+    group.add(armillaryOuter, armillaryInner);
+  }
+
   const glowLevel: Record<DistrictId, number> = { hall: 0, market: 0, fields: 0, barracks: 0, walls: 0 };
 
   return {
@@ -1285,26 +1780,39 @@ export function buildCityWorld(spec: CitySpec): CityWorld {
         const want = glowLevel[id] * 0.5 * pulse;
         glowMats[id].opacity += (want - glowMats[id].opacity) * k;
       }
+      people.update(elapsed, still);
       if (still) return;
       for (const b of blazes) {
         b.sprite.scale.setScalar(5.5 * (0.85 + 0.2 * Math.sin(elapsed * 9.1 + b.phase) + 0.1 * Math.sin(elapsed * 21 + b.phase)));
       }
-      if (spec.works === 'drill' && ranks.length > 0) {
-        // Companies advance on each other and fall back, each as one body
-        extras.soldiers.forEach((m, i) => {
-          const facing = m.c % 2 === 1 ? 1 : -1;
-          const swing = Math.sin(elapsed * 0.9 + m.c * 0.5);
-          dummy.position.set(m.x + facing * (0.9 + 0.9 * swing), 0.09 + Math.abs(Math.sin(elapsed * 5 + m.c)) * 0.05, m.z);
-          dummy.rotation.set(0, m.r, swing > 0.6 ? facing * -0.16 : 0);
-          dummy.scale.setScalar(1.12);
-          dummy.updateMatrix();
-          for (const mesh of ranks) mesh.setMatrixAt(i, dummy.matrix);
-        });
-        for (const mesh of ranks) mesh.instanceMatrix.needsUpdate = true;
-      }
-      for (const f of flags) f.mesh.rotation.y = f.base + Math.sin(elapsed * 1.9 + f.phase) * 0.24;
+      flagSet.update(elapsed);
       for (const l of lamps) {
-        l.sprite.scale.setScalar(2.6 * (0.9 + 0.14 * Math.sin(elapsed * 7.3 + l.phase) + 0.06 * Math.sin(elapsed * 17.1 + l.phase)));
+        l.sprite.scale.setScalar(LAMP_GLOW * (0.9 + 0.14 * Math.sin(elapsed * 7.3 + l.phase) + 0.06 * Math.sin(elapsed * 17.1 + l.phase)));
+      }
+      for (const ww of waterwheels) {
+        ww.rotation.x = elapsed * 0.72;
+      }
+      for (const pw of paddleWheels) {
+        pw.rotation.z = -elapsed * 1.15;
+      }
+      if (balloonGroup) {
+        balloonGroup.position.y = balloonBaseY + Math.sin(elapsed * 0.85) * 0.68;
+        balloonGroup.rotation.y = Math.sin(elapsed * 0.36) * 0.14;
+      }
+      if (balloonBurner) {
+        balloonBurner.scale.setScalar(4.4 * (0.88 + 0.18 * Math.sin(elapsed * 6.4)));
+      }
+      if (govBannerMesh) {
+        govBannerMesh.rotation.y = 0.18 + Math.sin(elapsed * 1.7 + 0.6) * 0.18;
+      }
+      if (wayfarerBeacon) {
+        wayfarerBeacon.scale.setScalar(4.8 * (0.9 + 0.16 * Math.sin(elapsed * 3.8)));
+      }
+      if (armillaryOuter && armillaryInner) {
+        armillaryOuter.rotation.y = elapsed * 0.55;
+        armillaryOuter.rotation.x = 0.42;
+        armillaryInner.rotation.x = elapsed * 0.85;
+        armillaryInner.rotation.z = -0.5;
       }
       placeSmoke(elapsed);
     },

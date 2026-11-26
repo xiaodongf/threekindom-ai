@@ -2,7 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowDownUp, Landmark, X } from 'lucide-react';
 import { UNREST_SUPPORT } from '../game/cityAspects.js';
 import { PROVINCES, PROVINCE_ORDER } from '../game/data.js';
-import { getCityGenerals, getFactionCities, getFactionIncomeBreakdown } from '../game/engine.js';
+import {
+  CITY_SPECIALTIES,
+  getCityGenerals,
+  getCityLandmark,
+  getFactionCities,
+  getFactionIncomeBreakdown,
+  getSummonableGeneralsForCity,
+} from '../game/engine.js';
 import {
   GOVERNOR_FOCI,
   GOVERNOR_SCORE_CEILING,
@@ -25,6 +32,7 @@ interface RealmTableProps {
   onOpenCity: (cityId: string) => void;
   onAppointGovernor: (cityId: string, generalId: string | null) => void;
   onSetFocus: (cityId: string, focus: GovernorFocus) => void;
+  onSummonOfficer?: (heroId: string, targetCityId: string) => void;
 }
 
 type SortKey = 'province' | 'troops' | 'farming' | 'trade' | 'defense' | 'drill' | 'support' | 'income';
@@ -41,6 +49,7 @@ export function RealmTable({
   onOpenCity,
   onAppointGovernor,
   onSetFocus,
+  onSummonOfficer,
 }: RealmTableProps) {
   const zh = lang === 'zh';
   const [sort, setSort] = useState<SortKey>('province');
@@ -166,6 +175,7 @@ export function RealmTable({
                 {head('defense', zh ? '城防' : 'Walls')}
                 {head('drill', zh ? '训练' : 'Drill')}
                 {head('support', zh ? '民心' : 'Support')}
+                <th className="px-2 py-2 font-semibold text-left">{zh ? '专署 / 古迹' : 'Ward / Landmark'}</th>
                 <th className="px-2 py-2 font-semibold text-left">{zh ? '太守' : 'Governor'}</th>
                 <th className="px-2 py-2 font-semibold text-left">{zh ? '所务' : 'Working on'}</th>
                 <th className="px-2 py-2 font-semibold text-left">{zh ? '进度' : 'Progress'}</th>
@@ -225,9 +235,91 @@ export function RealmTable({
                     >
                       {city.support}
                     </td>
+                    <td className="px-2 py-1.5 text-[11.5px]">
+                      {(() => {
+                        const specDef = city.specialty ? CITY_SPECIALTIES[city.specialty] : undefined;
+                        const landmark = getCityLandmark(city.id);
+                        if (!specDef && !landmark) {
+                          return <span className="text-slate-600">—</span>;
+                        }
+                        return (
+                          <div className="flex items-center gap-1.5">
+                            {specDef && (
+                              <span
+                                title={tLoc(specDef.summary, lang)}
+                                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 bg-amber-500/20 border border-amber-400/40 text-amber-200 font-semibold"
+                              >
+                                {tLoc(specDef.name, lang)}
+                              </span>
+                            )}
+                            {landmark && (
+                              <span
+                                title={tLoc(landmark.summary, lang)}
+                                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 bg-cyan-500/15 border border-cyan-400/35 text-cyan-200"
+                              >
+                                ◆ {tLoc(landmark.name, lang)}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td className="px-2 py-1.5">
                       {generals.length === 0 ? (
-                        <span className="text-[12px] text-rose-300">{zh ? '城中无将' : 'No general here'}</span>
+                        (() => {
+                          const summonable = onSummonOfficer
+                            ? getSummonableGeneralsForCity(state, state.playerFaction, city.id)
+                            : [];
+                          if (!onSummonOfficer || summonable.length === 0) {
+                            return (
+                              <span className="text-[12px] text-rose-300">
+                                {zh ? '城中无将' : 'No general here'}
+                              </span>
+                            );
+                          }
+                          const canSummon = canIssueOrders && state.actionPoints >= 1;
+                          return (
+                            <select
+                              aria-label={zh ? `调将入驻${city.name.zh}` : `Summon officer to ${city.name.en}`}
+                              className={`${selectClass} w-40 border-amber-400/40 text-amber-200`}
+                              disabled={!canSummon}
+                              title={
+                                !canIssueOrders
+                                  ? zh
+                                    ? '尚未轮到你下令'
+                                    : 'Not your turn'
+                                  : state.actionPoints < 1
+                                    ? zh
+                                      ? '调将入城需 1 点行动力'
+                                      : 'Summoning an officer costs 1 AP'
+                                    : zh
+                                      ? '消耗 1 点行动力调将入城并拜为太守'
+                                      : 'Spend 1 AP to summon an officer and appoint as governor'
+                              }
+                              value=""
+                              onChange={(e) => {
+                                if (e.target.value) onSummonOfficer(e.target.value, city.id);
+                              }}
+                            >
+                              <option value="">
+                                {zh
+                                  ? state.actionPoints >= 1
+                                    ? '＋ 调将入城（1令）'
+                                    : '城中无将（无军令）'
+                                  : state.actionPoints >= 1
+                                    ? '+ Summon (1 AP)'
+                                    : 'No officer (0 AP)'}
+                              </option>
+                              {summonable.map((cand) => (
+                                <option key={cand.general.id} value={cand.general.id}>
+                                  {zh
+                                    ? `${tLoc(cand.general.name, lang)} · 政${cand.general.politics} 统${cand.general.command}（自${cand.fromCity.name.zh}${cand.leavesOriginEmpty ? '·调后空城' : ''}）`
+                                    : `${tLoc(cand.general.name, lang)} · POL ${cand.general.politics} (from ${cand.fromCity.name.en}${cand.leavesOriginEmpty ? ' · leaves empty' : ''})`}
+                                </option>
+                              ))}
+                            </select>
+                          );
+                        })()
                       ) : (
                         <select
                           aria-label={zh ? `${city.name.zh}太守` : `Governor of ${city.name.en}`}

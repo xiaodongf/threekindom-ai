@@ -227,10 +227,38 @@ export interface City {
   event?: { kind: CityEventKind; seasonsLeft: number };
   /** Seasons the walls stay visibly broken after a bombardment or a storming. */
   wallScar?: number;
+  /** Chartered commandery specialization ward, preserved across conquest unless re-chartered. */
+  specialty?: CitySpecialtyId;
 }
+
+/** Constructible 1-of-5 specialization wards that give a commandery a distinct strategic role. */
+export type CitySpecialtyId = 'granary' | 'emporium' | 'armory' | 'academy' | 'bastion';
 
 /** Things that befall a city without anyone ordering them. */
 export type CityEventKind = 'harvest' | 'flood' | 'drought' | 'fair' | 'plague' | 'riot';
+
+/** Magistrate edicts that immediately resolve an active negative city event. */
+export type CityCrisisResolutionKind = 'quarantine' | 'waterworks' | 'amnesty' | 'suppress';
+
+export interface CityCrisisOption {
+  choice: CityCrisisResolutionKind;
+  title: LocalizedText;
+  desc: LocalizedText;
+  goldCost: number;
+  foodCost: number;
+  supportDelta: number;
+  drillDelta: number;
+  trustDelta: number;
+  discountReason?: LocalizedText;
+}
+
+export interface SummonableOfficerCandidate {
+  general: General;
+  fromCity: City;
+  governanceFit: number;
+  isOriginGovernor: boolean;
+  leavesOriginEmpty: boolean;
+}
 
 /** The five things a governor can spend a season on. */
 export type GovernorTask = 'farming' | 'trade' | 'walls' | 'drill' | 'relief';
@@ -489,6 +517,7 @@ export type AITurnActionType =
   | 'drill'
   | 'relief'
   | 'fortify'
+  | 'specialize'
   | 'reinforce'
   | 'hold';
 
@@ -498,6 +527,7 @@ export interface AITurnAction {
   targetCityId?: string;
   tactic?: TacticId;
   troopsRatio?: number;
+  specialty?: CitySpecialtyId;
 }
 
 export interface AITurnDecisionRequest {

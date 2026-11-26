@@ -72,6 +72,7 @@ import { TacticalVfxCanvas, type TacticalVfxEvent } from './TacticalVfxCanvas.js
 import { Art } from './ui/Art.js';
 import { CountUp } from './ui/CountUp.js';
 import { Seal } from './ui/Seal.js';
+import { useComfort } from '../utils/comfort.js';
 
 interface TacticalBattleModalProps {
   gameState: GameState;
@@ -250,6 +251,7 @@ export function TacticalBattleModal({
   } | null>(null);
 
   const [shakeAmp, setShakeAmp] = useState(5);
+  const comfort = useComfort();
   const [aiSpeed, setAiSpeed] = useState<1 | 2 | 4>(1);
   /** One blow in flight: who lunges, who is struck, and along which direction. */
   const [impact, setImpact] = useState<{
@@ -1060,7 +1062,7 @@ export function TacticalBattleModal({
               >
               <div
                 className={`relative w-full h-full scroll-mount overflow-hidden ${
-                  boardShaking ? 'anim-board-shake' : ''
+                  boardShaking && comfort.shake ? 'anim-board-shake' : ''
                 }`}
                 style={{ '--shake': `${shakeAmp}px` } as CSSProperties}
               >

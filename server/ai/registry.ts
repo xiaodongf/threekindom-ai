@@ -13,6 +13,8 @@ import type {
   ResolvedProviderId,
   TacticId,
 } from '../../src/game/types.js';
+import { CITY_SPECIALTY_IDS, canCharterSpecialty } from '../../src/game/citySpecialties.js';
+import { ACTION_COSTS } from '../../src/game/data.js';
 import {
   AI_TURN_SCHEMA,
   DIPLOMACY_RESPONSE_SCHEMA,
@@ -277,6 +279,18 @@ function validateAITurnAction(req: AITurnDecisionRequest, raw: Partial<AITurnAct
         targetCityId: target.id,
         troopsRatio: Math.min(0.6, Math.max(0.3, Number(raw.troopsRatio ?? 0.45))),
       };
+    }
+    return null;
+  }
+
+  if (raw.type === 'specialize' && raw.specialty) {
+    if (
+      CITY_SPECIALTY_IDS.includes(raw.specialty) &&
+      city.specialty !== raw.specialty &&
+      canCharterSpecialty(city, raw.specialty) &&
+      gameState.factions[factionId].gold >= ACTION_COSTS.specializeGold
+    ) {
+      return { type: 'specialize', cityId: city.id, specialty: raw.specialty };
     }
     return null;
   }

@@ -190,6 +190,14 @@ export interface TacticalBattleState {
   coalitionSide: TacticalSide | null;
   /** Attacker ATK bonus vs heroes whose historical flaw matches the chosen tactic (player attacks only). */
   chronoInsightAtk: number;
+  /** Extra defender Rampart DEF from Citadel Bastion or Sword Gate (Jiange). */
+  extraRampartDef?: number;
+  /** Extra defender DEF across the city board (e.g. Jianye Shitoucheng river bluff). */
+  defenderCityBonusDef?: number;
+  /** Staging Armory / Landmark bonuses for primary attacking squads. */
+  attackerStagingAllAtk?: number;
+  attackerStagingCavalryAtk?: number;
+  attackerStagingRiverAtk?: number;
   hasWaterFeature: boolean;
   grid: TacticalTile[][]; // 8 rows x 8 cols
   units: TacticalUnit[];

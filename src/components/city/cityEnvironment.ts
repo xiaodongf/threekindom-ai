@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { getQuality } from '../../utils/quality.js';
+import { createWater, setWaterDepth, type Water } from '../gfx/water.js';
+import { createWind, type Wind } from '../gfx/wind.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Season } from '../../game/types.js';
 import type { DisposeBag } from '../duel/duelGeometry3D.js';
@@ -16,6 +19,8 @@ export interface CityEnvironment {
   fog: THREE.FogExp2;
   exposure: number;
   heightAt(x: number, z: number): number;
+  /** The city's wind: trees and mist follow it here, flags elsewhere in the scene */
+  wind: Wind;
   update(dt: number, elapsed: number, still: boolean): void;
 }
 
@@ -118,6 +123,34 @@ function buildTreeGeometry(pine: boolean): THREE.BufferGeometry {
   parts.forEach((p) => p.dispose());
   merged.computeVertexNormals();
   return merged;
+}
+
+/** The sky's colours and lamps under each look. */
+function citySky(myth: boolean) {
+  return myth
+    ? { top: 0x10161a, horizon: 0x4a524e, glow: 0xb06c30, hemiSky: 0x9fb2bd, hemiGround: 0x2a2520, hemi: 1.5, sun: 0xffb877, sunPower: 5.6, fill: 0x8aa3b3, fillPower: 1.9 }
+    : { top: 0x3b5878, horizon: 0xe2b98a, glow: 0xff9a4a, hemiSky: 0xd6e4ff, hemiGround: 0x64533c, hemi: 2.1, sun: 0xffdcae, sunPower: 6.0, fill: 0xbfd2ee, fillPower: 1.5 };
+}
+
+/**
+ * What the city's surfaces see of the sky: used for image-based ambient light and for the glow
+ * in the ground haze toward the sun.
+ */
+export function cityAmbient(myth: boolean): {
+  skyStops: number[];
+  sunDir: THREE.Vector3;
+  sunColor: number;
+  horizon: number;
+  glow: number;
+} {
+  const sky = citySky(myth);
+  return {
+    skyStops: [sky.top, sky.horizon, sky.hemiGround, 0x0c0a08],
+    sunDir: SUN_DIR.clone(),
+    sunColor: sky.sun,
+    horizon: sky.horizon,
+    glow: sky.glow,
+  };
 }
 
 export function buildEnvironment(
@@ -228,54 +261,33 @@ export function buildEnvironment(
   group.add(groundMesh);
 
   // --- water: the river, and the moat it feeds
-  const rippleCanvas = document.createElement('canvas');
-  rippleCanvas.width = 128;
-  rippleCanvas.height = 128;
-  {
-    const ctx = rippleCanvas.getContext('2d')!;
-    ctx.fillStyle = 'rgb(206,206,206)';
-    ctx.fillRect(0, 0, 128, 128);
-    for (let i = 0; i < 150; i++) {
-      const v = rnd() < 0.5 ? 150 : 255;
-      ctx.fillStyle = `rgba(${v},${v},${v},${0.14 + rnd() * 0.2})`;
-      const y = rnd() * 128;
-      const x = rnd() * 128;
-      const w = 10 + rnd() * 34;
-      ctx.fillRect(x, y, w, 1.5);
-      ctx.fillRect(x - 128, y, w, 1.5);
-    }
-  }
-  const rippleTex = bag.add(new THREE.CanvasTexture(rippleCanvas));
-  rippleTex.wrapS = THREE.RepeatWrapping;
-  rippleTex.wrapT = THREE.RepeatWrapping;
-  rippleTex.colorSpace = THREE.SRGBColorSpace;
-  const waterMat = bag.add(
-    new THREE.MeshStandardMaterial({
-      color: spec.myth ? 0x5d7d82 : 0x6a9aa6,
-      map: rippleTex,
-      roughness: 0.2,
-      metalness: 0.1,
-      emissive: spec.myth ? 0x0e1c20 : 0x122830,
-    })
-  );
-  const water = (x: number, y: number, z: number, w: number, d: number) => {
-    const geo = bag.add(new THREE.PlaneGeometry(w, d));
+  const waterTone = spec.myth
+    ? { shallow: 0x6e8f92, deep: 0x243f47, emissive: 0x0e1c20 }
+    : { shallow: 0x86b6ba, deep: 0x2c6370, emissive: 0x122830 };
+  // The river runs south past the town; the moat it feeds barely moves
+  const riverWater = createWater({ ...waterTone, flow: new THREE.Vector2(0.25, 2.1), rippleSize: 3.2, chop: 0.7, foam: 0.75 });
+  const moatWater = createWater({ ...waterTone, flow: new THREE.Vector2(0.18, 0.1), rippleSize: 2.2, chop: 0.35 });
+  bag.add(riverWater.material);
+  bag.add(moatWater.material);
+  const water = (sheet: Water, x: number, y: number, z: number, w: number, d: number, banks: boolean) => {
+    // The river sheet is cut fine enough to follow its banks; a moat needs no more than a quad
+    const geo = bag.add(new THREE.PlaneGeometry(w, d, banks ? 14 : 1, banks ? Math.min(160, Math.round(d / 9)) : 1));
     geo.rotateX(-Math.PI / 2);
-    const uv = geo.attributes.uv as THREE.BufferAttribute;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) * w) / 14, (uv.getY(i) * d) / 14);
-    const m = new THREE.Mesh(geo, waterMat);
+    // Deep where the bed lies well under the surface, shallow where the bank comes up to meet it
+    setWaterDepth(geo, banks ? (px, _py, pz) => (y - heightAt(x + px, z + pz)) / 2.6 : () => 0.8);
+    const m = new THREE.Mesh(geo, sheet.material);
     m.position.set(x, y, z);
     m.receiveShadow = true;
     group.add(m);
   };
-  if (L.river) water(L.river.x, -0.9, 0, L.river.half * 2 + 70, SIZE);
+  if (L.river) water(riverWater, L.river.x, -0.9, 0, L.river.half * 2 + 70, SIZE, true);
   if (L.moat) {
     const mid = L.moat.inner + L.moat.width / 2;
     const span = (L.moat.inner + L.moat.width) * 2;
-    water(0, 0.06, mid, span, L.moat.width);
-    water(0, 0.06, -mid, span, L.moat.width);
-    water(mid, 0.06, 0, L.moat.width, span);
-    water(-mid, 0.06, 0, L.moat.width, span);
+    water(moatWater, 0, 0.06, mid, span, L.moat.width, false);
+    water(moatWater, 0, 0.06, -mid, span, L.moat.width, false);
+    water(moatWater, mid, 0.06, 0, L.moat.width, span, false);
+    water(moatWater, -mid, 0.06, 0, L.moat.width, span, false);
   }
 
   // --- woods
@@ -327,7 +339,10 @@ export function buildEnvironment(
   }
   for (const t of cityTrees) plant(t.x, 0, t.z, t.s, false);
 
+  const wind = bag.add(createWind(0.94, 0.34));
   const treeMat = bag.add(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92 }));
+  // Treetops lean down the wind and rock as the gusts pass
+  wind.sway(treeMat, { height: 5.4, amplitude: 0.3 });
   const grow = (pine: boolean, list: THREE.Matrix4[], tints: THREE.Color[]) => {
     if (list.length === 0) return;
     const geo = bag.add(buildTreeGeometry(pine));
@@ -346,9 +361,7 @@ export function buildEnvironment(
   grow(false, leafy, leafTint);
 
   // --- sky and light
-  const sky = spec.myth
-    ? { top: 0x10161a, horizon: 0x4a524e, glow: 0xb06c30, hemiSky: 0x9fb2bd, hemiGround: 0x2a2520, hemi: 1.5, sun: 0xffb877, sunPower: 5.6, fill: 0x8aa3b3, fillPower: 1.9 }
-    : { top: 0x3b5878, horizon: 0xe2b98a, glow: 0xff9a4a, hemiSky: 0xd6e4ff, hemiGround: 0x64533c, hemi: 2.1, sun: 0xffdcae, sunPower: 6.0, fill: 0xbfd2ee, fillPower: 1.5 };
+  const sky = citySky(spec.myth);
   const dome = new THREE.Mesh(
     bag.add(new THREE.SphereGeometry(1700, 32, 16)),
     bag.add(
@@ -398,8 +411,11 @@ export function buildEnvironment(
   const sun = new THREE.DirectionalLight(sky.sun, sky.sunPower);
   sun.position.copy(SUN_DIR).multiplyScalar(320);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  const reach = L.outer + 96;
+  // The shadow map covers the town and the ground just outside its walls, no more: every unit
+  // of reach given to far fields is taken from the sharpness of the shadows inside the walls.
+  const shadowSize = getQuality().shadowMapStatic;
+  sun.shadow.mapSize.set(shadowSize, shadowSize);
+  const reach = L.outer + 38;
   sun.shadow.camera.left = -reach;
   sun.shadow.camera.right = reach;
   sun.shadow.camera.top = reach;
@@ -407,7 +423,8 @@ export function buildEnvironment(
   sun.shadow.camera.near = 60;
   sun.shadow.camera.far = 640;
   sun.shadow.bias = -0.0005;
-  sun.shadow.normalBias = 0.35;
+  // Offset along the normal in step with the size of one shadow texel on the ground
+  sun.shadow.normalBias = Math.max(0.08, ((reach * 2) / shadowSize) * 2.2);
   bag.add(sun.shadow);
   group.add(sun, sun.target);
   // A cool light from the far side, so faces turned from the sun keep their form
@@ -426,7 +443,7 @@ export function buildEnvironment(
       depthWrite: false,
     })
   );
-  const mists: Array<{ sprite: THREE.Sprite; x: number; speed: number; span: number }> = [];
+  const mists: Array<{ sprite: THREE.Sprite; x: number; z: number; speed: number; span: number }> = [];
   const mistCount = spec.myth ? 30 : 14;
   for (let i = 0; i < mistCount; i++) {
     const overRiver = L.river && i % 3 === 0;
@@ -439,7 +456,7 @@ export function buildEnvironment(
     sprite.scale.set(size, size * 0.34, 1);
     sprite.position.set(x, Math.max(0, heightAt(x, z)) + 5 + rnd() * 9, z);
     group.add(sprite);
-    mists.push({ sprite, x, speed: 1.2 + rnd() * 2.2, span: 26 + rnd() * 30 });
+    mists.push({ sprite, x, z, speed: 1.2 + rnd() * 2.2, span: 26 + rnd() * 30 });
   }
 
   return {
@@ -447,12 +464,17 @@ export function buildEnvironment(
     fog: new THREE.FogExp2(sky.horizon, spec.myth ? 0.0021 : 0.0013),
     exposure: spec.myth ? 1.0 : 0.86,
     heightAt,
+    wind,
     update: (dt, elapsed, still) => {
       if (still) return;
-      rippleTex.offset.y = (elapsed * 0.035) % 1;
-      rippleTex.offset.x = Math.sin(elapsed * 0.11) * 0.02;
+      wind.update(elapsed);
+      riverWater.update(elapsed);
+      moatWater.update(elapsed);
       for (const m of mists) {
-        m.sprite.position.x = m.x + Math.sin(elapsed * 0.02 * m.speed + m.span) * m.span;
+        // Mist banks ease down the wind and back
+        const drift = Math.sin(elapsed * 0.02 * m.speed + m.span) * m.span;
+        m.sprite.position.x = m.x + wind.direction.x * drift;
+        m.sprite.position.z = m.z + wind.direction.y * drift;
       }
       void dt;
     },

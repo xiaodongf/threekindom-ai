@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeRigid, type DisposeBag, type PaletteMaterials } from '../duel/duelGeometry3D.js';
+import { bakeVertexOcclusion } from '../gfx/bakedOcclusion.js';
 
 /**
  * The building kit for the city close-up: a handful of shared textures and materials, and the
@@ -446,6 +447,11 @@ export function createCityBuildKit(bag: DisposeBag): CityKit {
     },
     finish: (group) => {
       mergeRigid(group, surfaces as unknown as PaletteMaterials, bag);
+      // Shade the corners, wall feet and eaves once, into the colours the vertices carry
+      bakeVertexOcclusion(
+        group.children.filter((child): child is THREE.Mesh => (child as THREE.Mesh).isMesh),
+        { cell: 0.9, ground: 0, strength: 0.6 }
+      );
       for (const child of group.children) {
         const mesh = child as THREE.Mesh;
         if (!mesh.isMesh) continue;

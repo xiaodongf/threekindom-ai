@@ -2,9 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { prefersReducedMotion } from '../utils/motion.js';
+import { createFrameGovernor, getQuality, useQualityTier } from '../utils/quality.js';
+import { cityAmbient } from './city/cityEnvironment.js';
 import { DISTRICT_ORDER, citySpecKey, type CitySpec, type DistrictId } from './city/cityLayout.js';
 import { buildCityWorld, type CityWorld } from './city/cityScene.js';
 import { createDuelPostFx } from './duel/duelVfx3D.js';
+import { createHeightFog } from './gfx/heightFog.js';
+import { createSceneEnvironment, type SceneEnvironment } from './gfx/sceneEnvironment.js';
+import { applyToneMapping, toneExposure } from './gfx/toneMapping.js';
 import { Seal } from './ui/Seal.js';
 
 export interface DistrictLabel {
@@ -57,6 +62,7 @@ export function CityStage3D({
   const [failed, setFailed] = useState(false);
   const [hover, setHover] = useState<DistrictId | null>(null);
 
+  const qualityTier = useQualityTier();
   const live = useRef({ spec, selected, insetRight, onSelect, onLeave });
   live.current = { spec, selected, insetRight, onSelect, onLeave };
 
@@ -75,13 +81,14 @@ export function CityStage3D({
 
     let disposed = false;
     let rafId = 0;
-    let pixelRatio = Math.min(1.5, window.devicePixelRatio || 1);
+    const quality = getQuality();
+    let pixelRatio = Math.min(1.5, quality.pixelRatioCap, window.devicePixelRatio || 1);
     let width = container.clientWidth || 960;
     let height = container.clientHeight || 600;
     renderer.setPixelRatio(pixelRatio);
     renderer.setSize(width, height);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    applyToneMapping(renderer);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     // Nothing that casts a shadow moves, so the shadow map is drawn once per build
@@ -108,13 +115,22 @@ export function CityStage3D({
     };
     controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 
-    let post = createDuelPostFx(renderer, scene, camera, width, height);
-    const dressPost = () => {
-      post.grade.uniforms.uVignette.value = 0.34;
-      post.grade.uniforms.uSaturation.value = 1.04;
-      post.bloom.strength = 0.34;
-    };
-    dressPost();
+    const post = createDuelPostFx(renderer, scene, camera, width, height, {
+      samples: quality.msaaSamples,
+      bloomScale: quality.bloomScale,
+      myth: live.current.spec.myth,
+    });
+    post.grade.uniforms.uVignette.value = 0.34;
+    post.grade.uniforms.uSaturation.value = 1.04;
+    post.bloom.strength = 0.34;
+
+    // Ambient light from the sky, and haze that lies in the low ground and thickens toward the
+    // horizon; both follow the look the city is built under
+    let environment: SceneEnvironment | null = null;
+    let environmentMyth: boolean | null = null;
+    const heightFog = createHeightFog({ falloff: 0.05, density: 0.001 });
+    /** True while the shaders of a freshly built city are still compiling */
+    let compiling = false;
 
     let world: CityWorld | null = null;
     let buildMs = 0;
@@ -159,8 +175,32 @@ export function CityStage3D({
       scene.add(world.group);
       scene.fog = world.fog;
       scene.background = world.fog.color;
-      renderer.toneMappingExposure = world.exposure;
+      renderer.toneMappingExposure = toneExposure(world.exposure);
       renderer.shadowMap.needsUpdate = true;
+
+      const myth = cur.spec.myth;
+      post.setMyth(myth);
+      if (environmentMyth !== myth) {
+        environment?.dispose();
+        const ambient = cityAmbient(myth);
+        environment = createSceneEnvironment(renderer, ambient);
+        environmentMyth = myth;
+        scene.environment = environment.texture;
+        scene.environmentIntensity = myth ? 0.4 : 0.32;
+        heightFog.set({
+          density: myth ? 0.0022 : 0.0009,
+          sunDir: ambient.sunDir,
+          sunColor: new THREE.Color(ambient.horizon).lerp(new THREE.Color(ambient.glow), 0.6),
+          sunAmount: myth ? 0.5 : 0.35,
+        });
+      }
+      heightFog.apply(world.group);
+      // Compile the new city's shaders off the main thread; the last frame stays up meanwhile
+      compiling = true;
+      const done = () => {
+        compiling = false;
+      };
+      renderer.compileAsync(scene, camera).then(done, done);
 
       const outer = world.layout.outer;
       overview = outer * 3.7 + 34;
@@ -246,9 +286,8 @@ export function CityStage3D({
       camera.aspect = width / height;
       renderer.setPixelRatio(pixelRatio);
       renderer.setSize(width, height);
-      post.dispose();
-      post = createDuelPostFx(renderer, scene, camera, width, height);
-      dressPost();
+      post.setPixelRatio(pixelRatio);
+      post.setSize(width, height);
       viewShift = -1;
     };
     const resizeObserver = new ResizeObserver(() => {
@@ -272,8 +311,11 @@ export function CityStage3D({
 
     let lastTs = performance.now();
     let elapsed = 0;
-    let frames = 0;
-    let frameMsAcc = 0;
+    const governor = createFrameGovernor(() => {
+      if (pixelRatio <= 1) return;
+      pixelRatio = 1;
+      resize();
+    });
     let shownShift = 0;
     let firstFrame = true;
 
@@ -291,15 +333,10 @@ export function CityStage3D({
         // A rebuild is one long frame; leave it out of the frame-rate measure
         return;
       }
-      if (!world) return;
+      if (!world || compiling) return;
 
       // Settle on a cheaper resolution if this machine cannot hold the frame rate
-      frames += 1;
-      if (frames > 40 && frames <= 160) frameMsAcc += rawDt * 1000;
-      if (frames === 160 && frameMsAcc / 120 > 24 && pixelRatio > 1) {
-        pixelRatio = 1;
-        resize();
-      }
+      governor(rawDt * 1000);
 
       if (cur.selected !== lastSelected) {
         lastSelected = cur.selected;
@@ -390,11 +427,13 @@ export function CityStage3D({
       controls.dispose();
       world?.dispose();
       post.dispose();
+      environment?.dispose();
       renderer.dispose();
     };
-    // Built once: the city's numbers, the chosen district and the panel width are read each frame.
+    // Built once per quality setting: the city's numbers, the chosen district and the panel
+    // width are read each frame.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [qualityTier]);
 
   if (failed) return null;
 

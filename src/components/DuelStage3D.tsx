@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { getHeroDuelProfile } from '../game/heroDuelProfiles.js';
 import type { General, Language, TerrainType } from '../game/types.js';
 import { battleAudio } from '../utils/battleAudio.js';
+import { createFlashLimiter, shakeScale } from '../utils/comfort.js';
+import { createFrameGovernor, getQuality, useQualityTier } from '../utils/quality.js';
 import { buildDuelArena3D, getArenaLook } from './duel/duelArena3D.js';
 import {
   FINALE_DURATION,
@@ -16,7 +18,6 @@ import {
 import { DisposeBag } from './duel/duelGeometry3D.js';
 import type { MountedGeneralRig3D } from './duel/duelModels3D.js';
 import { applyRigPose3D, buildMountedGeneralRig3D, flashRig } from './duel/duelModels3D.js';
-import { createSkyDomeTexture } from './duel/duelTextures3D.js';
 import type {
   DuelCalloutBanner,
   DuelCutInState,
@@ -26,6 +27,10 @@ import type {
   SampledDuelFrame,
 } from './duel/duelTypes.js';
 import { createDuelPostFx, createDuelVfx } from './duel/duelVfx3D.js';
+import { createContactShadow } from './gfx/contactShadow.js';
+import { createHeightFog, readBackdropStrip } from './gfx/heightFog.js';
+import { createSceneEnvironment } from './gfx/sceneEnvironment.js';
+import { applyToneMapping, toneExposure } from './gfx/toneMapping.js';
 import { Art } from './ui/Art.js';
 import { bestArt } from '../utils/art.js';
 
@@ -74,6 +79,8 @@ interface StageState {
   /** Visual QA only: [posX, posY, posZ, lookX, lookY, lookZ, fov] overriding the cinematic camera */
   debugCam: number[] | null;
   debugFrameMs: number;
+  /** Visual QA only: milliseconds from building the scene to its first frame */
+  debugStartMs: number;
 }
 
 export function DuelStage3D({
@@ -132,8 +139,10 @@ export function DuelStage3D({
     debugFrozen: false,
     debugCam: null,
     debugFrameMs: 0,
+    debugStartMs: 0,
   });
 
+  const qualityTier = useQualityTier();
   const atkProfile = useMemo(() => getHeroDuelProfile(attacker), [attacker]);
   const defProfile = useMemo(() => getHeroDuelProfile(defender), [defender]);
 
@@ -179,14 +188,15 @@ export function DuelStage3D({
     }
 
     const bag = new DisposeBag();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const quality = getQuality();
+    let dpr = Math.min(quality.pixelRatioCap, window.devicePixelRatio || 1);
     const width = container.clientWidth || 840;
     const height = container.clientHeight || 400;
     renderer.setPixelRatio(dpr);
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    applyToneMapping(renderer);
 
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
@@ -196,34 +206,21 @@ export function DuelStage3D({
     let revealed = false;
 
     const scene = new THREE.Scene();
-    const arena = buildDuelArena3D(attacker, defender, terrain, isNight, bag);
+    const arena = buildDuelArena3D(attacker, defender, terrain, isNight, bag, quality.crowd);
     const look = arena.look;
     scene.add(arena.group);
     scene.fog = new THREE.FogExp2(look.fog, look.fogDensity);
     scene.background = new THREE.Color(look.skyStops[0]);
-    renderer.toneMappingExposure = look.exposure;
+    renderer.toneMappingExposure = toneExposure(look.exposure);
 
     // Image-based lighting from the battlefield's own sky, so armour and steel reflect the scene
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const envScene = new THREE.Scene();
-    const envSky = new THREE.Mesh(
-      bag.add(new THREE.SphereGeometry(20, 24, 16)),
-      bag.add(
-        new THREE.MeshBasicMaterial({
-          map: createSkyDomeTexture([look.skyStops[0], look.skyStops[2], look.fog, look.groundInner, '#0c0a08'], bag),
-          side: THREE.BackSide,
-        })
-      )
-    );
     const sunDir = new THREE.Vector3(...look.sunPos).normalize();
-    const envSun = new THREE.Mesh(
-      bag.add(new THREE.SphereGeometry(2.4, 12, 10)),
-      bag.add(new THREE.MeshBasicMaterial({ color: new THREE.Color(look.sunColor).multiplyScalar(5) }))
-    );
-    envSun.position.copy(sunDir).multiplyScalar(17);
-    envScene.add(envSky, envSun);
-    const envTarget = pmrem.fromScene(envScene, 0.03);
-    scene.environment = envTarget.texture;
+    const environment = createSceneEnvironment(renderer, {
+      skyStops: [look.skyStops[0], look.skyStops[2], look.fog, look.groundInner, '#0c0a08'],
+      sunDir,
+      sunColor: look.sunColor,
+    });
+    scene.environment = environment.texture;
     scene.environmentIntensity = 0.8;
 
     const camera = new THREE.PerspectiveCamera(34, width / height, 0.2, 200);
@@ -235,7 +232,7 @@ export function DuelStage3D({
     const sun = new THREE.DirectionalLight(look.sunColor, look.sunIntensity);
     sun.position.copy(sunDir).multiplyScalar(30);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(quality.shadowMapLive, quality.shadowMapLive);
     sun.shadow.camera.near = 2;
     sun.shadow.camera.far = 70;
     sun.shadow.camera.left = -13;
@@ -264,11 +261,34 @@ export function DuelStage3D({
     rightRig.root.scale.z = -1;
     scene.add(leftRig.root, rightRig.root);
 
+    // A patch of shade directly under each horse: the low sun throws its shadow far behind,
+    // and without this the hooves do not seem to touch the ground
+    const contactShadows = [leftRig, rightRig].map((rig) => {
+      const shade = createContactShadow(3.3, 1.5, 0.5);
+      scene.add(shade.mesh);
+      return { rig, shade };
+    });
+
     const vfx = createDuelVfx(scene, bag, look.dust, look.ember);
     const leftRibbon = vfx.createRibbon();
     const rightRibbon = vfx.createRibbon();
-    const post = createDuelPostFx(renderer, scene, camera, width, height);
+    const post = createDuelPostFx(renderer, scene, camera, width, height, {
+      samples: quality.msaaSamples,
+      bloomScale: quality.bloomScale,
+    });
     const grade = post.grade.uniforms;
+
+    // Fog that lies on the ground and takes its far colour from the painted horizon, so the
+    // field fades into the painting instead of ending at a line in front of it
+    const heightFog = createHeightFog({
+      falloff: 0.55,
+      density: 0.006 + look.mist * 0.034,
+      sunDir,
+      sunColor: new THREE.Color(look.fog).lerp(new THREE.Color(look.sunColor), 0.5),
+      sunAmount: 0.3 + look.mist * 0.25,
+    });
+    let backdropStrip: THREE.DataTexture | null = null;
+    let stripTries = 0;
 
     // Chrono-Insight: the predicted arc of the enemy's blow, dynamically tracking live weapon tip -> chest
     const chronoArcMat = bag.add(
@@ -393,8 +413,19 @@ export function DuelStage3D({
     }
 
     battleAudio.playWarDrum(0.24);
+    heightFog.apply(scene);
 
+    // If this machine cannot hold the frame rate, drop to one device pixel per pixel, once
+    const governor = createFrameGovernor(() => {
+      if (dpr <= 1) return;
+      dpr = 1;
+      renderer.setPixelRatio(1);
+      post.setPixelRatio(1);
+    });
+
+    const mayFlash = createFlashLimiter();
     let rafId = 0;
+    let cancelled = false;
     let lastTime = performance.now();
     let totalElapsed = 0;
     let hoofSoundCooldown = 0;
@@ -411,9 +442,19 @@ export function DuelStage3D({
     const animate = (now: number) => {
       rafId = requestAnimationFrame(animate);
       const frameStart = performance.now();
+      governor(now - lastTime);
       const rawDt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
       lastTime = now;
       const st = stateRef.current;
+
+      // The painted horizon loads on its own time; once it is in, hand its colours to the fog
+      if (!backdropStrip && stripTries < 600) {
+        stripTries += 1;
+        backdropStrip = readBackdropStrip(arena.backdrop.texture, arena.backdrop.horizonV, arena.backdrop.tint);
+        if (backdropStrip) {
+          heightFog.setBackdropStrip({ texture: backdropStrip, repeat: 1 / arena.backdrop.arc, amount: 0.9, near: 14, far: 40 });
+        }
+      }
 
       // Hit-stop: the fighters freeze on the blow while sparks and camera keep moving
       let simDt = rawDt * speedRef.current;
@@ -554,7 +595,8 @@ export function DuelStage3D({
                 flashRig(leftRig, 0.5);
                 flashRig(rightRig, 0.5);
               }
-              st.flash = Math.max(st.flash, b.kind === 'skill' ? 0.16 : 0.07);
+              // Never more than three full-frame flashes a second, and none if flashes are off
+              if (mayFlash(now)) st.flash = Math.max(st.flash, b.kind === 'skill' ? 0.16 : 0.07);
             }
 
             clashLight.position.copy(point).add(va.set(0, 0.2, 0.8));
@@ -705,29 +747,27 @@ export function DuelStage3D({
         clashLight.intensity = 0;
       }
 
-      // Banners, cheering ranks, torch flicker
-      const windSpeed = 3.0 + sampled.bannerCheer * 3.6;
-      for (const b of arena.banners) {
-        const posAttr = b.mesh.geometry.attributes.position as THREE.BufferAttribute;
-        for (let i = 0; i < posAttr.count; i++) {
-          const bx = b.basePositions[i * 3];
-          const by = b.basePositions[i * 3 + 1];
-          const loose = Math.max(0, (1.6 - by) / 3.2);
-          const wave = Math.sin(totalElapsed * windSpeed + by * 2.0 + b.phase) * 0.3 * loose;
-          posAttr.setXYZ(i, bx + wave * 0.3, by, wave);
-        }
-        posAttr.needsUpdate = true;
-        b.mesh.geometry.computeVertexNormals();
-      }
+      // Banners, cheering ranks, torch flicker: the wind freshens when the armies roar
+      arena.wind.update(totalElapsed, 1 + sampled.bannerCheer * 0.9);
+      arena.camp.update(totalElapsed);
       const cheer = sampled.bannerCheer > 0.15 ? sampled.bannerCheer : 0;
-      arena.spectators.left.position.y = Math.abs(Math.sin(totalElapsed * 8.5)) * 0.16 * cheer;
-      arena.spectators.right.position.y = Math.abs(Math.sin(totalElapsed * 8.5 + 1.2)) * 0.16 * cheer;
+      for (const figures of [...arena.crowds.left, ...arena.crowds.right]) {
+        figures.uniforms.uFigTime.value = totalElapsed;
+        figures.uniforms.uFigCheer.value += (cheer - figures.uniforms.uFigCheer.value) * Math.min(1, rawDt * 6);
+      }
       arena.brazierLights.forEach((l, idx) => {
         l.intensity = 26 + Math.sin(totalElapsed * 12 + idx * 2.1) * 5 + Math.sin(totalElapsed * 31 + idx) * 3;
       });
       arena.brazierFlames.forEach((fl, idx) => {
-        fl.scale.set(1, 0.86 + Math.sin(totalElapsed * 15 + idx * 1.9) * 0.24, 1);
+        const lick = Math.sin(totalElapsed * 15 + idx * 1.9);
+        fl.scale.set(1 - lick * 0.07, 0.9 + lick * 0.2 + Math.sin(totalElapsed * 23 + idx) * 0.06, 1 - lick * 0.07);
+        fl.rotation.y = totalElapsed * 0.9 + idx;
       });
+      for (const c of contactShadows) {
+        c.rig.root.getWorldPosition(vc);
+        c.shade.mesh.position.set(vc.x, 0.02, vc.z);
+        c.shade.mesh.rotation.y = c.rig.root.rotation.y;
+      }
 
       // -------------------------------------------------- camera rig
       let tx = sampled.camera.posX;
@@ -765,7 +805,7 @@ export function DuelStage3D({
       st.cameraShake = Math.max(0, st.cameraShake - rawDt * 2.4);
       st.punch = Math.max(0, st.punch - rawDt * 4.5);
       st.flash = Math.max(0, st.flash - rawDt * 3.2);
-      const trauma = st.cameraShake * st.cameraShake;
+      const trauma = st.cameraShake * st.cameraShake * shakeScale();
       const e = now * 0.001;
       const shakeX = (Math.sin(e * 47.1) + Math.sin(e * 83.7 + 1.3)) * 0.5 * trauma * 0.3;
       const shakeY = (Math.sin(e * 53.9 + 2.1) + Math.sin(e * 71.3)) * 0.5 * trauma * 0.24;
@@ -818,9 +858,19 @@ export function DuelStage3D({
     };
     const va2 = new THREE.Vector2();
 
-    rafId = requestAnimationFrame(animate);
+    // Compile the scene's shaders off the main thread before the first frame, so the duel
+    // opens on its painted still and then plays without a stall
+    const builtAt = performance.now();
+    const start = () => {
+      if (cancelled) return;
+      stateRef.current.debugStartMs = performance.now() - builtAt;
+      lastTime = performance.now();
+      rafId = requestAnimationFrame(animate);
+    };
+    renderer.compileAsync(scene, camera).then(start, start);
 
     return () => {
+      cancelled = true;
       cancelAnimationFrame(rafId);
       ro.disconnect();
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
@@ -828,12 +878,13 @@ export function DuelStage3D({
       window.removeEventListener('pointerup', onPointerUp);
       if (isDemo) delete (window as unknown as { __duelStage?: unknown }).__duelStage;
       post.dispose();
-      envTarget.dispose();
-      pmrem.dispose();
+      environment.dispose();
+      backdropStrip?.dispose();
+      contactShadows.forEach((c) => c.shade.dispose());
       bag.dispose();
       renderer.dispose();
     };
-  }, [attacker, defender, terrain, isNight, atkProfile, defProfile]);
+  }, [attacker, defender, terrain, isNight, atkProfile, defProfile, qualityTier]);
 
   const stillUrl = getArenaLook(terrain, isNight).panoUrl;
 

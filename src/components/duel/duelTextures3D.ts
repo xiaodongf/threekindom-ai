@@ -373,6 +373,38 @@ export function createPaintedPanoramaTexture(
   return bag.add(tex);
 }
 
+/**
+ * A flame on a card: a white-hot core low in the middle, falling off through yellow and orange
+ * to nothing at the edges and the tip. Drawn additively, so only the core is bright enough to
+ * bloom and the rest of the flame keeps its colour.
+ */
+export function createFlameTexture(bag: DisposeBag): THREE.CanvasTexture {
+  const [c, ctx] = makeCanvas(64, 128);
+  ctx.globalCompositeOperation = 'lighter';
+  // Three stacked lobes, each a stretched radial falloff: broad base, narrowing body, thin tip
+  const lobes: Array<[number, number, number, number, string, string]> = [
+    [104, 24, 1.0, 0.55, '255,170,70', '255,80,20'],
+    [80, 16, 2.4, 0.6, '255,205,120', '255,110,30'],
+    [50, 9, 4.6, 0.42, '255,190,110', '255,90,20'],
+    [100, 9, 2.0, 0.9, '255,250,225', '255,200,110'],
+  ];
+  for (const [cy, r, stretch, alpha, inner, outer] of lobes) {
+    ctx.save();
+    ctx.translate(32, cy);
+    ctx.scale(1, stretch);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+    g.addColorStop(0, `rgba(${inner},${alpha})`);
+    g.addColorStop(0.55, `rgba(${outer},${alpha * 0.45})`);
+    g.addColorStop(1, `rgba(${outer},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  return finish(bag, c);
+}
+
 /** Vertical sky gradient for the dome above the painted horizon. */
 export function createSkyDomeTexture(stops: string[], bag: DisposeBag): THREE.CanvasTexture {
   const [c, ctx] = makeCanvas(8, 256);

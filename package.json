@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "optimize:art": "node scripts/optimize-art.mjs",
     "portraits:standin": "tsx scripts/make-standin-portraits.ts",
-    "build:terrain": "node scripts/build-terrain.mjs"
+    "build:terrain": "node scripts/build-terrain.mjs",
+    "capture": "node --experimental-websocket scripts/capture-scenes.mjs"
   },
   "dependencies": {
     "@google/genai": "^3.6.1",

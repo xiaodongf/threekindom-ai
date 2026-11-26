@@ -1,4 +1,10 @@
 import { drillMoraleBonus } from './cityAspects.js';
+import {
+  cityExtraGateHp,
+  cityExtraRampartDef,
+  cityRiverDefenseBonus,
+  cityStagingAtkBonuses,
+} from './citySpecialties.js';
 import { HERO_BONDS } from './heroes.js';
 import { factionHasTech, getChronoInsightBonus, getCityGenerals } from './queries.js';
 import type {
@@ -38,6 +44,8 @@ import type {
 /** Gate hit points: a Lv.3 wall takes about three solid blows to break; each Fortify level adds more. */
 export const GATE_BASE_HP = 1500;
 export const GATE_HP_PER_DEFENSE = 600;
+/** Fraction of full Gate HP remaining when a city enters battle with scarred/breached walls (`wallScar > 0`). */
+export const WALL_SCAR_GATE_FACTOR = 0.7;
 /** Share of a blow that also batters the gate when its target is standing in the gateway. */
 export const GATE_SPLASH_SHARE = 0.5;
 /**
@@ -294,7 +302,9 @@ export function generateCityTacticalGrid(
   cityId: string,
   terrain: 'plains' | 'mountain' | 'river' | 'fortress',
   cityDefense: number,
-  isRiverStrike = false
+  isRiverStrike = false,
+  wallBreached = false,
+  extraGateHp = 0
 ): { grid: TacticalTile[][]; hasWaterFeature: boolean } {
   const hasWaterFeature =
     terrain === 'river' || WATER_ADJACENT_CITY_IDS.has(cityId) || isRiverStrike;
@@ -310,13 +320,19 @@ export function generateCityTacticalGrid(
 
   const setT = (r: number, c: number, type: TacticalTileType) => {
     if (!inBounds(r, c)) return;
+    const fullGateHp = GATE_BASE_HP + cityDefense * GATE_HP_PER_DEFENSE + extraGateHp;
     grid[r][c] = {
       row: r,
       col: c,
       type,
       fireTurns: 0,
-      gateHp: type === 'gate' ? GATE_BASE_HP + cityDefense * GATE_HP_PER_DEFENSE : undefined,
-      gateMaxHp: type === 'gate' ? GATE_BASE_HP + cityDefense * GATE_HP_PER_DEFENSE : undefined,
+      gateHp:
+        type === 'gate'
+          ? wallBreached
+            ? Math.max(1, Math.round(fullGateHp * WALL_SCAR_GATE_FACTOR))
+            : fullGateHp
+          : undefined,
+      gateMaxHp: type === 'gate' ? fullGateHp : undefined,
     };
   };
 
@@ -536,11 +552,16 @@ export function createTacticalBattle(
   rng: () => number = Math.random
 ): TacticalBattleState {
   const targetCity = gameState.cities[config.toCityId];
+  const stagingCity = gameState.cities[config.fromCityId];
+  const wallBreached = Boolean(targetCity?.wallScar && targetCity.wallScar > 0);
+  const extraGateHp = targetCity ? cityExtraGateHp(targetCity) : 0;
   const { grid, hasWaterFeature } = generateCityTacticalGrid(
     config.toCityId,
     targetCity?.terrain ?? 'plains',
     targetCity?.defense ?? 3,
-    Boolean(config.isRiverStrike)
+    Boolean(config.isRiverStrike),
+    wallBreached,
+    extraGateHp
   );
 
   const atkGunpowder = factionHasTech(gameState, config.attackerFaction, 'gunpowder');
@@ -769,6 +790,7 @@ export function createTacticalBattle(
         : null;
   const chronoInsightAtk =
     config.attackerFaction === playerFaction ? getChronoInsightBonus(gameState) * 0.75 : 0;
+  const stagingAtk = cityStagingAtkBonuses(stagingCity);
 
   return {
     config,
@@ -778,6 +800,11 @@ export function createTacticalBattle(
     breached: false,
     coalitionSide,
     chronoInsightAtk,
+    extraRampartDef: targetCity ? cityExtraRampartDef(targetCity) : 0,
+    defenderCityBonusDef: targetCity ? cityRiverDefenseBonus(targetCity) : 0,
+    attackerStagingAllAtk: stagingAtk.allAtk,
+    attackerStagingCavalryAtk: stagingAtk.cavalryAtk,
+    attackerStagingRiverAtk: stagingAtk.riverStrikeAtk,
     hasWaterFeature,
     grid,
     units,
@@ -827,7 +854,7 @@ export function isIntactGate(tile: TacticalTile): boolean {
 export const RAMPART_BASE_DEF = 0.3;
 export const RAMPART_DEF_PER_LEVEL = 0.2;
 export function getRampartDefBonus(state: TacticalBattleState): number {
-  return RAMPART_BASE_DEF + RAMPART_DEF_PER_LEVEL * state.cityDefense;
+  return RAMPART_BASE_DEF + RAMPART_DEF_PER_LEVEL * state.cityDefense + (state.extraRampartDef ?? 0);
 }
 
 /** Does this squad currently enjoy the protection of the city's works? */
@@ -1209,6 +1236,44 @@ export function previewAttack(
       value: '+12% DEF',
       positive: false,
     });
+  }
+  if (defender.side === 'defender' && (state.defenderCityBonusDef ?? 0) > 0) {
+    defMult += state.defenderCityBonusDef!;
+    principles.push({
+      id: 'city_landmark_def',
+      label: { en: 'Shitoucheng River Bluff', zh: '石头城天险' },
+      value: `+${Math.round(state.defenderCityBonusDef! * 100)}% DEF`,
+      positive: false,
+    });
+  }
+  if (attacker.side === 'attacker' && !attacker.isFlankSquad) {
+    if ((state.attackerStagingAllAtk ?? 0) > 0) {
+      atkMult += state.attackerStagingAllAtk!;
+      principles.push({
+        id: 'staging_armory',
+        label: { en: 'Warhorse Stud & Armory', zh: '牧苑武库精械' },
+        value: `+${Math.round(state.attackerStagingAllAtk! * 100)}% ATK`,
+        positive: true,
+      });
+    }
+    if ((state.attackerStagingCavalryAtk ?? 0) > 0 && attacker.unitClass === 'cavalry') {
+      atkMult += state.attackerStagingCavalryAtk!;
+      principles.push({
+        id: 'staging_hexi_cavalry',
+        label: { en: 'Hexi Warhorse Pastures', zh: '河西健马铁骑' },
+        value: `+${Math.round(state.attackerStagingCavalryAtk! * 100)}% ATK`,
+        positive: true,
+      });
+    }
+    if ((state.attackerStagingRiverAtk ?? 0) > 0 && state.config.isRiverStrike) {
+      atkMult += state.attackerStagingRiverAtk!;
+      principles.push({
+        id: 'staging_chaisang_fleet',
+        label: { en: 'Chaisang Naval Stockade', zh: '赤壁水寨精兵' },
+        value: `+${Math.round(state.attackerStagingRiverAtk! * 100)}% ATK`,
+        positive: true,
+      });
+    }
   }
   const bond = getActiveUnitBond(state, attacker);
   if (bond) {

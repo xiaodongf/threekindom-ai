@@ -2,6 +2,7 @@ import {
   ACTION_COSTS,
   COALITION_CITY_THRESHOLD,
   NEUTRAL_GARRISON_CAP,
+  RIVER_LINKS,
   TACTICS,
   VICTORY_CITY_TARGET,
   YANGTZE_PORT_IDS,
@@ -22,7 +23,6 @@ import {
   FOOD_PER_FARMING_LEVEL,
   GOLD_PER_TRADE_LEVEL,
   LEVY_PER_PROSPERITY,
-  RAW_LEVY_DRILL,
   RELIEF_ORDER_GAIN,
   SUPPORT_AFTER_CONQUEST,
   SUPPORT_COST_BOMBARD,
@@ -47,14 +47,39 @@ import {
   beginCityEvent,
   cityEventChronicle,
   eventIncomeFactor,
+  getCityCrisisOptions,
   rollCityEvent,
 } from './cityEvents.js';
+import {
+  CITY_LANDMARKS,
+  CITY_SPECIALTIES,
+  CITY_SPECIALTY_IDS,
+  SPECIALTY_PROSPERITY_MIN,
+  canCharterSpecialty,
+  cityDrillFloor,
+  cityEconomyOrderGoldCost,
+  cityExtraGateHp,
+  cityExtraRampartDef,
+  cityIncomeMultipliers,
+  cityLevyMultiplier,
+  cityRaidBombardLossFactor,
+  cityRawLevyDrill,
+  cityRecruitFoodCost,
+  cityRiverStrikeFoodCost,
+  cityStagingAtkBonuses,
+  cityUpkeepFactor,
+  getCityLandmark,
+  isCityEligibleForAnySpecialty,
+  seasonAcademyInnovationGain,
+} from './citySpecialties.js';
 import { pickSeasonalStoryEvent } from './events.js';
 import {
   GOVERNOR_FOCI,
   applyGovernorSeason,
+  aspectWorksProgress,
   canGovern,
   getCityGovernor,
+  getSummonableGeneralsForCity,
   governorPlanOf,
 } from './governors.js';
 import {
@@ -67,6 +92,7 @@ import {
 import {
   GATE_BASE_HP,
   GATE_HP_PER_DEFENSE,
+  WALL_SCAR_GATE_FACTOR,
   ASSAULT_PLAN_ATK,
   RAMPART_BASE_DEF,
   RAMPART_DEF_PER_LEVEL,
@@ -86,6 +112,9 @@ import type {
   ChronicleEntry,
   ChronoState,
   City,
+  CityCrisisOption,
+  CityCrisisResolutionKind,
+  CitySpecialtyId,
   DiplomaticStatus,
   DuelResult,
   DuelRoundLog,
@@ -95,6 +124,7 @@ import type {
   General,
   GovernorFocus,
   HeroEncounterMode,
+  Language,
   LocalizedText,
   MarchEvent,
   MultiplayerWorldMeta,
@@ -102,18 +132,38 @@ import type {
   PlayableFactionId,
   PlayerProfile,
   Season,
+  SummonableOfficerCandidate,
   TacticId,
   TechId,
 } from './types.js';
 
 // Shared read-only queries live in queries.ts; re-exported so callers keep importing from the engine.
 export {
+  CITY_LANDMARKS,
+  CITY_SPECIALTIES,
+  CITY_SPECIALTY_IDS,
+  SPECIALTY_PROSPERITY_MIN,
+  WALL_SCAR_GATE_FACTOR,
+  aspectWorksProgress,
+  canCharterSpecialty,
+  cityEconomyOrderGoldCost,
+  cityExtraGateHp,
+  cityExtraRampartDef,
+  cityRawLevyDrill,
+  cityRecruitFoodCost,
+  cityRiverStrikeFoodCost,
+  cityUpkeepFactor,
   factionHasTech,
   getActiveBondsForHeroes,
   getChronoInsightBonus,
+  getCityCrisisOptions,
   getCityGenerals,
+  getCityLandmark,
+  getSummonableGeneralsForCity,
   getTimelineStage,
+  isCityEligibleForAnySpecialty,
 };
+export type { CityCrisisOption, CityCrisisResolutionKind, SummonableOfficerCandidate };
 
 const SEASONS: Season[] = ['spring', 'summer', 'autumn', 'winter'];
 
@@ -376,6 +426,41 @@ export function canSeeHeroWeakness(state: GameState): boolean {
   );
 }
 
+/**
+ * Whether `viewerFaction` has reconnaissance visibility into a city's exact internal figures
+ * (`drill`, `support`, `works`, and exact tax breakdown): true for owned cities, cities bordering
+ * (or directly linked along the Yangtze to) an owned city, or once `spyglass` / `balloon` is unlocked.
+ */
+export function canScoutCityDetails(
+  state: GameState,
+  viewerFaction: PlayableFactionId,
+  cityId: string
+): boolean {
+  const city = state.cities[cityId];
+  if (!city) return false;
+  if (city.owner === viewerFaction) return true;
+  if (
+    factionHasTech(state, viewerFaction, 'spyglass') ||
+    factionHasTech(state, viewerFaction, 'balloon')
+  ) {
+    return true;
+  }
+  if (city.neighbors.some((nid) => state.cities[nid]?.owner === viewerFaction)) {
+    return true;
+  }
+  return RIVER_LINKS.some(
+    ([a, b]) =>
+      (a === cityId && state.cities[b]?.owner === viewerFaction) ||
+      (b === cityId && state.cities[a]?.owner === viewerFaction)
+  );
+}
+
+/** Rounded scout estimate for a distant un-scouted garrison (e.g. `~8,000` / `约 8,000`). */
+export function formatScoutedTroops(troops: number, lang: Language): string {
+  const rounded = Math.max(1000, Math.round(troops / 1000) * 1000);
+  return lang === 'zh' ? `约 ${rounded.toLocaleString()}` : `~${rounded.toLocaleString()}`;
+}
+
 /** Orders the player may give in a season: realm size, the lord's trust and signal balloons. */
 export function getEffectiveMaxAP(state: GameState): number {
   let ap = ordersForRealmSize(
@@ -428,18 +513,40 @@ export function getFactionIncomeBreakdown(
     const govBonus = 1 + Math.max(0, governorPolitics - 60) / 260;
     const people = supportIncomeFactor(city.support);
     const event = eventIncomeFactor(city);
+    const spec = cityIncomeMultipliers(city);
     return {
       cityId: city.id,
       gold: Math.round(
-        (city.baseGold + city.trade * GOLD_PER_TRADE_LEVEL) * multiplier * govBonus * goldTechMult * people * event.gold
+        (city.baseGold + city.trade * GOLD_PER_TRADE_LEVEL) *
+          multiplier *
+          govBonus *
+          goldTechMult *
+          people *
+          event.gold *
+          spec.gold
       ),
       food: Math.round(
-        (city.baseFood + city.farming * FOOD_PER_FARMING_LEVEL) * multiplier * govBonus * foodTechMult * people * event.food
+        (city.baseFood + city.farming * FOOD_PER_FARMING_LEVEL) *
+          multiplier *
+          govBonus *
+          foodTechMult *
+          people *
+          event.food *
+          spec.food
       ),
       governorBonus: govBonus - 1,
       supportBonus: people - 1,
     };
   });
+}
+
+export function getFactionUpkeep(state: GameState, faction: PlayableFactionId): number {
+  return Math.round(
+    getFactionCities(state, faction).reduce(
+      (sum, c) => sum + c.troops * 0.008 * cityUpkeepFactor(c),
+      0
+    )
+  );
 }
 
 export function getFactionIncome(
@@ -590,10 +697,18 @@ function performImproveEconomy(
   const faction = state.factions[factionId];
   if (!city || city.owner !== factionId || city[aspect] >= ASPECT_MAX_LEVEL) return state;
   if (consumeAP && state.actionPoints < 1) return state;
-  const cost = aspect === 'farming' ? ACTION_COSTS.farmGold : ACTION_COSTS.tradeGold;
+  const cost = cityEconomyOrderGoldCost(city, aspect);
   if (faction.gold < cost) return state;
 
-  const updatedCity: City = { ...city, [aspect]: city[aspect] + 1 };
+  const nextLevel = city[aspect] + 1;
+  const nextWorks = city.works
+    ? { ...city.works, [aspect]: nextLevel >= ASPECT_MAX_LEVEL ? 0 : city.works[aspect] }
+    : undefined;
+  const updatedCity: City = {
+    ...city,
+    [aspect]: nextLevel,
+    ...(nextWorks ? { works: nextWorks } : {}),
+  };
   const updatedFaction = { ...faction, gold: faction.gold - cost };
 
   // The general who runs the city learns from the work.
@@ -809,7 +924,16 @@ export function performFortifyCity(
   if (faction.gold < ACTION_COSTS.fortifyGold) return state;
 
   // Raising the walls also makes good whatever a bombardment or a storming broke.
-  const updatedCity: City = { ...city, defense: city.defense + 1, wallScar: undefined };
+  const nextDefense = city.defense + 1;
+  const nextWorks = city.works
+    ? { ...city.works, walls: nextDefense >= ASPECT_MAX_LEVEL ? 0 : city.works.walls }
+    : undefined;
+  const updatedCity: City = {
+    ...city,
+    defense: nextDefense,
+    wallScar: undefined,
+    ...(nextWorks ? { works: nextWorks } : {}),
+  };
   const updatedFaction = { ...faction, gold: faction.gold - ACTION_COSTS.fortifyGold };
 
   return {
@@ -829,14 +953,182 @@ export function performFortifyCity(
   };
 }
 
+/**
+ * Emergency masonry repair (`1 AP`, `80 Gold`): clears `wallScar` (lifting the -30% siege Gate HP
+ * penalty) even on Lv.5 fortresses where `performFortifyCity` cannot upgrade further, and boosts
+ * Support by +3.
+ */
+export function performMendWallScar(
+  state: GameState,
+  factionId: PlayableFactionId,
+  cityId: string,
+  consumeAP = true
+): GameState {
+  const city = state.cities[cityId];
+  const faction = state.factions[factionId];
+  if (!city || city.owner !== factionId || !city.wallScar || city.wallScar <= 0) return state;
+  if (consumeAP && state.actionPoints < 1) return state;
+  if (faction.gold < ACTION_COSTS.mendBreachGold) return state;
+
+  const updatedCity: City = {
+    ...city,
+    wallScar: undefined,
+    support: clamp(city.support + 3, 0, 100),
+  };
+  const updatedFaction = { ...faction, gold: faction.gold - ACTION_COSTS.mendBreachGold };
+
+  const updatedGenerals = { ...state.generals };
+  const governor = getCityGovernor(state, cityId)?.general;
+  if (governor) {
+    updatedGenerals[governor.id] = grantHeroXp(governor, 10);
+  }
+
+  return {
+    ...state,
+    actionPoints: consumeAP ? state.actionPoints - 1 : state.actionPoints,
+    factions: { ...state.factions, [factionId]: updatedFaction },
+    cities: { ...state.cities, [cityId]: updatedCity },
+    generals: updatedGenerals,
+    chronicle: appendChronicle(
+      state,
+      'economy',
+      {
+        en: `${faction.shortName.en} patched the breached ramparts of ${city.name.en} (full Gate HP restored, Support +3).`,
+        zh: `${faction.shortName.zh}抢修${city.name.zh}城垣缺口，城门防务复原（民心 +3）。`,
+      },
+      factionId
+    ),
+  };
+}
+
+/**
+ * Issue a `0 AP` Magistrate Crisis Edict to immediately resolve an active negative city event
+ * (`plague`, `flood`, `drought`, `riot`).
+ */
+export function performResolveCityCrisis(
+  state: GameState,
+  factionId: PlayableFactionId,
+  cityId: string,
+  choice: CityCrisisResolutionKind
+): GameState {
+  const city = state.cities[cityId];
+  const faction = state.factions[factionId];
+  if (!city || city.owner !== factionId || !city.event) return state;
+
+  const option = getCityCrisisOptions(state, cityId).find((o) => o.choice === choice);
+  if (!option) return state;
+  if (faction.gold < option.goldCost || faction.food < option.foodCost) return state;
+
+  const updatedCity: City = {
+    ...city,
+    event: undefined,
+    support: clamp(city.support + option.supportDelta, 0, 100),
+    drill: clamp(city.drill + option.drillDelta, 0, 100),
+  };
+  const updatedFaction = {
+    ...faction,
+    gold: faction.gold - option.goldCost,
+    food: faction.food - option.foodCost,
+  };
+
+  const updatedGenerals = { ...state.generals };
+  const governor = getCityGovernor(state, cityId)?.general;
+  if (governor) {
+    updatedGenerals[governor.id] = grantHeroXp(governor, 15);
+  }
+
+  const nextChrono =
+    factionId === state.playerFaction && option.trustDelta !== 0
+      ? { ...state.chrono, trust: clamp(state.chrono.trust + option.trustDelta, 0, 100) }
+      : state.chrono;
+
+  const logText: LocalizedText =
+    choice === 'quarantine'
+      ? {
+          en: `${faction.shortName.en} enforced quarantine & physic at ${city.name.en}, ending the plague (Support → ${updatedCity.support}).`,
+          zh: `${faction.shortName.zh}于${city.name.zh}防疫施药，扑灭军民疫病（民心 → ${updatedCity.support}）。`,
+        }
+      : choice === 'waterworks'
+        ? {
+            en: `${faction.shortName.en} mobilized emergency waterworks at ${city.name.en}, restoring the fields (Support → ${updatedCity.support}).`,
+            zh: `${faction.shortName.zh}于${city.name.zh}抢修水利，解除田亩灾情（民心 → ${updatedCity.support}）。`,
+          }
+        : choice === 'amnesty'
+          ? {
+              en: `${faction.shortName.en} granted tax amnesty & grain at ${city.name.en}, calming the riot peacefully (Support → ${updatedCity.support}).`,
+              zh: `${faction.shortName.zh}于${city.name.zh}发粮免赋，平息民变（民心 → ${updatedCity.support}）。`,
+            }
+          : {
+              en: `${faction.shortName.en} suppressed the riot at ${city.name.en} by martial force (Support → ${updatedCity.support}, Drill → ${updatedCity.drill}).`,
+              zh: `${faction.shortName.zh}以铁腕弹压${city.name.zh}民变，恢复赋税政务（民心 → ${updatedCity.support}，训练 → ${updatedCity.drill}）。`,
+            };
+
+  return {
+    ...state,
+    factions: { ...state.factions, [factionId]: updatedFaction },
+    cities: { ...state.cities, [cityId]: updatedCity },
+    generals: updatedGenerals,
+    chrono: nextChrono,
+    chronicle: appendChronicle(state, 'economy', logText, factionId),
+  };
+}
+
+/**
+ * Charter (or re-charter) a Commandery Specialization Ward (`240 Gold` + `1 AP`) on an eligible
+ * held city.
+ */
+export function performCharterSpecialty(
+  state: GameState,
+  factionId: PlayableFactionId,
+  cityId: string,
+  specialty: CitySpecialtyId,
+  consumeAP = true
+): GameState {
+  const city = state.cities[cityId];
+  const faction = state.factions[factionId];
+  if (!city || city.owner !== factionId) return state;
+  if (!CITY_SPECIALTY_IDS.includes(specialty) || city.specialty === specialty) return state;
+  if (!canCharterSpecialty(city, specialty)) return state;
+  if (consumeAP && state.actionPoints < 1) return state;
+  if (faction.gold < ACTION_COSTS.specializeGold) return state;
+
+  const specDef = CITY_SPECIALTIES[specialty];
+  const updatedCity: City = { ...city, specialty };
+  const updatedFaction = { ...faction, gold: faction.gold - ACTION_COSTS.specializeGold };
+
+  const updatedGenerals = { ...state.generals };
+  const governor = getCityGovernor(state, cityId)?.general;
+  if (governor) {
+    updatedGenerals[governor.id] = grantHeroXp(governor, 20);
+  }
+
+  return {
+    ...state,
+    actionPoints: consumeAP ? state.actionPoints - 1 : state.actionPoints,
+    factions: { ...state.factions, [factionId]: updatedFaction },
+    cities: { ...state.cities, [cityId]: updatedCity },
+    generals: updatedGenerals,
+    chronicle: appendChronicle(
+      state,
+      'economy',
+      {
+        en: `${faction.shortName.en} chartered the [${specDef.name.en}] ward in ${city.name.en}.`,
+        zh: `${faction.shortName.zh}于${city.name.zh}设立专署【${specDef.name.zh}】！`,
+      },
+      factionId
+    ),
+  };
+}
+
 /** Men one levy raises in a city: its prosperity, its best-liked general and the people's support. */
 export function levySizeOf(
-  city: Pick<City, 'farming' | 'trade' | 'support'>,
+  city: Pick<City, 'farming' | 'trade' | 'support'> & { id?: string; specialty?: CitySpecialtyId },
   bestCharisma: number
 ): number {
   const heroLevyBonus = Math.round(Math.max(0, bestCharisma - 60) * 18);
   const base = ACTION_COSTS.recruitTroops + cityProsperity(city) * LEVY_PER_PROSPERITY + heroLevyBonus;
-  return Math.round(base * supportLevyFactor(city.support));
+  const mult = cityLevyMultiplier({ id: city.id ?? '', specialty: city.specialty });
+  return Math.round(base * supportLevyFactor(city.support) * mult);
 }
 
 export function performRecruitTroops(
@@ -852,18 +1144,19 @@ export function performRecruitTroops(
 
   const goldCost =
     factionId === 'wei' ? Math.round(ACTION_COSTS.recruitGold * 0.85) : ACTION_COSTS.recruitGold;
-  const foodCost = ACTION_COSTS.recruitFood;
+  const foodCost = cityRecruitFoodCost(city);
   if (faction.gold < goldCost || faction.food < foodCost) return state;
 
   const stationed = getCityGenerals(state, cityId);
   const charismaBonus = stationed.reduce((max, g) => Math.max(max, g.charisma), 60);
 
   const troopsAdded = levySizeOf(city, charismaBonus);
+  const rawDrill = cityRawLevyDrill(city);
   // Raw recruits water down the garrison's drill, and a levy costs the people's goodwill.
   const updatedCity: City = {
     ...city,
     troops: city.troops + troopsAdded,
-    drill: mixDrill(city.troops, city.drill, troopsAdded, RAW_LEVY_DRILL),
+    drill: mixDrill(city.troops, city.drill, troopsAdded, rawDrill),
     support: clamp(city.support - SUPPORT_COST_LEVY, 0, 100),
   };
   const updatedFaction = {
@@ -895,22 +1188,49 @@ export function performReinforceCity(
   fromCityId: string,
   toCityId: string,
   troopsToSend: number,
-  consumeAP = true
+  consumeAP = true,
+  escortGeneralIds?: string[]
 ): GameState {
   const fromCity = state.cities[fromCityId];
   const toCity = state.cities[toCityId];
   if (!fromCity || !toCity) return state;
   if (fromCity.owner !== factionId || toCity.owner !== factionId) return state;
-  if (!fromCity.neighbors.includes(toCityId)) return state;
+  const riverAdjacent = RIVER_LINKS.some(
+    ([a, b]) => (a === fromCityId && b === toCityId) || (b === fromCityId && a === toCityId)
+  );
+  if (!fromCity.neighbors.includes(toCityId) && !riverAdjacent) return state;
   if (consumeAP && state.actionPoints < 1) return state;
 
   const maxSend = Math.max(0, fromCity.troops - 1500);
   const actual = Math.min(Math.max(500, Math.round(troopsToSend)), maxSend);
   if (actual <= 0) return state;
 
+  const updatedGenerals = { ...state.generals };
+  const movedNamesEn: string[] = [];
+  const movedNamesZh: string[] = [];
+  let vacatedOriginGovernor = false;
+  if (escortGeneralIds && escortGeneralIds.length > 0) {
+    const allowed = new Set(escortGeneralIds);
+    for (const gid of allowed) {
+      const g = state.generals[gid];
+      if (g && g.faction === factionId && g.status === 'active' && g.cityId === fromCityId) {
+        updatedGenerals[gid] = { ...g, cityId: toCityId };
+        movedNamesEn.push(g.name.en);
+        movedNamesZh.push(g.name.zh);
+        if (fromCity.governorId === gid) vacatedOriginGovernor = true;
+      }
+    }
+  }
+
+  const nextFromCity: City = {
+    ...fromCity,
+    troops: fromCity.troops - actual,
+    ...(vacatedOriginGovernor ? { governorId: undefined } : {}),
+  };
+
   const updatedCities = {
     ...state.cities,
-    [fromCityId]: { ...fromCity, troops: fromCity.troops - actual },
+    [fromCityId]: nextFromCity,
     [toCityId]: {
       ...toCity,
       troops: toCity.troops + actual,
@@ -926,17 +1246,21 @@ export function performReinforceCity(
     type: 'reinforce' as const,
   };
 
+  const escortSuffixEn = movedNamesEn.length > 0 ? ` (led by ${movedNamesEn.join(', ')})` : '';
+  const escortSuffixZh = movedNamesZh.length > 0 ? `（${movedNamesZh.join('、')}随军同行）` : '';
+
   return {
     ...state,
     actionPoints: consumeAP ? state.actionPoints - 1 : state.actionPoints,
     cities: updatedCities,
+    generals: updatedGenerals,
     recentMarches: [march, ...state.recentMarches].slice(0, 6),
     chronicle: appendChronicle(
       state,
       'economy',
       {
-        en: `${state.factions[factionId].shortName.en} marched ${actual.toLocaleString()} reinforcements from ${fromCity.name.en} to ${toCity.name.en}.`,
-        zh: `${state.factions[factionId].shortName.zh}自${fromCity.name.zh}调遣 ${actual.toLocaleString()} 援军进驻${toCity.name.zh}。`,
+        en: `${state.factions[factionId].shortName.en} marched ${actual.toLocaleString()} reinforcements from ${fromCity.name.en} to ${toCity.name.en}${escortSuffixEn}.`,
+        zh: `${state.factions[factionId].shortName.zh}自${fromCity.name.zh}调遣 ${actual.toLocaleString()} 援军进驻${toCity.name.zh}${escortSuffixZh}。`,
       },
       factionId
     ),
@@ -960,10 +1284,16 @@ export function performRelocateHero(
   if (consumeAP && state.actionPoints < 1) return state;
 
   const updatedHero: General = { ...hero, cityId: targetCityId };
+  const originCity = state.cities[hero.cityId];
+  const updatedCities =
+    originCity && originCity.governorId === heroId
+      ? { ...state.cities, [originCity.id]: { ...originCity, governorId: undefined } }
+      : state.cities;
 
   return {
     ...state,
     actionPoints: consumeAP ? state.actionPoints - 1 : state.actionPoints,
+    cities: updatedCities,
     generals: { ...state.generals, [heroId]: updatedHero },
     chronicle: appendChronicle(
       state,
@@ -975,6 +1305,24 @@ export function performRelocateHero(
       factionId
     ),
   };
+}
+
+/**
+ * Summon an active general from another owned city (`1 AP`) and optionally appoint them governor
+ * of `targetCityId` in a single atomic order.
+ */
+export function performSummonGovernor(
+  state: GameState,
+  factionId: PlayableFactionId,
+  heroId: string,
+  targetCityId: string,
+  appointAsGovernor = true,
+  consumeAP = true
+): GameState {
+  const relocated = performRelocateHero(state, factionId, heroId, targetCityId, consumeAP);
+  if (relocated === state) return state;
+  if (!appointAsGovernor) return relocated;
+  return performAppointGovernor(relocated, factionId, targetCityId, heroId);
 }
 
 export function performRewardHero(
@@ -1539,11 +1887,12 @@ export function buildAssaultConfig(
   if (!fromCity || !toCity) return null;
   if (fromCity.owner !== attackerFaction || toCity.owner === attackerFaction) return null;
 
+  const riverFoodCost = cityRiverStrikeFoodCost(fromCity);
   const isValidRiver =
     Boolean(options.isRiverStrike) &&
     isWithinRiverStrike(fromCityId, toCityId) &&
     canLaunchRiverStrike(state, attackerFaction) &&
-    state.factions[attackerFaction].food >= ACTION_COSTS.riverStrikeFood;
+    state.factions[attackerFaction].food >= riverFoodCost;
 
   if (!fromCity.neighbors.includes(toCityId) && !isValidRiver) return null;
 
@@ -1629,8 +1978,14 @@ function describeAssaultModifiers(state: GameState, config: TacticalBattleConfig
   const lead = config.attackerGeneralId ? state.generals[config.attackerGeneralId] : undefined;
   const deputy = config.deputyGeneralId ? state.generals[config.deputyGeneralId] : undefined;
 
-  const gateHp = GATE_BASE_HP + toCity.defense * GATE_HP_PER_DEFENSE;
-  const rampart = Math.round((RAMPART_BASE_DEF + RAMPART_DEF_PER_LEVEL * toCity.defense) * 100);
+  const fullGateHp = GATE_BASE_HP + toCity.defense * GATE_HP_PER_DEFENSE + cityExtraGateHp(toCity);
+  const wallBreached = Boolean(toCity.wallScar && toCity.wallScar > 0);
+  const gateHp = wallBreached
+    ? Math.max(1, Math.round(fullGateHp * WALL_SCAR_GATE_FACTOR))
+    : fullGateHp;
+  const rampart = Math.round(
+    (RAMPART_BASE_DEF + RAMPART_DEF_PER_LEVEL * toCity.defense + cityExtraRampartDef(toCity)) * 100
+  );
   tags.push({
     label: { en: `City Walls Lv.${toCity.defense}`, zh: `敌城防 Lv.${toCity.defense}` },
     value:
@@ -1639,8 +1994,56 @@ function describeAssaultModifiers(state: GameState, config: TacticalBattleConfig
         : `Gate ${gateHp.toLocaleString()} · +${rampart}% DEF`,
     positive: false,
   });
+  if (toCity.specialty === 'bastion') {
+    tags.push({
+      label: CITY_SPECIALTIES.bastion.name,
+      value: '+900 Gate · +10% Rampart DEF',
+      positive: false,
+    });
+  }
+  const defLandmark = getCityLandmark(toCity.id);
+  if (defLandmark && (defLandmark.extraGateHp || defLandmark.extraRampartDef || defLandmark.riverDefBonus)) {
+    const parts: string[] = [];
+    if (defLandmark.extraGateHp) parts.push(`+${defLandmark.extraGateHp} Gate`);
+    if (defLandmark.extraRampartDef) parts.push(`+${Math.round(defLandmark.extraRampartDef * 100)}% Rampart`);
+    if (defLandmark.riverDefBonus) parts.push(`+${Math.round(defLandmark.riverDefBonus * 100)}% DEF`);
+    tags.push({
+      label: defLandmark.name,
+      value: parts.join(' · '),
+      positive: false,
+    });
+  }
+  if (wallBreached) {
+    tags.push({
+      label: { en: 'Breached Walls', zh: '城垣缺口' },
+      value: `Gate HP -${Math.round((1 - WALL_SCAR_GATE_FACTOR) * 100)}%`,
+      positive: true,
+    });
+  }
 
   const fromCity = state.cities[config.fromCityId];
+  const stagingAtk = cityStagingAtkBonuses(fromCity);
+  if (stagingAtk.allAtk > 0) {
+    tags.push({
+      label: CITY_SPECIALTIES.armory.name,
+      value: `+${Math.round(stagingAtk.allAtk * 100)}% ATK`,
+      positive: true,
+    });
+  }
+  if (stagingAtk.cavalryAtk > 0) {
+    tags.push({
+      label: { en: 'Hexi Warhorse Pastures', zh: '武威河西马苑' },
+      value: `+${Math.round(stagingAtk.cavalryAtk * 100)}% Cavalry`,
+      positive: true,
+    });
+  }
+  if (stagingAtk.riverStrikeAtk > 0 && config.isRiverStrike) {
+    tags.push({
+      label: { en: 'Chaisang Naval Stockade', zh: '柴桑赤壁水寨' },
+      value: `+${Math.round(stagingAtk.riverStrikeAtk * 100)}% Fleet ATK`,
+      positive: true,
+    });
+  }
   const atkDrill = drillMoraleBonus(fromCity?.drill ?? 50);
   if (atkDrill !== 0) {
     tags.push({
@@ -1801,6 +2204,9 @@ export function estimateBattlePreview(
       config.initialDuelResult?.winner ?? '',
       toCity.troops,
       toCity.defense,
+      toCity.wallScar ?? 0,
+      toCity.specialty ?? '',
+      state.cities[fromCityId]?.specialty ?? '',
     ].join('|')
   );
 
@@ -2087,14 +2493,12 @@ export function applyTacticalBattleOutcome(
       : 0;
 
   const updatedFactions = { ...state.factions };
-  if (config.isRiverStrike || plunderGold > 0) {
+  const riverFoodSpent = config.isRiverStrike ? cityRiverStrikeFoodCost(fromCity) : 0;
+  if (riverFoodSpent > 0 || plunderGold > 0) {
     updatedFactions[attackerFaction] = {
       ...updatedFactions[attackerFaction],
       gold: updatedFactions[attackerFaction].gold + plunderGold,
-      food: Math.max(
-        0,
-        updatedFactions[attackerFaction].food - (config.isRiverStrike ? ACTION_COSTS.riverStrikeFood : 0)
-      ),
+      food: Math.max(0, updatedFactions[attackerFaction].food - riverFoodSpent),
     };
   }
 
@@ -2221,7 +2625,11 @@ export function performNightRaid(
   const warStat = hero ? hero.war : 75;
   const stirrupBonus = factionHasTech(state, attackerFaction, 'stirrups') ? 0.06 : 0;
   const killRatio = clamp(0.15 + ((warStat - 60) / 400) + stirrupBonus + (rng() * 0.04), 0.14, 0.29);
-  const enemyLost = Math.min(Math.max(0, toCity.troops - 500), Math.round(toCity.troops * killRatio));
+  const bastionMitigation = cityRaidBombardLossFactor(toCity);
+  const enemyLost = Math.min(
+    Math.max(0, toCity.troops - 500),
+    Math.round(toCity.troops * killRatio * bastionMitigation)
+  );
   const friendlyLost = Math.min(
     Math.max(0, fromCity.troops - 1500),
     Math.round(320 + rng() * 340 * (factionHasTech(state, attackerFaction, 'medicine') ? 0.75 : 1))
@@ -2350,9 +2758,10 @@ export function performSabotageBombard(
   const intStat = hero ? hero.intellect : 75;
   const hasGunpowder = factionHasTech(state, attackerFaction, 'gunpowder');
   const defDrop = Math.min(toCity.defense - 1, hasGunpowder ? 2 : 1);
+  const bastionMitigation = cityRaidBombardLossFactor(toCity);
   const burnedTroops = Math.min(
     Math.max(0, toCity.troops - 500),
-    Math.round((1150 + intStat * 12 + rng() * 350) * (hasGunpowder ? 1.38 : 1.0))
+    Math.round((1150 + intStat * 12 + rng() * 350) * (hasGunpowder ? 1.38 : 1.0) * bastionMitigation)
   );
 
   const updatedCities = {
@@ -2852,6 +3261,13 @@ export function executeAITurnAction(
     next = performRelief(state, factionId, city.id, false);
   } else if (action.type === 'fortify' && city && city.owner === factionId) {
     next = performFortifyCity(state, factionId, city.id, false);
+  } else if (
+    action.type === 'specialize' &&
+    action.specialty &&
+    city &&
+    city.owner === factionId
+  ) {
+    next = performCharterSpecialty(state, factionId, city.id, action.specialty, false);
   }
 
   if (proclamation && proclamation.trim()) {
@@ -2906,8 +3322,7 @@ export function advanceSeason(state: GameState, rng: () => number = Math.random)
   for (const fid of ['wei', 'shu', 'wu'] as PlayableFactionId[]) {
     if (nextFactions[fid].isEliminated) continue;
     const income = getFactionIncome(state, fid);
-    const totalTroops = getFactionTotalTroops(state, fid);
-    const foodUpkeep = Math.round(totalTroops * 0.008);
+    const foodUpkeep = getFactionUpkeep(state, fid);
     nextFactions[fid] = {
       ...nextFactions[fid],
       gold: nextFactions[fid].gold + income.gold,
@@ -2949,14 +3364,25 @@ export function advanceSeason(state: GameState, rng: () => number = Math.random)
 
   for (const g of Object.values(nextGenerals)) {
     if (g.status === 'executed') continue;
+    const hostCity = state.cities[g.cityId];
+    const inAcademy =
+      Boolean(hostCity && hostCity.owner === g.faction && hostCity.specialty === 'academy');
+    const landmarkLoyalty =
+      hostCity && hostCity.owner === g.faction
+        ? CITY_LANDMARKS[hostCity.id]?.seasonalLoyaltyGain ?? 0
+        : 0;
     let nextG = {
       ...g,
       skillCooldown: Math.max(0, g.skillCooldown - 1),
       chattedThisTurn: false,
     };
     if (nextG.status === 'wounded') {
-      const rem = Math.max(0, nextG.woundedTurns - 1);
+      const healStep = inAcademy ? 2 : 1;
+      const rem = Math.max(0, nextG.woundedTurns - healStep);
       nextG = { ...nextG, woundedTurns: rem, status: rem === 0 ? 'active' : 'wounded' };
+    }
+    if (nextG.status === 'active' && landmarkLoyalty > 0) {
+      nextG = { ...nextG, loyalty: clamp(nextG.loyalty + landmarkLoyalty, 0, 100) };
     }
     if (nextG.faction === state.playerFaction && nextG.status === 'active' && lowTrustDrain < 0) {
       nextG = { ...nextG, loyalty: clamp(nextG.loyalty + lowTrustDrain, 0, 100) };
@@ -3058,10 +3484,12 @@ export function advanceSeason(state: GameState, rng: () => number = Math.random)
       .filter((g) => g.cityId === city.id && g.faction === city.owner && g.status === 'active')
       .reduce((max, g) => Math.max(max, g.charisma), 0);
     const deserters = unrestDeserters(city);
+    const drillFloor = cityDrillFloor(city);
+    const drillTarget = drillFloor > 0 && city.drill >= drillFloor ? drillFloor : 50;
     let settled: City = {
       ...city,
       troops: city.troops - deserters,
-      drill: driftToward(city.drill, 50, DRILL_SEASON_DRIFT),
+      drill: driftToward(city.drill, drillTarget, DRILL_SEASON_DRIFT),
       support: driftToward(city.support, supportRestingLevel(bestCharisma), SUPPORT_SEASON_DRIFT),
     };
 
@@ -3136,9 +3564,25 @@ export function advanceSeason(state: GameState, rng: () => number = Math.random)
     }
   }
 
+  const factionInnovationBonus = (fid: PlayableFactionId): number =>
+    seasonAcademyInnovationGain(getFactionCities(state, fid), nextTurn);
+  const factionTrustLandmarkBonus = (fid: PlayableFactionId): number =>
+    getFactionCities(state, fid).reduce(
+      (sum, c) => sum + (CITY_LANDMARKS[c.id]?.seasonalTrustGain ?? 0),
+      0
+    );
+
+  const playerAcadBonus = factionInnovationBonus(state.playerFaction);
+  const playerTrustGain = factionTrustLandmarkBonus(state.playerFaction);
+  const nextPlayerTrust =
+    playerTrustGain > 0 && state.chrono.trust < 85
+      ? Math.min(85, state.chrono.trust + playerTrustGain)
+      : state.chrono.trust;
+
   const nextChrono = {
     ...state.chrono,
-    innovationPoints: state.chrono.innovationPoints + 1,
+    innovationPoints: state.chrono.innovationPoints + 1 + playerAcadBonus,
+    trust: nextPlayerTrust,
     techFrozenTurns: Math.max(0, state.chrono.techFrozenTurns - 1),
     suspicion: clamp(state.chrono.suspicion - 5, 0, 100),
     coalitionActive,
@@ -3159,9 +3603,16 @@ export function advanceSeason(state: GameState, rng: () => number = Math.random)
       for (const tid of nextRivalTechs[fid] ?? []) {
         if (!unlocked.includes(tid)) unlocked.push(tid);
       }
+      const fidAcadBonus = factionInnovationBonus(fid);
+      const fidTrustGain = factionTrustLandmarkBonus(fid);
+      const fidNextTrust =
+        fidTrustGain > 0 && prevC.trust < 85
+          ? Math.min(85, prevC.trust + fidTrustGain)
+          : prevC.trust;
       tickedChronos[fid] = {
         ...prevC,
-        innovationPoints: prevC.innovationPoints + 1,
+        innovationPoints: prevC.innovationPoints + 1 + fidAcadBonus,
+        trust: fidNextTrust,
         techFrozenTurns: Math.max(0, prevC.techFrozenTurns - 1),
         suspicion: clamp(prevC.suspicion - 5, 0, 100),
         coalitionActive,

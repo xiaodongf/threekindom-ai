@@ -1,7 +1,13 @@
+import {
+  CITY_SPECIALTIES,
+  canCharterSpecialty,
+  isCityEligibleForAnySpecialty,
+} from '../../../src/game/citySpecialties.js';
 import { ACTION_COSTS } from '../../../src/game/data.js';
 import type {
   AITurnAction,
   City,
+  CitySpecialtyId,
   DiplomacyProposalType,
   GameState,
   HeroEncounterRequest,
@@ -614,7 +620,46 @@ export function generateHeuristicAITurn(
     reasoning: pick.aspect === 'farm' ? 'Expand seasonal grain income.' : 'Expand seasonal gold income.',
   });
 
-  // 5. One season in four, with gold to spare, the realm is built up before more men are raised.
+  // 5. Charter a Commandery Specialization when the treasury is healthy and an eligible city is unspecialized.
+  if (faction.gold >= ACTION_COSTS.specializeGold + 180) {
+    const unspec = owned
+      .filter((c) => !c.specialty && isCityEligibleForAnySpecialty(c))
+      .sort(
+        (a, b) =>
+          Number(Boolean(b.isCapital)) - Number(Boolean(a.isCapital)) ||
+          b.farming + b.trade - (a.farming + a.trade)
+      )[0];
+    if (unspec) {
+      const onFront = (toFront.get(unspec.id) ?? 0) === 0;
+      let specialty: CitySpecialtyId = 'granary';
+      if (onFront && (unspec.terrain === 'fortress' || unspec.defense >= 4)) {
+        specialty = 'bastion';
+      } else if (onFront && unspec.troops >= 7000 && canCharterSpecialty(unspec, 'armory')) {
+        specialty = 'armory';
+      } else if (
+        unspec.isCapital &&
+        !owned.some((x) => x.specialty === 'academy') &&
+        canCharterSpecialty(unspec, 'academy')
+      ) {
+        specialty = 'academy';
+      } else if (!canCharterSpecialty(unspec, 'granary')) {
+        specialty = 'bastion';
+      } else {
+        specialty = faction.food <= faction.gold ? 'granary' : 'emporium';
+      }
+      const specDef = CITY_SPECIALTIES[specialty];
+      return {
+        action: { type: 'specialize', cityId: unspec.id, specialty },
+        proclamation:
+          lang === 'zh'
+            ? `敕令于${cityName(unspec, lang)}开府设【${specDef.name.zh}】，以固国本！`
+            : `Charter the [${specDef.name.en}] in ${cityName(unspec, lang)} to strengthen our realm!`,
+        reasoning: `Charter ${specDef.name.en} in ${cityName(unspec, lang)}.`,
+      };
+    }
+  }
+
+  // 6. One season in four, with gold to spare, the realm is built up before more men are raised.
   const economyCost = Math.max(ACTION_COSTS.farmGold, ACTION_COSTS.tradeGold);
   if ((state.turn + owned.length) % 4 === 0 && faction.gold >= economyCost + 260) {
     const pick = pickEconomy();

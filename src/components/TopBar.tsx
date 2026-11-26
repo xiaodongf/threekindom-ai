@@ -11,6 +11,7 @@ import {
   FastForward,
   Globe,
   HeartHandshake,
+  Landmark,
   Languages,
   Loader2,
   RotateCcw,
@@ -31,6 +32,7 @@ import {
   getFactionTotalTroops,
   getTimelineStage,
 } from '../game/engine.js';
+import { governorPlanOf } from '../game/governors.js';
 import type { GameState, Language, PlayableFactionId } from '../game/types.js';
 import { SEASONS_TEXT, UI_TEXT, tLoc } from '../i18n/translations.js';
 import type { ClientUser, MultiplayerRoomSummary } from '../services/persistenceClient.js';
@@ -56,6 +58,7 @@ interface TopBarProps {
   onOpenSaves?: () => void;
   onOpenMultiplayer?: () => void;
   onOpenAuth?: () => void;
+  onOpenRealm?: () => void;
 }
 
 const SEASON_CHAR = { spring: '春', summer: '夏', autumn: '秋', winter: '冬' } as const;
@@ -133,9 +136,12 @@ export function TopBar({
   onOpenSaves,
   onOpenMultiplayer,
   onOpenAuth,
+  onOpenRealm,
 }: TopBarProps) {
   const faction = state.factions[state.playerFaction];
-  const ownedCount = getFactionCities(state, state.playerFaction).length;
+  const ownedCities = getFactionCities(state, state.playerFaction);
+  const ownedCount = ownedCities.length;
+  const leaderlessCount = ownedCities.filter((c) => !governorPlanOf(state, c.id)).length;
   const totalTroops = getFactionTotalTroops(state, state.playerFaction);
   const income = getFactionIncome(state, state.playerFaction);
   const stage = getTimelineStage(state.chrono.divergence);
@@ -516,6 +522,26 @@ export function TopBar({
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
+        {onOpenRealm && (
+          <button
+            type="button"
+            onClick={onOpenRealm}
+            title={
+              lang === 'zh'
+                ? `打开治所总览（快捷键 R）${leaderlessCount > 0 ? ` · ${leaderlessCount} 城暂无太守` : ''}`
+                : `Open Realm Table (Shortcut: R)${leaderlessCount > 0 ? ` · ${leaderlessCount} unstaffed` : ''}`
+            }
+            className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-semibold text-slate-300 hover:text-slate-50 hover:bg-white/5 cursor-pointer"
+          >
+            <Landmark className="w-3.5 h-3.5 text-amber-300" />
+            <span className="hidden lg:inline">{lang === 'zh' ? '治所' : 'Realm'}</span>
+            {leaderlessCount > 0 && (
+              <span className="px-1.5 py-px rounded-full bg-rose-500/30 border border-rose-400/50 text-[10px] text-rose-200 tabular-nums leading-tight">
+                {leaderlessCount}
+              </span>
+            )}
+          </button>
+        )}
         {activeMpRoom && onOpenMultiplayer ? (
           <button
             type="button"

@@ -1,11 +1,15 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { FactionId, General, TerrainType } from '../../game/types.js';
 import { isMythLook } from '../../utils/artLook.js';
+import { FACTION_CLOTH } from '../../utils/factionPalette.js';
+import { SOLDIER_KITS, createFigureCrowd, figureTint, type FigureCrowd } from '../gfx/figures.js';
+import { buildCamp, type Camp } from '../gfx/camp.js';
+import { createWind, type Wind } from '../gfx/wind.js';
 import type { DisposeBag } from './duelGeometry3D.js';
 import {
   createFortressWallTextures,
   createDustPuffTexture,
+  createFlameTexture,
   createGroundDetailTextures,
   createPaintedPanoramaTexture,
   createSilkBannerTexture,
@@ -263,47 +267,32 @@ function baseArenaLook(terrain: TerrainType, isNight: boolean): BaseLook {
 /** The rank and file's faction colours sink toward this under the dark look */
 export const DARK_IRON = new THREE.Color('#1c1e21');
 
-export interface ArenaBanner3D {
-  mesh: THREE.Mesh;
-  basePositions: Float32Array;
-  phase: number;
-}
 
 export interface DuelArena3D {
   group: THREE.Group;
   look: ArenaLook;
-  banners: ArenaBanner3D[];
+  /** The field's wind; the stage advances it and strengthens it when the ranks roar */
+  wind: Wind;
+  /** The tents, racks and fires behind the ranks */
+  camp: Camp;
   brazierLights: THREE.PointLight[];
-  brazierFlames: THREE.Mesh[];
+  brazierFlames: THREE.Object3D[];
+  /** The painted horizon, so the fog can take its colour from it */
+  backdrop: { texture: THREE.Texture; horizonV: number; tint: THREE.Color; arc: number };
   spectators: { left: THREE.Group; right: THREE.Group };
+  /** The watching ranks, for the stage to set their clock and their cheering */
+  crowds: { left: FigureCrowd[]; right: FigureCrowd[] };
 }
 
-const FACTION_HEX: Record<FactionId, { bg: string; trim: string }> = {
-  wei: { bg: '#1d4ed8', trim: '#f0c45c' },
-  shu: { bg: '#047857', trim: '#facc15' },
-  wu: { bg: '#be123c', trim: '#fbbf24' },
-  neutral: { bg: '#57534e', trim: '#e5c158' },
+/** Cloth and trim for one realm's soldiers and banners */
+const realmCloth = (faction: FactionId, fallback: FactionId): { bg: string; trim: string } => {
+  const c = FACTION_CLOTH[faction] ?? FACTION_CLOTH[fallback];
+  return { bg: c.cloth, trim: c.trim };
 };
 
 const BACKDROP_RADIUS = 46;
 const BACKDROP_ARC = 150 / 360;
 const EYE_LINE = 3.0;
-
-function part(
-  geo: THREE.BufferGeometry,
-  x: number,
-  y: number,
-  z: number,
-  rz = 0,
-  scale: [number, number, number] = [1, 1, 1]
-): THREE.BufferGeometry {
-  const m = new THREE.Matrix4()
-    .makeTranslation(x, y, z)
-    .multiply(new THREE.Matrix4().makeRotationZ(rz))
-    .multiply(new THREE.Matrix4().makeScale(scale[0], scale[1], scale[2]));
-  geo.applyMatrix4(m);
-  return geo;
-}
 
 /** Builds the battlefield: painted horizon, trampled ground, the two watching armies and their banners. */
 export function buildDuelArena3D(
@@ -311,13 +300,15 @@ export function buildDuelArena3D(
   defender: General,
   terrain: TerrainType,
   isNight: boolean,
-  bag: DisposeBag
+  bag: DisposeBag,
+  /** Multiplier on the size of the watching armies (the quality setting) */
+  crowd = 1
 ): DuelArena3D {
   const look = getArenaLook(terrain, isNight);
   const group = new THREE.Group();
-  const banners: ArenaBanner3D[] = [];
+  const wind = bag.add(createWind(0.96, 0.28));
   const brazierLights: THREE.PointLight[] = [];
-  const brazierFlames: THREE.Mesh[] = [];
+  const brazierFlames: THREE.Object3D[] = [];
 
   // ------------------------------------------------------------ sky and painted horizon
   const skyTex = createSkyDomeTexture(look.skyStops, bag);
@@ -332,6 +323,7 @@ export function buildDuelArena3D(
   const arcLength = BACKDROP_RADIUS * Math.PI * 2 * BACKDROP_ARC;
   const paintingHeight = (arcLength * 768 * bandHeight) / 1376;
   const panoTex = createPaintedPanoramaTexture(look.panoUrl, look.band, BACKDROP_ARC, bag);
+  const panoTint = new THREE.Color(...look.panoTint).multiplyScalar(1.12);
   const pano = new THREE.Mesh(
     bag.add(new THREE.CylinderGeometry(BACKDROP_RADIUS, BACKDROP_RADIUS, paintingHeight, 64, 1, true)),
     bag.add(
@@ -339,7 +331,7 @@ export function buildDuelArena3D(
         map: panoTex,
         side: THREE.BackSide,
         fog: false,
-        color: new THREE.Color(...look.panoTint).multiplyScalar(1.12),
+        color: panoTint,
       })
     )
   );
@@ -436,12 +428,24 @@ export function buildDuelArena3D(
 
   if (look.torches) {
     const ironMat = bag.add(new THREE.MeshStandardMaterial({ color: '#262220', metalness: 0.7, roughness: 0.45 }));
-    const flameMat = bag.add(new THREE.MeshBasicMaterial({ color: new THREE.Color(5, 1.7, 0.35) }));
-    const coreMat = bag.add(new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 4.2, 1.4) }));
+    // Each flame is two crossed cards drawn additively. Their colour sits below the bloom
+    // threshold except where the cards overlap along the axis, so the fire has a bright core
+    // inside an orange body instead of clipping to a white shape.
+    const flameMat = bag.add(
+      new THREE.MeshBasicMaterial({
+        map: createFlameTexture(bag),
+        color: new THREE.Color(1.9, 1.05, 0.38),
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        fog: false,
+      })
+    );
     const standGeo = bag.add(new THREE.CylinderGeometry(0.1, 0.24, 1.3, 8));
     const bowlGeo = bag.add(new THREE.CylinderGeometry(0.42, 0.22, 0.32, 10));
-    const flameGeo = bag.add(new THREE.ConeGeometry(0.32, 0.95, 8));
-    const coreGeo = bag.add(new THREE.ConeGeometry(0.15, 0.55, 7));
+    const flameGeo = bag.add(new THREE.PlaneGeometry(0.78, 1.25));
+    flameGeo.translate(0, 0.56, 0);
     const spots: Array<[number, number]> = [
       [-6.4, -5.2],
       [6.4, -5.2],
@@ -454,11 +458,15 @@ export function buildDuelArena3D(
       stand.castShadow = true;
       const bowl = new THREE.Mesh(bowlGeo, ironMat);
       bowl.position.set(bx, 1.42, bz);
-      const flame = new THREE.Mesh(flameGeo, flameMat);
-      flame.position.set(bx, 1.98, bz);
-      const core = new THREE.Mesh(coreGeo, coreMat);
-      core.position.set(bx, 1.82, bz);
-      group.add(stand, bowl, flame, core);
+      const flame = new THREE.Group();
+      flame.position.set(bx, 1.5, bz);
+      for (const turn of [0.35, 0.35 + Math.PI / 2]) {
+        const card = new THREE.Mesh(flameGeo, flameMat);
+        card.rotation.y = turn;
+        card.renderOrder = 3;
+        flame.add(card);
+      }
+      group.add(stand, bowl, flame);
       brazierFlames.push(flame);
       const light = new THREE.PointLight('#ff8a36', 26, 22, 1.8);
       light.position.set(bx, 2.5, bz + 0.3);
@@ -495,63 +503,18 @@ export function buildDuelArena3D(
   const rightSpectators = new THREE.Group();
   group.add(leftSpectators, rightSpectators);
 
-  const atkPal = FACTION_HEX[attacker.faction] || FACTION_HEX.shu;
-  const defPal = FACTION_HEX[defender.faction] || FACTION_HEX.wei;
+  const atkPal = realmCloth(attacker.faction, 'shu');
+  const defPal = realmCloth(defender.faction, 'wei');
 
-  // A foot soldier, facing +X: armour in the faction colour, iron helm and greaves, spear and shield
-  const bodyGeo = bag.add(
-    mergeGeometries([
-      part(new THREE.CylinderGeometry(0.19, 0.27, 0.44, 8), 0, 0.74, 0),
-      part(new THREE.CylinderGeometry(0.24, 0.19, 0.5, 8), 0, 1.2, 0, 0, [0.8, 1, 1.12]),
-      part(new THREE.SphereGeometry(0.13, 8, 6), 0, 1.4, 0.27),
-      part(new THREE.SphereGeometry(0.13, 8, 6), 0, 1.4, -0.27),
-      part(new THREE.CylinderGeometry(0.065, 0.055, 0.46, 6), 0.05, 1.14, 0.31, 0.15),
-      part(new THREE.CylinderGeometry(0.065, 0.055, 0.46, 6), 0.08, 1.16, -0.31, 0.5),
-      part(new THREE.BoxGeometry(0.05, 0.82, 0.48), 0.27, 0.98, 0.2, 0.06),
-      part(new THREE.ConeGeometry(0.05, 0.26, 6), -0.03, 1.98, 0, 0.3),
-    ])
-  );
-  const ironGeo = bag.add(
-    mergeGeometries([
-      part(new THREE.SphereGeometry(0.15, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6), 0, 1.68, 0),
-      part(new THREE.CylinderGeometry(0.165, 0.175, 0.03, 10), 0, 1.69, 0),
-      part(new THREE.CylinderGeometry(0.085, 0.075, 0.54, 6), 0, 0.27, 0.11),
-      part(new THREE.CylinderGeometry(0.085, 0.075, 0.54, 6), 0, 0.27, -0.11),
-      part(new THREE.ConeGeometry(0.045, 0.42, 4), 0.2, 3.55, -0.3),
-      part(new THREE.SphereGeometry(0.075, 6, 6), 0.3, 1.0, 0.2, 0, [0.5, 1, 1]),
-    ])
-  );
-  const fleshWoodGeo = bag.add(
-    mergeGeometries([
-      part(new THREE.SphereGeometry(0.115, 8, 6), 0.015, 1.6, 0),
-      part(new THREE.CylinderGeometry(0.02, 0.024, 3.35, 5), 0.2, 1.7, -0.3),
-    ])
-  );
-  const ironMatArmy = bag.add(
-    new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#6f7680').multiplyScalar(1 - look.armyIron * 0.3),
-      metalness: 0.85,
-      roughness: 0.4,
-    })
-  );
-  const fleshWoodMat = bag.add(new THREE.MeshStandardMaterial({ color: '#7a5236', roughness: 0.85 }));
-
-  const dummy = new THREE.Object3D();
+  // The watching ranks are drawn with the shared figure kit: three kits mixed through each
+  // army, every man with his own coat, height, stance and place in the idle sway.
+  const crowds: { left: FigureCrowd[]; right: FigureCrowd[] } = { left: [], right: [] };
+  const tint = new THREE.Color();
   const populate = (side: 'left' | 'right', target: THREE.Group, bgHex: string) => {
     const rows = 3;
-    const perRow = 26;
-    const count = rows * perRow;
-    const armorMat = bag.add(
-      new THREE.MeshStandardMaterial({
-        color: new THREE.Color(bgHex).lerp(DARK_IRON, look.armyIron),
-        roughness: 0.6 - look.armyIron * 0.14,
-        metalness: 0.3 + look.armyIron * 0.4,
-      })
-    );
-    const bodies = new THREE.InstancedMesh(bodyGeo, armorMat, count);
-    const irons = new THREE.InstancedMesh(ironGeo, ironMatArmy, count);
-    const rest = new THREE.InstancedMesh(fleshWoodGeo, fleshWoodMat, count);
-    let n = 0;
+    const perRow = Math.max(12, Math.round(26 * crowd));
+    const realm = new THREE.Color(bgHex);
+    const men: Array<{ x: number; z: number; yaw: number; size: number; seed: number; kit: number }> = [];
     for (let r = 0; r < rows; r++) {
       for (let i = 0; i < perRow; i++) {
         const f = (i + (r % 2) * 0.5) / perRow;
@@ -562,23 +525,36 @@ export function buildDuelArena3D(
         const radius = 11.2 + r * 1.6 + Math.sin(i * 12.9898 + r * 4.1) * 0.25;
         const x = Math.cos(ang) * radius;
         const z = -Math.sin(ang) * radius * 0.86 + 0.8;
-        dummy.position.set(x, 0, z);
-        dummy.rotation.set(0, Math.atan2(-z, -x) * -1, 0);
-        const sc = 1.02 + Math.sin(i * 7.3 + r) * 0.06;
-        dummy.scale.setScalar(sc);
-        dummy.updateMatrix();
-        bodies.setMatrixAt(n, dummy.matrix);
-        irons.setMatrixAt(n, dummy.matrix);
-        rest.setMatrixAt(n, dummy.matrix);
-        n++;
+        const seed = Math.abs(Math.sin(i * 91.7 + r * 37.3 + (side === 'left' ? 1.7 : 5.3)) * 43758.5453) % 1;
+        // Shield-and-spear men hold the front rank; ji and sabre men stand among those behind
+        const kit = r === 0 ? 0 : seed < 0.5 ? 0 : seed < 0.78 ? 1 : 2;
+        men.push({
+          x,
+          z,
+          // Facing the duel, give or take a glance to either side
+          yaw: Math.atan2(z, -x) + (seed - 0.5) * 0.3,
+          size: 0.97 + seed * 0.1,
+          seed,
+          kit,
+        });
       }
     }
-    for (const mesh of [bodies, irons, rest]) {
-      mesh.castShadow = true;
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.frustumCulled = false;
-      target.add(mesh);
-    }
+    SOLDIER_KITS.forEach((kit, k) => {
+      const group = men.filter((m) => m.kit === k);
+      if (group.length === 0) return;
+      const figures = bag.add(createFigureCrowd(kit, group.length));
+      group.forEach((m, i) => {
+        figures.place(i, m.x, 0, m.z, m.yaw);
+        figures.pose(i, 0, 0, 0, m.size);
+        figures.look(i, figureTint(tint, realm, DARK_IRON, look.armyIron, m.seed), m.seed);
+      });
+      figures.commit();
+      figures.uniforms.uFigIron.value = look.armyIron;
+      // The ring is the audience: kept a little under the two champions in brightness
+      figures.uniforms.uFigValue.value = 0.82;
+      target.add(figures.mesh);
+      crowds[side].push(figures);
+    });
   };
   populate('left', leftSpectators, atkPal.bg);
   populate('right', rightSpectators, defPal.bg);
@@ -610,7 +586,7 @@ export function buildDuelArena3D(
   }
 
   // ------------------------------------------------------------ war banners
-  const factionChar = (f: FactionId) => (f === 'wei' ? '魏' : f === 'shu' ? '蜀' : f === 'wu' ? '吴' : '汉');
+  const factionChar = (f: FactionId) => (FACTION_CLOTH[f] ?? FACTION_CLOTH.neutral).glyph;
   const specs: Array<{ x: number; z: number; glyph: string; pal: { bg: string; trim: string }; dir: number }> = [
     { x: -9.6, z: -7.6, glyph: attacker.seal, pal: atkPal, dir: 1 },
     { x: -5.6, z: -9.6, glyph: factionChar(attacker.faction), pal: atkPal, dir: 1 },
@@ -623,7 +599,7 @@ export function buildDuelArena3D(
   const barGeo = bag.add(new THREE.CylinderGeometry(0.035, 0.035, 1.7, 6));
   const finialGeo = bag.add(new THREE.ConeGeometry(0.1, 0.4, 6));
   const goldMat = bag.add(new THREE.MeshStandardMaterial({ color: '#e5c158', metalness: 1, roughness: 0.3 }));
-  specs.forEach((b, idx) => {
+  specs.forEach((b) => {
     const pole = new THREE.Mesh(poleGeo, woodMat);
     pole.position.set(b.x, 3.7, b.z);
     pole.castShadow = true;
@@ -647,13 +623,40 @@ export function buildDuelArena3D(
     );
     cloth.position.set(b.x + b.dir * 0.78, 5.4, b.z);
     cloth.castShadow = true;
+    // Hung from the bar along its top edge; the lower end swings free
+    wind.cloth(cloth, { axis: 'y', pin: 1.6, length: -3.2, amplitude: 0.3, ripples: 6.4, drift: 0.3 });
     group.add(cloth);
-    banners.push({
-      mesh: cloth,
-      basePositions: new Float32Array((clothGeo.attributes.position as THREE.BufferAttribute).array as Float32Array),
-      phase: idx * 1.15,
-    });
   });
 
-  return { group, look, banners, brazierLights, brazierFlames, spectators: { left: leftSpectators, right: rightSpectators } };
+  // The camp behind the ranks fills the ground between the ring and the painted horizon
+  const camp = buildCamp(
+    {
+      layout: 'ring',
+      left: new THREE.Color(atkPal.bg).lerp(DARK_IRON, look.armyIron * 0.6),
+      right: new THREE.Color(defPal.bg).lerp(DARK_IRON, look.armyIron * 0.6),
+      // A fortress wall closes the field off not far behind the ring
+      maxDepth: terrain === 'fortress' ? 18.5 : 40,
+      fires: look.torches,
+      wind,
+    },
+    bag
+  );
+  group.add(camp.group);
+
+  return {
+    group,
+    look,
+    wind,
+    camp,
+    brazierLights,
+    brazierFlames,
+    backdrop: {
+      texture: panoTex,
+      horizonV: look.band[0] + look.horizon * bandHeight,
+      tint: panoTint,
+      arc: BACKDROP_ARC,
+    },
+    spectators: { left: leftSpectators, right: rightSpectators },
+    crowds,
+  };
 }

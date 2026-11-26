@@ -41,6 +41,7 @@ import { TacticalBattleModal } from './components/TacticalBattleModal.js';
 import { TechLabPanel } from './components/TechLabPanel.js';
 import { ProvinceRegister } from './components/ProvinceRegister.js';
 import { RealmTable } from './components/RealmTable.js';
+import { ReinforceModal } from './components/ReinforceModal.js';
 import { TopBar } from './components/TopBar.js';
 import { SeasonBanner } from './components/ui/SeasonBanner.js';
 import { WarSceneModal, type WarSceneConfig } from './components/WarSceneModal.js';
@@ -58,10 +59,12 @@ import {
   getCityGenerals,
   performAppointGovernor,
   performAttackCity,
+  performCharterSpecialty,
   performDevelopFarming,
   performDevelopTrade,
   performDrillTroops,
   performFortifyCity,
+  performMendWallScar,
   performNightRaid,
   performPrisonerAction,
   performRecruitTroops,
@@ -69,7 +72,9 @@ import {
   performRelief,
   performRelocateHero,
   performResearchTech,
+  performResolveCityCrisis,
   performSetGovernorFocus,
+  performSummonGovernor,
   performRewardHero,
   performSabotageBombard,
   performSowDiscord,
@@ -95,6 +100,8 @@ import type {
   AIRequestConfig,
   AITurnAction,
   BattleReport,
+  CityCrisisResolutionKind,
+  CitySpecialtyId,
   DiplomacyProposalType,
   DiplomacyResponse,
   DomesticOrder,
@@ -442,6 +449,38 @@ export default function App() {
     if (!gameState || !canIssueOrders) return;
     commitCampaignState(performSetGovernorFocus(gameState, gameState.playerFaction, cityId, focus));
   };
+  const summonOfficer = (heroId: string, targetCityId: string) => {
+    if (!gameState || !canIssueOrders) return;
+    const targetCity = gameState.cities[targetCityId];
+    const shouldAppoint =
+      !targetCity?.governorId || getCityGenerals(gameState, targetCityId).length === 0;
+    commitCampaignState(
+      performSummonGovernor(
+        gameState,
+        gameState.playerFaction,
+        heroId,
+        targetCityId,
+        shouldAppoint,
+        true
+      )
+    );
+  };
+  const mendBreach = (cityId: string) => {
+    if (!gameState || !canIssueOrders) return;
+    commitCampaignState(performMendWallScar(gameState, gameState.playerFaction, cityId, true));
+  };
+  const resolveCrisis = (cityId: string, choice: CityCrisisResolutionKind) => {
+    if (!gameState || !canIssueOrders) return;
+    commitCampaignState(
+      performResolveCityCrisis(gameState, gameState.playerFaction, cityId, choice)
+    );
+  };
+  const charterSpecialty = (cityId: string, specialty: CitySpecialtyId) => {
+    if (!gameState || !canIssueOrders) return;
+    commitCampaignState(
+      performCharterSpecialty(gameState, gameState.playerFaction, cityId, specialty, true)
+    );
+  };
 
   const enterCity = (cityId: string) => {
     setSelectedCityId(cityId);
@@ -462,6 +501,10 @@ export default function App() {
     const target = new URLSearchParams(window.location.search).get('target');
     return target ? { targetCityId: target } : null;
   });
+  const [pendingReinforce, setPendingReinforce] = useState<{
+    fromCityId?: string;
+    toCityId: string;
+  } | null>(null);
   const [activeDuel, setActiveDuel] = useState<{
     payload: ExecuteMilitaryPayload;
     demoAction?: 'strike' | 'feint' | 'guard' | 'skill' | 'chrono_counter' | 'finale';
@@ -936,22 +979,34 @@ export default function App() {
     performSoloSlotSave,
   ]);
 
-  // Keyboard shortcut: Ctrl/Cmd + S opens Imperial Archives (or Multiplayer modal in MP)
+  // Keyboard shortcuts: Ctrl/Cmd + S opens Imperial Archives (or Multiplayer modal in MP); R toggles Realm Table
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) {
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-        const el = e.target as HTMLElement | null;
-        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
-          return;
-        }
         e.preventDefault();
         if (activeMpRoom) setShowMultiplayer(true);
         else setShowSaves(true);
+        return;
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'r' && gameState) {
+        if (showRealm) {
+          e.preventDefault();
+          setShowRealm(false);
+          return;
+        }
+        if (!document.querySelector('.fixed.inset-0.z-50')) {
+          e.preventDefault();
+          setShowRealm(true);
+        }
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeMpRoom]);
+  }, [activeMpRoom, gameState, showRealm]);
 
   // Live SSE synchronization when inside a Shared Multiplayer Room
   useEffect(() => {
@@ -1035,6 +1090,7 @@ export default function App() {
     setTacticalMarch(null);
     setTacticalReportModal(null);
     setPendingMilitary(null);
+    setPendingReinforce(null);
     setActiveDuel(null);
     setHeroEncounter(null);
     setAttackMode(false);
@@ -1119,6 +1175,7 @@ export default function App() {
     setTacticalReportModal(null);
     setIncomingDefensePrompt(null);
     setPendingMilitary(null);
+    setPendingReinforce(null);
     setActiveDuel(null);
     setHeroEncounter(null);
     setSaveIndicator('saved');
@@ -1137,6 +1194,7 @@ export default function App() {
     setTacticalReportModal(null);
     setIncomingDefensePrompt(null);
     setPendingMilitary(null);
+    setPendingReinforce(null);
     setActiveDuel(null);
     setHeroEncounter(null);
     setWarQueue([]);
@@ -1174,6 +1232,7 @@ export default function App() {
     setIncomingDefensePrompt(null);
     setDemoTacticalPreset(false);
     setPendingMilitary(null);
+    setPendingReinforce(null);
     setActiveDuel(null);
     setHeroEncounter(null);
   }
@@ -1224,6 +1283,7 @@ export default function App() {
 
     const useTacticalGrid = (payload.battleMode ?? 'tactical') === 'tactical';
     setPendingMilitary(null);
+    setPendingReinforce(null);
     setActiveDuel(null);
     setAttackMode(false);
 
@@ -1408,12 +1468,28 @@ export default function App() {
 
   function handleReinforce(fromCityId: string, toCityId: string) {
     if (!gameState || !canIssueOrders) return;
-    const fromCity = gameState.cities[fromCityId];
-    if (!fromCity) return;
-    const amount = Math.round(fromCity.troops * 0.4);
+    setPendingReinforce({ fromCityId, toCityId });
+  }
+
+  function handleExecuteReinforce(
+    fromCityId: string,
+    toCityId: string,
+    troops: number,
+    escortGeneralIds: string[]
+  ) {
+    if (!gameState || !canIssueOrders) return;
     commitCampaignState(
-      performReinforceCity(gameState, gameState.playerFaction, fromCityId, toCityId, amount, true)
+      performReinforceCity(
+        gameState,
+        gameState.playerFaction,
+        fromCityId,
+        toCityId,
+        troops,
+        true,
+        escortGeneralIds
+      )
     );
+    setPendingReinforce(null);
   }
 
   function handleHeroEncounterResolved(
@@ -1770,6 +1846,7 @@ export default function App() {
           }}
           onAppointGovernor={appointGovernor}
           onSetFocus={setGovernorFocus}
+          onSummonOfficer={summonOfficer}
         />
       )}
 
@@ -1940,6 +2017,7 @@ export default function App() {
         onOpenSaves={() => setShowSaves(true)}
         onOpenMultiplayer={() => setShowMultiplayer(true)}
         onOpenAuth={() => setShowAuth(true)}
+        onOpenRealm={() => setShowRealm(true)}
       />
 
       {activeMpRoom && !isMyTurnInMp && activeMpRoom.status === 'active' && (
@@ -2028,6 +2106,10 @@ export default function App() {
                 if (!canIssueOrders) return;
                 setHeroEncounter({ heroId, mode: 'recruit' });
               }}
+              onSummonOfficer={summonOfficer}
+              onMendBreach={mendBreach}
+              onResolveCrisis={resolveCrisis}
+              onCharterSpecialty={charterSpecialty}
             />
           )}
 
@@ -2083,6 +2165,7 @@ export default function App() {
                 state={gameState}
                 lang={lang}
                 selectedCityId={selectedCityId}
+                canIssueOrders={canIssueOrders}
                 onDomesticOrder={issueDomesticOrder}
                 onFortify={(cid) => {
                   if (!canIssueOrders) return;
@@ -2104,6 +2187,12 @@ export default function App() {
                   if (!canIssueOrders) return;
                   setHeroEncounter({ heroId, mode: 'recruit' });
                 }}
+                onAppointGovernor={appointGovernor}
+                onSetFocus={setGovernorFocus}
+                onSummonOfficer={summonOfficer}
+                onMendBreach={mendBreach}
+                onResolveCrisis={resolveCrisis}
+                onCharterSpecialty={charterSpecialty}
               />
             )}
 
@@ -2211,6 +2300,19 @@ export default function App() {
           initialAction={pendingMilitary.action}
           onCancel={() => setPendingMilitary(null)}
           onExecute={handleExecuteMilitary}
+          onPreviewRoute={setOrderRoute}
+        />
+      )}
+
+      {/* Interactive Reinforce & Convoy Modal (Troop Slider + Escorting Officers) */}
+      {pendingReinforce && canIssueOrders && (
+        <ReinforceModal
+          state={gameState}
+          lang={lang}
+          toCityId={pendingReinforce.toCityId}
+          initialFromCityId={pendingReinforce.fromCityId}
+          onCancel={() => setPendingReinforce(null)}
+          onExecute={handleExecuteReinforce}
           onPreviewRoute={setOrderRoute}
         />
       )}

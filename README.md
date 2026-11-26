@@ -58,3 +58,25 @@ Open **http://localhost:5173** in your browser.
 | `npm start` | Starts production server serving both API and built UI |
 | `npm test` | Runs Vitest game engine & Butterfly Effect unit tests |
 | `npm run typecheck` | Type-checks client and server TypeScript |
+| `npm run capture -- --label <name>` | Shoots every 3D scene from fixed camera presets in headless Chrome and records its cost (see below) |
+
+### Checking a graphics change
+
+`scripts/capture-scenes.mjs` makes "does it look better, and what did it cost" a pair of pictures and a number. With the dev servers running:
+
+```bash
+npm run capture -- --label before --timing      # before the change
+npm run capture -- --label after --timing       # after it
+npm run capture -- --sheet before after         # side-by-side sheets with the cost of each
+```
+
+Output goes to `captures/<label>/` (ignored by git): one PNG per preset in both looks, and `metrics.json` with draw calls and triangles per shot and, with `--timing`, the frame interval and GPU time with the frame limiter off. `--only duel,war` and `--looks myth` narrow a run; `--query quality=low` or `--query tone=agx` adds address parameters. `--motion` shoots each preset twice, 0.4 s apart, and reports how much of the picture moved, which is how wind, water and marching are checked without watching them.
+
+Address parameters for looking at one thing at a time (nothing is saved):
+
+| Parameter | Effect |
+| --- | --- |
+| `?look=myth` / `?look=classic` | Preview an art style |
+| `?quality=low` / `medium` / `high` | Preview a graphics-quality tier (the saved choice is in Settings) |
+| `?tone=aces` / `agx` / `neutral` | Preview a tone-mapping curve (ACES is what ships) |
+| `?fxOff=env,fog,ao,contact` | Switch off ambient sky light, height fog, baked occlusion or contact shadows |

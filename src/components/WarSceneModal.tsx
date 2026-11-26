@@ -18,6 +18,7 @@ import { Art } from './ui/Art.js';
 import { CountUp } from './ui/CountUp.js';
 import { Seal } from './ui/Seal.js';
 import { WarStage3D } from './WarStage3D.js';
+import { getComfort } from '../utils/comfort.js';
 
 export interface WarSceneConfig {
   id: string;
@@ -908,7 +909,7 @@ export function WarSceneModal({
 
       // Render Frame
       ctx.save();
-      if (shake > 0.2) {
+      if (shake > 0.2 && getComfort().shake) {
         ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
       }
       drawBackground(elapsed);

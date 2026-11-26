@@ -13,6 +13,8 @@ import {
   loadMotionPreference,
   type MotionPreference,
 } from '../utils/motion.js';
+import { setComfort, useComfort } from '../utils/comfort.js';
+import { getAutoTier, setQualityChoice, useQualityChoice, type QualityChoice } from '../utils/quality.js';
 
 const MOTION_OPTIONS: Array<{ id: MotionPreference; en: string; zh: string }> = [
   { id: 'system', en: 'Follow system', zh: '跟随系统' },
@@ -24,6 +26,18 @@ const LOOK_OPTIONS: Array<{ id: ArtLook; en: string; zh: string }> = [
   { id: 'myth', en: 'Dark myth', zh: '玄暗神话' },
   { id: 'classic', en: 'Classic ink', zh: '经典水墨' },
 ];
+
+const QUALITY_OPTIONS: Array<{ id: QualityChoice; en: string; zh: string }> = [
+  { id: 'auto', en: 'Auto', zh: '自动' },
+  { id: 'low', en: 'Low', zh: '低' },
+  { id: 'medium', en: 'Medium', zh: '中' },
+  { id: 'high', en: 'High', zh: '高' },
+];
+const TIER_NAME: Record<string, { en: string; zh: string }> = {
+  low: { en: 'Low', zh: '低' },
+  medium: { en: 'Medium', zh: '中' },
+  high: { en: 'High', zh: '高' },
+};
 
 interface SettingsModalProps {
   lang: Language;
@@ -46,6 +60,8 @@ export function SettingsModal({
   const [baseUrl, setBaseUrl] = useState(currentConfig.baseUrl || '');
   const [motion, setMotion] = useState<MotionPreference>(() => loadMotionPreference());
   const [look, setLook] = useState<ArtLook>(() => getArtLook());
+  const quality = useQualityChoice();
+  const comfort = useComfort();
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
@@ -215,6 +231,72 @@ export function SettingsModal({
                 }}
                 className={`py-1.5 rounded-md border text-xs font-semibold cursor-pointer ${
                   look === opt.id
+                    ? 'border-amber-300 bg-amber-400/15 text-amber-100'
+                    : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                }`}
+              >
+                {lang === 'zh' ? opt.zh : opt.en}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Battle comfort: screen shake and flashes each have their own switch */}
+        <div className="border-t border-white/10 pt-4">
+          <div className="text-xs font-semibold text-[#f5ecd7] mb-1">
+            {lang === 'zh' ? '战斗特效' : 'Battle effects'}
+          </div>
+          <p className="text-[11px] text-[#b8b2a2] mb-2">
+            {lang === 'zh'
+              ? '镜头震动与强光闪烁可分别关闭；关闭后战斗照常进行。'
+              : 'Screen shake and bright flashes can each be turned off; battles play the same without them.'}
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                { key: 'shake', en: 'Screen shake', zh: '镜头震动' },
+                { key: 'flash', en: 'Flashes', zh: '强光闪烁' },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                role="switch"
+                aria-checked={comfort[opt.key]}
+                onClick={() => setComfort({ [opt.key]: !comfort[opt.key] })}
+                className={`py-1.5 rounded-md border text-xs font-semibold cursor-pointer ${
+                  comfort[opt.key]
+                    ? 'border-amber-300 bg-amber-400/15 text-amber-100'
+                    : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10'
+                }`}
+              >
+                {lang === 'zh' ? opt.zh : opt.en}
+                {' · '}
+                {comfort[opt.key] ? (lang === 'zh' ? '开' : 'On') : lang === 'zh' ? '关' : 'Off'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Graphics quality: resolution, antialiasing, shadow detail and crowd size of the 3D scenes */}
+        <div className="border-t border-white/10 pt-4">
+          <div className="text-xs font-semibold text-[#f5ecd7] mb-1">
+            {lang === 'zh' ? '画面质量' : 'Graphics quality'}
+          </div>
+          <p className="text-[11px] text-[#b8b2a2] mb-2">
+            {lang === 'zh'
+              ? `决定三维场景的分辨率、抗锯齿、阴影精度与军阵规模。自动：按显卡选择（本机为“${TIER_NAME[getAutoTier()].zh}”）。`
+              : `Sets the resolution, antialiasing, shadow detail and crowd size of the 3D scenes. Auto picks by graphics card (${TIER_NAME[getAutoTier()].en} on this machine).`}
+          </p>
+          <div className="grid grid-cols-4 gap-2">
+            {QUALITY_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                aria-pressed={quality === opt.id}
+                onClick={() => setQualityChoice(opt.id)}
+                className={`py-1.5 rounded-md border text-xs font-semibold cursor-pointer ${
+                  quality === opt.id
                     ? 'border-amber-300 bg-amber-400/15 text-amber-100'
                     : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
                 }`}

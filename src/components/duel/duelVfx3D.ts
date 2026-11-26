@@ -89,40 +89,87 @@ const GradeShader = {
 export interface DuelPostFx {
   render(): void;
   setSize(width: number, height: number): void;
+  /** Changes the resolution the chain renders at without rebuilding it */
+  setPixelRatio(pixelRatio: number): void;
+  /** Turns the dark mythic grade on or off */
+  setMyth(on: boolean): void;
   grade: ShaderPass;
   bloom: UnrealBloomPass;
   dispose(): void;
 }
+
+export interface PostFxOptions {
+  /** Multisampling of the scene buffer; 0 turns it off. Default 4. */
+  samples?: number;
+  /** Size of the bloom buffers relative to the frame (bloom already works at half size). Default 1. */
+  bloomScale?: number;
+  /** Whether the dark mythic grade is on. Default: the saved look. */
+  myth?: boolean;
+}
+
+// Half a display step of noise, added after tone mapping: it breaks the banding that an 8-bit
+// screen otherwise shows in slow dark gradients (mist, night sky, vignette).
+const DITHER = /* glsl */ `
+			gl_FragColor.rgb += ( fract( sin( dot( gl_FragCoord.xy, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 ) - 0.5 ) / 255.0;
+`;
 
 export function createDuelPostFx(
   renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
   camera: THREE.Camera,
   width: number,
-  height: number
+  height: number,
+  options: PostFxOptions = {}
 ): DuelPostFx {
   const dpr = renderer.getPixelRatio();
+  const samples = options.samples ?? 4;
+  const bloomScale = options.bloomScale ?? 1;
   const target = new THREE.WebGLRenderTarget(width * dpr, height * dpr, {
     type: THREE.HalfFloatType,
-    samples: renderer.capabilities.isWebGL2 ? 4 : 0,
+    samples: renderer.capabilities.isWebGL2 ? samples : 0,
   });
   const composer = new EffectComposer(renderer, target);
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.28, 0.55, 1.18);
   composer.addPass(bloom);
   const grade = new ShaderPass(GradeShader);
-  grade.uniforms.uMyth.value = isMythLook() ? 1 : 0;
+  grade.uniforms.uMyth.value = (options.myth ?? isMythLook()) ? 1 : 0;
   composer.addPass(grade);
-  composer.addPass(new OutputPass());
+  const output = new OutputPass();
+  output.material.fragmentShader = output.material.fragmentShader.replace(/\}\s*$/, `${DITHER}\t\t}`);
+  composer.addPass(output);
+
+  let cssWidth = width;
+  let cssHeight = height;
+  let pixelRatio = dpr;
+  // The composer sizes every pass to the frame; a reduced bloom is set back to its own size after
+  const fitBloom = () => {
+    if (bloomScale !== 1) bloom.setSize(cssWidth * pixelRatio * bloomScale, cssHeight * pixelRatio * bloomScale);
+  };
+  fitBloom();
 
   return {
     grade,
     bloom,
     render: () => composer.render(),
-    setSize: (w, h) => composer.setSize(w, h),
+    setSize: (w, h) => {
+      cssWidth = w;
+      cssHeight = h;
+      composer.setSize(w, h);
+      fitBloom();
+    },
+    setPixelRatio: (next) => {
+      pixelRatio = next;
+      composer.setPixelRatio(next);
+      fitBloom();
+    },
+    setMyth: (on) => {
+      grade.uniforms.uMyth.value = on ? 1 : 0;
+    },
     dispose: () => {
       bloom.dispose();
       grade.dispose();
+      output.dispose();
       composer.dispose();
       target.dispose();
     },

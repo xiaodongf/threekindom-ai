@@ -30,7 +30,7 @@ export function summarizeGameStateForAI(state: GameState, lang: Language): strin
     const cityList = owned
       .map(
         (c) =>
-          `${lang === 'zh' ? c.name.zh : c.name.en}(id:${c.id}, province:${c.province}, troops:${c.troops}, def:${c.defense}, farming:${c.farming}, trade:${c.trade}, drill:${c.drill}, support:${c.support}, terrain:${c.terrain}, neighbors:[${c.neighbors.join(',')}])`
+          `${lang === 'zh' ? c.name.zh : c.name.en}(id:${c.id}, province:${c.province}, troops:${c.troops}, def:${c.defense}, farming:${c.farming}, trade:${c.trade}, drill:${c.drill}, support:${c.support}, spec:${c.specialty || 'none'}, terrain:${c.terrain}, neighbors:[${c.neighbors.join(',')}])`
       )
       .join('; ');
     const rivalTechs =
@@ -226,13 +226,30 @@ export const AI_TURN_SCHEMA: Record<string, unknown> = {
   properties: {
     type: {
       type: 'string',
-      enum: ['attack', 'raid', 'bombard', 'recruit', 'farm', 'trade', 'drill', 'relief', 'fortify', 'reinforce', 'hold'],
+      enum: [
+        'attack',
+        'raid',
+        'bombard',
+        'recruit',
+        'farm',
+        'trade',
+        'drill',
+        'relief',
+        'fortify',
+        'specialize',
+        'reinforce',
+        'hold',
+      ],
     },
     cityId: { type: 'string' },
     targetCityId: { type: 'string' },
     tactic: {
       type: 'string',
       enum: ['assault', 'fire', 'ambush', 'siege'],
+    },
+    specialty: {
+      type: 'string',
+      enum: ['granary', 'emporium', 'armory', 'academy', 'bastion'],
     },
     troopsRatio: { type: 'number' },
     proclamation: { type: 'string' },

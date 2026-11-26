@@ -1,6 +1,15 @@
 import { ASPECT_MAX_LEVEL } from './cityAspects.js';
+import { cityWorksRateMultiplier } from './citySpecialties.js';
 import { getCityGenerals } from './queries.js';
-import type { City, GameState, General, GovernorFocus, GovernorTask } from './types.js';
+import type {
+  City,
+  GameState,
+  General,
+  GovernorFocus,
+  GovernorTask,
+  PlayableFactionId,
+  SummonableOfficerCandidate,
+} from './types.js';
 
 /**
  * Governors. Every held city has one: the general appointed to the post, or, while the post is
@@ -149,7 +158,7 @@ export function governorPlanOf(state: GameState, cityId: string): GovernorPlan |
     const score = task === 'drill' ? city.drill : city.support;
     seasonsLeft = idle ? 0 : Math.ceil((GOVERNOR_SCORE_CEILING - score) / rate);
   } else {
-    rate = worksPerSeason(skill);
+    rate = Math.round(worksPerSeason(skill) * cityWorksRateMultiplier(city));
     works = city.works?.[task] ?? 0;
     seasonsLeft = idle ? 0 : Math.ceil((WORKS_PER_LEVEL - works) / rate);
   }
@@ -203,4 +212,73 @@ export function applyGovernorSeason(before: City, drifted: City, plan: GovernorP
     },
     completed: { task, level },
   };
+}
+
+/**
+ * Partial works accumulated on a city's farming, trade, or walls (0..99), plus seasons remaining
+ * if the active governor is currently advancing that aspect.
+ */
+export function aspectWorksProgress(
+  state: GameState,
+  city: City,
+  task: 'farming' | 'trade' | 'walls'
+): { works: number; rate: number; isActiveTask: boolean; seasonsLeft: number | null } {
+  const field = task === 'walls' ? 'defense' : task;
+  if (city[field] >= ASPECT_MAX_LEVEL) {
+    return { works: 0, rate: 0, isActiveTask: false, seasonsLeft: null };
+  }
+  const works = city.works?.[task] ?? 0;
+  const plan = governorPlanOf(state, city.id);
+  const riotBlocked = city.event?.kind === 'riot';
+  if (plan && plan.task === task && !plan.idle && !riotBlocked) {
+    return {
+      works,
+      rate: plan.rate,
+      isActiveTask: true,
+      seasonsLeft: plan.seasonsLeft,
+    };
+  }
+  return { works, rate: 0, isActiveTask: false, seasonsLeft: null };
+}
+
+/**
+ * Active generals of `factionId` stationed in other owned cities who can be summoned (`1 AP`) to
+ * govern or reinforce `targetCityId`. Spare officers (whose move will not leave their origin city
+ * empty) are ranked first, ordered by administrative & command fit.
+ */
+export function getSummonableGeneralsForCity(
+  state: GameState,
+  factionId: PlayableFactionId,
+  targetCityId: string
+): SummonableOfficerCandidate[] {
+  const target = state.cities[targetCityId];
+  if (!target || target.owner !== factionId) return [];
+
+  const candidates: SummonableOfficerCandidate[] = [];
+  for (const g of Object.values(state.generals)) {
+    if (g.faction !== factionId || g.status !== 'active' || g.cityId === targetCityId) continue;
+    const fromCity = state.cities[g.cityId];
+    if (!fromCity || fromCity.owner !== factionId) continue;
+
+    const originOfficers = getCityGenerals(state, fromCity.id);
+    const leavesOriginEmpty = originOfficers.length <= 1;
+    const isOriginGovernor = getCityGovernor(state, fromCity.id)?.general.id === g.id;
+    const governanceFit = Math.round(g.politics * 0.55 + g.command * 0.25 + g.charisma * 0.2);
+
+    candidates.push({
+      general: g,
+      fromCity,
+      governanceFit,
+      isOriginGovernor,
+      leavesOriginEmpty,
+    });
+  }
+
+  return candidates.sort(
+    (a, b) =>
+      Number(a.leavesOriginEmpty) - Number(b.leavesOriginEmpty) ||
+      b.governanceFit - a.governanceFit ||
+      b.general.politics - a.general.politics ||
+      a.general.id.localeCompare(b.general.id)
+  );
 }

@@ -1,5 +1,6 @@
 import { cityTier } from '../../game/cityAspects.js';
 import * as THREE from 'three';
+import { bakeVertexOcclusion } from '../gfx/bakedOcclusion.js';
 import type { City } from '../../game/types.js';
 import { mergeRigid, type DisposeBag, type PaletteMaterials } from '../duel/duelGeometry3D.js';
 import { FACTION_PIGMENT } from './mapTerrain.js';
@@ -224,6 +225,12 @@ export function createCityKit(bag: DisposeBag): CityKit {
 
     for (const child of g.children) (child as THREE.Mesh).castShadow = false;
     mergeRigid(g, palettes, bag);
+    // No light on the map casts a shadow, so the miniature gets its shade here: under the
+    // eaves, between the houses and where the walls meet the ground
+    bakeVertexOcclusion(
+      g.children.filter((child): child is THREE.Mesh => (child as THREE.Mesh).isMesh),
+      { cell: 0.06, ground: 0.1, strength: 0.55 }
+    );
     return g;
   };
 

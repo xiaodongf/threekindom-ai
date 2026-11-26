@@ -1,5 +1,6 @@
 import { isMythLook } from '../../utils/artLook.js';
 import * as THREE from 'three';
+import { FACTION_PIGMENT } from '../../utils/factionPalette.js';
 import { MAP_HEIGHT, MAP_WIDTH } from '../../game/mapGeo.js';
 import type { FactionId } from '../../game/types.js';
 import type { DisposeBag } from '../duel/duelGeometry3D.js';
@@ -8,14 +9,10 @@ import { WORLD_H, WORLD_W, type MapWorld } from './mapWorld.js';
 /** How much relief survives when the map is shown as a paper sheet. */
 export const PAPER_RELIEF = 0.16;
 
-/** Realm colours as mineral pigments; index 0 is unclaimed ground. */
+/** Realm colours as mineral pigments, shared with the other 3D scenes. */
+export { FACTION_PIGMENT };
+/** The shader knows each realm by this number; index 0 is unclaimed ground. */
 export const FACTION_INDEX: Record<FactionId, number> = { neutral: 0, wei: 1, shu: 2, wu: 3 };
-export const FACTION_PIGMENT: Record<FactionId, number> = {
-  neutral: 0x9a8f78,
-  wei: 0x4c78a8,
-  shu: 0x438554,
-  wu: 0xc2432f,
-};
 
 const VERT = /* glsl */ `
 uniform sampler2D uHeight;
@@ -141,7 +138,14 @@ void main() {
   ground *= 0.9 + mottle * 0.2;
   ground *= shade;
 
-  vec3 riverCol = vec3(0.50, 0.70, 0.68);
+  // Rivers: pale shallows at the banks, a darker channel down the middle, and ripples that
+  // travel in from the banks so the water is never a flat band
+  float riverDeep = smoothstep(0.5, 0.95, mask.b);
+  vec3 riverCol = mix(vec3(0.56, 0.75, 0.72), vec3(0.30, 0.52, 0.55), riverDeep);
+  float riverRipple = sin(mask.b * 34.0 - uTime * 0.8 + mottle * 5.0 + grain * 2.0);
+  riverCol += smoothstep(0.82, 1.0, riverRipple) * 0.06 * (1.0 - uPaper);
+  float riverBank = (1.0 - smoothstep(0.0, 0.09, abs(mask.b - 0.45))) * 0.16;
+  riverCol += riverBank;
   ground = mix(ground, riverCol * (0.8 + 0.2 * shade), water * 0.92);
   ground = mix(ground, ground * 0.62, smoothstep(0.1, 0.3, mask.b) * (1.0 - water) * land * 0.5);
   float lakeRipple = sin((0.82 - lk.g) * 62.0 - uTime * 0.55 + mottle * 3.8);

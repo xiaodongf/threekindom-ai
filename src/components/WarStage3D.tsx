@@ -4,12 +4,16 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { getHeroDuelProfile } from '../game/heroDuelProfiles.js';
 import type { FactionId, GameState, General } from '../game/types.js';
 import { isMythLook } from '../utils/artLook.js';
+import { flashScale, shakeScale } from '../utils/comfort.js';
+import { FACTION_CLOTH } from '../utils/factionPalette.js';
 import { prefersReducedMotion } from '../utils/motion.js';
+import { createFrameGovernor, getQuality, useQualityTier } from '../utils/quality.js';
 import { DARK_IRON, getArenaLook } from './duel/duelArena3D.js';
 import { DisposeBag } from './duel/duelGeometry3D.js';
 import { applyRigPose3D, buildMountedGeneralRig3D } from './duel/duelModels3D.js';
 import {
   createDustPuffTexture,
+  createGlowTexture,
   createGroundDetailTextures,
   createImpactFlareTexture,
   createPaintedPanoramaTexture,
@@ -18,6 +22,13 @@ import {
 } from './duel/duelTextures3D.js';
 import type { RiderFrameState } from './duel/duelTypes.js';
 import { createDuelPostFx } from './duel/duelVfx3D.js';
+import { SOLDIER_KITS, createFigureCrowd, figureTint, type FigureCrowd } from './gfx/figures.js';
+import { buildCamp } from './gfx/camp.js';
+import { createHeightFog, readBackdropStrip } from './gfx/heightFog.js';
+import { createWater, setWaterDepth, type Water } from './gfx/water.js';
+import { createWind } from './gfx/wind.js';
+import { createSceneEnvironment } from './gfx/sceneEnvironment.js';
+import { applyToneMapping, toneExposure } from './gfx/toneMapping.js';
 import type { WarSceneConfig } from './WarSceneModal.js';
 
 interface WarStage3DProps {
@@ -27,11 +38,15 @@ interface WarStage3DProps {
   onFallback?: () => void;
 }
 
+const paletteOf = (faction: FactionId): { bg: string; trim: string; banner: string } => {
+  const c = FACTION_CLOTH[faction] ?? FACTION_CLOTH.neutral;
+  return { bg: c.cloth, trim: c.trim, banner: c.glyph };
+};
 const FACTION_PALETTE: Record<FactionId, { bg: string; trim: string; banner: string }> = {
-  wei: { bg: '#2f5d8c', trim: '#e6c164', banner: '魏' },
-  shu: { bg: '#2f6e49', trim: '#e8c864', banner: '蜀' },
-  wu: { bg: '#a62c22', trim: '#f0c45c', banner: '吴' },
-  neutral: { bg: '#635c51', trim: '#d8bc74', banner: '汉' },
+  wei: paletteOf('wei'),
+  shu: paletteOf('shu'),
+  wu: paletteOf('wu'),
+  neutral: paletteOf('neutral'),
 };
 
 function makeFallbackCaptain(template: General, faction: FactionId, side: 'atk' | 'def'): General {
@@ -109,6 +124,11 @@ interface SoldierSlot {
   phase: number;
   fallAt: number; // progress threshold (0..1) when this soldier falls; > 1 means survives
   flank: boolean;
+  /** How many ranks back from the front he stands */
+  rank: number;
+  /** Which crowd draws him, and which instance of it he is */
+  crowd: number;
+  index: number;
 }
 
 interface ShipSlot {
@@ -137,6 +157,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
   // The parent re-renders every frame and passes a fresh callback each time; reading it
   // through a ref keeps the scene effect from tearing down and rebuilding with it.
   const onFallbackRef = useRef(onFallback);
+  const qualityTier = useQualityTier();
   useEffect(() => {
     onFallbackRef.current = onFallback;
   }, [onFallback]);
@@ -147,8 +168,10 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
 
     let renderer: THREE.WebGLRenderer;
     try {
+      // The scene is drawn into a multisampled buffer by the post chain, so the canvas itself
+      // needs no antialiasing of its own
       renderer = new THREE.WebGLRenderer({
-        antialias: true,
+        antialias: false,
         powerPreference: 'high-performance',
       });
     } catch {
@@ -166,17 +189,30 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
 
     const initW = Math.max(320, host.clientWidth || 960);
     const initH = Math.max(240, host.clientHeight || 520);
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    const quality = getQuality();
+    let pixelRatio = Math.min(quality.pixelRatioCap, window.devicePixelRatio || 1);
+    renderer.setPixelRatio(pixelRatio);
     renderer.setSize(initW, initH);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = look.exposure;
+    applyToneMapping(renderer);
+    renderer.toneMappingExposure = toneExposure(look.exposure);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     host.appendChild(renderer.domElement);
 
     const world = new THREE.Scene();
     world.fog = new THREE.FogExp2(look.fog, look.fogDensity * 0.92);
+
+    // Ambient light from the battlefield's own sky: helmets and blades have something to
+    // reflect, and faces turned from the sun keep some sky colour
+    const sunDir = new THREE.Vector3(look.sunPos[0], look.sunPos[1] + 2, look.sunPos[2]).normalize();
+    const environment = createSceneEnvironment(renderer, {
+      skyStops: [look.skyStops[0], look.skyStops[2], look.fog, look.groundInner, '#0c0a08'],
+      sunDir,
+      sunColor: look.sunColor,
+    });
+    world.environment = environment.texture;
+    world.environmentIntensity = 0.6;
 
     const camera = new THREE.PerspectiveCamera(38, initW / initH, 0.2, 160);
     camera.position.set(0, 5.2, 18.5);
@@ -234,14 +270,16 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
     const bandHeight = look.band[1] - look.band[0];
     const arcLen = BACKDROP_RADIUS * Math.PI * 2 * BACKDROP_ARC;
     const paintH = (arcLen * 768 * bandHeight) / 1376;
+    const panoTex = createPaintedPanoramaTexture(look.panoUrl, look.band, BACKDROP_ARC, bag);
+    const panoTint = new THREE.Color(...look.panoTint).multiplyScalar(1.08);
     const pano = new THREE.Mesh(
       bag.add(new THREE.CylinderGeometry(BACKDROP_RADIUS, BACKDROP_RADIUS, paintH, 64, 1, true)),
       bag.add(
         new THREE.MeshBasicMaterial({
-          map: createPaintedPanoramaTexture(look.panoUrl, look.band, BACKDROP_ARC, bag),
+          map: panoTex,
           side: THREE.BackSide,
           fog: false,
-          color: new THREE.Color(...look.panoTint).multiplyScalar(1.08),
+          color: panoTint,
         })
       )
     );
@@ -251,36 +289,24 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
     world.add(pano);
 
     // --- Ground or Living Yangtze River Plane
-    let waterGeo: THREE.PlaneGeometry | null = null;
-    let waterBase: Float32Array | null = null;
+    let river: Water | null = null;
     if (isRiver) {
-      waterGeo = bag.add(new THREE.PlaneGeometry(160, 140, 72, 56));
+      const waterGeo = bag.add(new THREE.PlaneGeometry(160, 140, 8, 28));
       waterGeo.rotateX(-Math.PI * 0.5);
-      waterBase = (waterGeo.attributes.position.array as Float32Array).slice();
-      const wPos = waterGeo.attributes.position as THREE.BufferAttribute;
-      const wCols = new Float32Array(wPos.count * 3);
+      // The channel the fleets fight in runs down the middle; the water darkens away from it
+      setWaterDepth(waterGeo, (_x, _y, z) => 1 - Math.exp(-Math.pow(z / 14, 2)));
       const darkWater = isNight || myth;
-      const deep = new THREE.Color(myth ? '#0a1a1e' : isNight ? '#0e2433' : '#184a52');
-      const channel = new THREE.Color(myth ? '#1c3a3e' : isNight ? '#1b3e52' : '#2c767c');
-      const tmpW = new THREE.Color();
-      for (let i = 0; i < wPos.count; i++) {
-        const band = Math.exp(-Math.pow(wPos.getZ(i) / 14, 2));
-        tmpW.copy(deep).lerp(channel, band);
-        wCols[i * 3] = tmpW.r;
-        wCols[i * 3 + 1] = tmpW.g;
-        wCols[i * 3 + 2] = tmpW.b;
-      }
-      waterGeo.setAttribute('color', new THREE.BufferAttribute(wCols, 3));
-      const waterMat = bag.add(
-        new THREE.MeshStandardMaterial({
-          vertexColors: true,
-          emissive: darkWater ? '#091b28' : '#123a40',
-          emissiveIntensity: myth ? 0.22 : 0.42,
-          roughness: myth ? 0.24 : 0.32,
-          metalness: 0.14,
-        })
-      );
-      const waterMesh = new THREE.Mesh(waterGeo, waterMat);
+      river = createWater({
+        shallow: myth ? '#1c3a3e' : isNight ? '#1b3e52' : '#2c767c',
+        deep: myth ? '#0a1a1e' : isNight ? '#0e2433' : '#184a52',
+        flow: new THREE.Vector2(1.5, 0.25),
+        rippleSize: 3.4,
+        chop: 0.75,
+        roughness: myth ? 0.2 : 0.26,
+        emissive: darkWater ? '#091b28' : '#123a40',
+        emissiveIntensity: myth ? 0.22 : 0.42,
+      });
+      const waterMesh = new THREE.Mesh(waterGeo, bag.add(river.material));
       waterMesh.receiveShadow = true;
       world.add(waterMesh);
     } else {
@@ -416,7 +442,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
     const defPal = FACTION_PALETTE[scene.defenderFaction];
 
     // --- Fluttering Silk War Banners
-    const banners: Array<{ mesh: THREE.Mesh; base: Float32Array; phase: number }> = [];
+    const wind = bag.add(createWind(0.96, 0.28));
     if (!isRiver) {
       const woodMat = bag.add(new THREE.MeshStandardMaterial({ color: '#3b2616', roughness: 0.88 }));
       const goldMat = bag.add(new THREE.MeshStandardMaterial({ color: '#e5c158', metalness: 0.9, roughness: 0.3 }));
@@ -429,7 +455,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
         { x: 11.8, z: -5.8, glyph: scene.defenderHero?.seal ?? defPal.banner, pal: defPal, dir: -1 },
         { x: 9.8, z: 5.6, glyph: defPal.banner, pal: defPal, dir: -1 },
       ];
-      bannerSpecs.forEach((b, idx) => {
+      bannerSpecs.forEach((b) => {
         const pole = new THREE.Mesh(poleGeo, woodMat);
         pole.position.set(b.x, 3.2, b.z);
         pole.castShadow = true;
@@ -453,14 +479,29 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
         );
         cloth.position.set(b.x + b.dir * 0.68, 4.65, b.z);
         cloth.castShadow = true;
+        // Hung from the bar along its top edge; the lower end swings free
+        wind.cloth(cloth, { axis: 'y', pin: 1.375, length: -2.75, amplitude: 0.2, ripples: 5.6, drift: 0.3 });
         world.add(cloth);
-        banners.push({
-          mesh: cloth,
-          base: (clothGeo.attributes.position.array as Float32Array).slice(),
-          phase: idx * 1.3,
-        });
       });
     }
+
+    // --- The camps behind the lines: tents, racks and standards between the field and the painting
+    const camp = isRiver
+      ? null
+      : buildCamp(
+          {
+            layout: 'field',
+            left: new THREE.Color(atkPal.bg).lerp(DARK_IRON, look.armyIron * 0.6),
+            right: new THREE.Color(defPal.bg).lerp(DARK_IRON, look.armyIron * 0.6),
+            maxDepth: 38,
+            // A besieged fortress stands on the defenders' side of the field
+            maxX: isFortress ? 9 : undefined,
+            fires: myth || isNight,
+            wind,
+          },
+          bag
+        );
+    if (camp) world.add(camp.group);
 
     // --- 3D Mounted Commander Generals (Leading the Vanguard on Land)
     const templateGeneral = Object.values(state.generals)[0];
@@ -487,111 +528,50 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
 
     const atkSlots: SoldierSlot[] = [];
     const defSlots: SoldierSlot[] = [];
-    let atkBodies: THREE.InstancedMesh | null = null;
-    let atkIrons: THREE.InstancedMesh | null = null;
-    let atkWood: THREE.InstancedMesh | null = null;
-    let defBodies: THREE.InstancedMesh | null = null;
-    let defIrons: THREE.InstancedMesh | null = null;
-    let defWood: THREE.InstancedMesh | null = null;
+    // Each army is a few crowds of the shared figure kit, one per kit, mixed through the ranks
+    const atkCrowds: FigureCrowd[] = [];
+    const defCrowds: FigureCrowd[] = [];
     const ships: ShipSlot[] = [];
 
     if (!isRiver) {
-      const bodyGeo = bag.add(
-        mergeGeometries([
-          part(new THREE.CylinderGeometry(0.19, 0.27, 0.44, 8), 0, 0.74, 0),
-          part(new THREE.CylinderGeometry(0.24, 0.19, 0.5, 8), 0, 1.2, 0, 0, 0, 0, [0.82, 1, 1.12]),
-          part(new THREE.SphereGeometry(0.13, 8, 6), 0, 1.4, 0.27),
-          part(new THREE.SphereGeometry(0.13, 8, 6), 0, 1.4, -0.27),
-          part(new THREE.CylinderGeometry(0.065, 0.055, 0.46, 6), 0.06, 1.14, 0.31, 0, 0, 0.15),
-          part(new THREE.CylinderGeometry(0.065, 0.055, 0.46, 6), 0.14, 1.16, -0.31, 0, 0, 0.85),
-          part(new THREE.BoxGeometry(0.055, 0.84, 0.5), 0.29, 0.98, 0.22, 0, 0, 0.06),
-          part(new THREE.ConeGeometry(0.05, 0.26, 6), -0.04, 1.98, 0, 0, 0, 0.3),
-        ])
-      );
-      const ironGeo = bag.add(
-        mergeGeometries([
-          part(new THREE.SphereGeometry(0.15, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6), 0, 1.68, 0),
-          part(new THREE.CylinderGeometry(0.165, 0.175, 0.03, 10), 0, 1.69, 0),
-          part(new THREE.CylinderGeometry(0.085, 0.075, 0.54, 6), 0, 0.27, 0.11),
-          part(new THREE.CylinderGeometry(0.085, 0.075, 0.54, 6), 0, 0.27, -0.11),
-          part(new THREE.ConeGeometry(0.048, 0.46, 4), 1.55, 1.46, -0.31, 0, 0, -Math.PI * 0.44),
-          part(new THREE.SphereGeometry(0.08, 6, 6), 0.32, 1.0, 0.22, 0, 0, 0, [0.5, 1, 1]),
-        ])
-      );
-      const fleshWoodGeo = bag.add(
-        mergeGeometries([
-          part(new THREE.SphereGeometry(0.115, 8, 6), 0.015, 1.6, 0),
-          part(new THREE.CylinderGeometry(0.022, 0.024, 3.1, 5), 0.22, 1.3, -0.31, 0, 0, -Math.PI * 0.44),
-        ])
-      );
-
-      const ironMat = bag.add(
-        new THREE.MeshStandardMaterial({
-          color: new THREE.Color('#78808a').multiplyScalar(1 - look.armyIron * 0.3),
-          metalness: 0.84,
-          roughness: 0.38,
-        })
-      );
-      const woodSkinMat = bag.add(new THREE.MeshStandardMaterial({ color: '#84593c', roughness: 0.84 }));
-      // Under the dark look the ranks wear blackened iron with only a cast of their realm's colour
-      const armorMat = (hex: string) =>
-        bag.add(
-          new THREE.MeshStandardMaterial({
-            color: new THREE.Color(hex).lerp(DARK_IRON, look.armyIron),
-            roughness: 0.56 - look.armyIron * 0.12,
-            metalness: 0.28 + look.armyIron * 0.42,
-          })
-        );
-      const atkArmorMat = armorMat(atkPal.bg);
-      const defArmorMat = armorMat(defPal.bg);
-
-      const atkTotal = Math.max(18, Math.round(64 * Math.max(0.38, scene.attackerStartTroops / maxTroops)));
-      const defTotal = Math.max(18, Math.round(64 * Math.max(0.38, scene.defenderStartTroops / maxTroops)));
-
-      atkBodies = new THREE.InstancedMesh(bodyGeo, atkArmorMat, atkTotal);
-      atkIrons = new THREE.InstancedMesh(ironGeo, ironMat, atkTotal);
-      atkWood = new THREE.InstancedMesh(fleshWoodGeo, woodSkinMat, atkTotal);
-      defBodies = new THREE.InstancedMesh(bodyGeo, defArmorMat, defTotal);
-      defIrons = new THREE.InstancedMesh(ironGeo, ironMat, defTotal);
-      defWood = new THREE.InstancedMesh(fleshWoodGeo, woodSkinMat, defTotal);
-
-      for (const m of [atkBodies, atkIrons, atkWood, defBodies, defIrons, defWood]) {
-        m.castShadow = true;
-        m.frustumCulled = false;
-        world.add(m);
-      }
+      // The larger army fields this many figures; the quality setting scales it
+      const fullStrength = Math.round(96 * quality.crowd);
+      const atkTotal = Math.max(18, Math.round(fullStrength * Math.max(0.38, scene.attackerStartTroops / maxTroops)));
+      const defTotal = Math.max(18, Math.round(fullStrength * Math.max(0.38, scene.defenderStartTroops / maxTroops)));
 
       const buildSlots = (count: number, side: 'atk' | 'def', lossRatio: number, target: SoldierSlot[]) => {
-        const rows = 8;
+        const rows = 10;
         const casualties = Math.round(count * lossRatio);
         for (let i = 0; i < count; i++) {
           const isFlank = side === 'atk' && scene.mode === 'pincer' && i >= Math.floor(count * 0.68);
           const r = i % rows;
           const col = Math.floor(i / rows);
-          const jitterX = Math.sin(i * 12.9898) * 0.32;
-          const jitterZ = Math.cos(i * 78.233) * 0.28;
+          const jitterX = Math.sin(i * 12.9898) * 0.3;
+          const jitterZ = Math.cos(i * 78.233) * 0.26;
           let startX: number;
           let startZ: number;
           let clashX: number;
           let clashZ: number;
+          let rank = col;
           if (isFlank) {
             const fc = i - Math.floor(count * 0.68);
             startX = -2.5 + (fc % 4) * 1.35 + jitterX;
             startZ = -12.5 - Math.floor(fc / 4) * 1.4 + jitterZ;
             clashX = 1.2 + (fc % 4) * 1.05 + jitterX * 0.5;
             clashZ = -4.2 - Math.floor(fc / 4) * 1.1;
+            rank = Math.floor(fc / 4);
           } else if (side === 'atk') {
-            startX = -15.2 - col * 1.55 + jitterX;
-            startZ = -5.6 + r * 1.62 + jitterZ;
-            clashX = -1.35 - col * 1.18 + jitterX * 0.4;
-            clashZ = -5.2 + r * 1.5 + jitterZ * 0.5;
+            startX = -15.2 - col * 1.4 + jitterX;
+            startZ = -5.8 + r * 1.3 + jitterZ;
+            clashX = -1.3 - col * 1.02 + jitterX * 0.4;
+            clashZ = -5.4 + r * 1.2 + jitterZ * 0.5;
           } else {
             const baseDef = isFortress ? 9.6 : 13.8;
-            const clashDef = isFortress ? 4.2 : 1.35;
-            startX = baseDef + col * 1.5 + jitterX;
-            startZ = -5.6 + r * 1.62 + jitterZ;
-            clashX = clashDef + col * 1.18 + jitterX * 0.4;
-            clashZ = -5.2 + r * 1.5 + jitterZ * 0.5;
+            const clashDef = isFortress ? 4.2 : 1.3;
+            startX = baseDef + col * 1.4 + jitterX;
+            startZ = -5.8 + r * 1.3 + jitterZ;
+            clashX = clashDef + col * 1.02 + jitterX * 0.4;
+            clashZ = -5.4 + r * 1.2 + jitterZ * 0.5;
           }
           // Deterministic shuffle so casualties fall organically across front & middle ranks
           const order = ((i * CASUALTY_STRIDE + 7) % count) / Math.max(1, count);
@@ -605,11 +585,38 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
             phase: (i * 1.73) % (Math.PI * 2),
             fallAt,
             flank: isFlank,
+            rank,
+            crowd: 0,
+            index: 0,
           });
         }
       };
       buildSlots(atkTotal, 'atk', atkLossRatio, atkSlots);
       buildSlots(defTotal, 'def', defLossRatio, defSlots);
+
+      const tint = new THREE.Color();
+      const dress = (slots: SoldierSlot[], bgHex: string, into: FigureCrowd[]) => {
+        const realm = new THREE.Color(bgHex);
+        const seeds = slots.map((_, i) => Math.abs(Math.sin(i * 91.7 + bgHex.charCodeAt(1) * 3.1) * 43758.5453) % 1);
+        // Shield-and-spear men make the front rank; ji and sabre men stand among those behind
+        const kitOf = (slot: SoldierSlot, seed: number) => (slot.rank === 0 ? 0 : seed < 0.5 ? 0 : seed < 0.78 ? 1 : 2);
+        SOLDIER_KITS.forEach((kit, k) => {
+          const members = slots.map((slot, i) => ({ slot, seed: seeds[i] })).filter((m) => kitOf(m.slot, m.seed) === k);
+          if (members.length === 0) return;
+          const figures = bag.add(createFigureCrowd(kit, members.length));
+          members.forEach((m, n) => {
+            m.slot.crowd = into.length;
+            m.slot.index = n;
+            figures.pose(n, 0, 0, 0, 0.97 + m.seed * 0.1);
+            figures.look(n, figureTint(tint, realm, DARK_IRON, look.armyIron, m.seed), m.seed);
+          });
+          figures.uniforms.uFigIron.value = look.armyIron;
+          world.add(figures.mesh);
+          into.push(figures);
+        });
+      };
+      dress(atkSlots, atkPal.bg, atkCrowds);
+      dress(defSlots, defPal.bg, defCrowds);
     } else {
       // --- 3D Lou-Chuan & Paddlewheel Steam Warships on the Yangtze!
       const hullMat = bag.add(new THREE.MeshStandardMaterial({ color: '#3b2516', roughness: 0.78 }));
@@ -617,11 +624,25 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       const roofMat = bag.add(new THREE.MeshStandardMaterial({ color: '#24282e', roughness: 0.7 }));
       const bronzeMat = bag.add(new THREE.MeshStandardMaterial({ color: '#c89b42', metalness: 0.82, roughness: 0.34 }));
       const ironMat = bag.add(new THREE.MeshStandardMaterial({ color: '#3b4048', metalness: 0.78, roughness: 0.4 }));
+      // A wake is churned water, not a painted ring: brightest where the hull has just passed,
+      // fading out to nothing at both edges
+      const wakeCanvas = document.createElement('canvas');
+      wakeCanvas.width = 64;
+      wakeCanvas.height = 64;
+      const wakeCtx = wakeCanvas.getContext('2d')!;
+      const wakeFade = wakeCtx.createRadialGradient(32, 32, 11, 32, 32, 32);
+      wakeFade.addColorStop(0, 'rgb(0,0,0)');
+      wakeFade.addColorStop(0.3, 'rgb(235,235,235)');
+      wakeFade.addColorStop(0.62, 'rgb(90,90,90)');
+      wakeFade.addColorStop(1, 'rgb(0,0,0)');
+      wakeCtx.fillStyle = wakeFade;
+      wakeCtx.fillRect(0, 0, 64, 64);
       const wakeMat = bag.add(
         new THREE.MeshBasicMaterial({
-          color: '#e5f8f4',
+          color: myth || isNight ? '#b9d3d2' : '#e5f8f4',
+          alphaMap: bag.add(new THREE.CanvasTexture(wakeCanvas)),
           transparent: true,
-          opacity: 0.3,
+          opacity: 0.4,
           depthWrite: false,
         })
       );
@@ -817,6 +838,27 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
     ringGeo.rotateX(-Math.PI * 0.5);
     // Each burst is a hot core and flare (additive, so they glow instead of reading as a
     // flat disc), a shock ring racing over the ground, and smoke that outlives the flash.
+    const SPARKS = 16;
+    const sparkPos = new Float32Array(Math.max(1, bombSpecs.length) * SPARKS * 3).fill(-50);
+    const sparkGeo = bag.add(new THREE.BufferGeometry());
+    sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+    const sparks = new THREE.Points(
+      sparkGeo,
+      bag.add(
+        new THREE.PointsMaterial({
+          map: createGlowTexture(bag),
+          color: new THREE.Color(2.4, 1.25, 0.4),
+          size: 0.3,
+          sizeAttenuation: true,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          fog: false,
+        })
+      )
+    );
+    sparks.frustumCulled = false;
+    world.add(sparks);
     const bombVisuals = bombSpecs.map(() => {
       const shell = new THREE.Mesh(bombGeo, bombMat);
       shell.visible = false;
@@ -953,11 +995,34 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       embers.frustumCulled = false;
       world.add(embers);
     }
-    const post = myth ? createDuelPostFx(renderer, world, camera, initW, initH) : null;
-    if (post) {
-      post.grade.uniforms.uVignette.value = 0.5;
-      post.grade.uniforms.uSaturation.value = 1.02;
-    }
+    // Both looks go through the same bloom-and-grade chain; the classic look used to be drawn
+    // straight to the canvas, where its fire and blast colours clipped to flat shapes
+    const post = createDuelPostFx(renderer, world, camera, initW, initH, {
+      samples: quality.msaaSamples,
+      bloomScale: quality.bloomScale,
+      myth,
+    });
+    post.grade.uniforms.uVignette.value = myth ? 0.5 : 0.36;
+    post.grade.uniforms.uSaturation.value = myth ? 1.02 : 1.05;
+    if (!myth) post.bloom.strength = 0.16;
+
+    // Fog that lies on the field and fades into the painted horizon
+    const heightFog = createHeightFog({
+      falloff: 0.5,
+      density: 0.006 + look.mist * 0.034,
+      sunDir,
+      sunColor: new THREE.Color(look.fog).lerp(new THREE.Color(look.sunColor), 0.5),
+      sunAmount: 0.3 + look.mist * 0.25,
+    });
+    let backdropStrip: THREE.DataTexture | null = null;
+    let stripTries = 0;
+    const governor = createFrameGovernor(() => {
+      if (pixelRatio <= 1) return;
+      pixelRatio = 1;
+      renderer.setPixelRatio(1);
+      post.setPixelRatio(1);
+    });
+    let lastFrameAt = 0;
 
     // --- Resize handling
     const onResize = () => {
@@ -967,7 +1032,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
-      post?.setSize(w, h);
+      post.setSize(w, h);
     };
     const ro = new ResizeObserver(onResize);
     ro.observe(host);
@@ -1010,6 +1075,16 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
     };
 
     const renderFrame = () => {
+      const frameAt = performance.now();
+      if (lastFrameAt) governor(frameAt - lastFrameAt);
+      lastFrameAt = frameAt;
+      if (!backdropStrip && stripTries < 600) {
+        stripTries += 1;
+        backdropStrip = readBackdropStrip(panoTex, look.band[0] + look.horizon * bandHeight, panoTint);
+        if (backdropStrip) {
+          heightFog.setBackdropStrip({ texture: backdropStrip, repeat: 1 / BACKDROP_ARC, amount: 0.9, near: 16, far: 46 });
+        }
+      }
       const t = elapsedRef.current;
       const dt = Math.max(1 / 240, Math.min(0.05, Math.abs(t - prevElapsed) || 1 / 60));
       prevElapsed = t;
@@ -1019,31 +1094,12 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
       const inMelee = t >= 1.55 && t < ROUT_AT;
       const isClimax = t >= ROUT_AT;
 
-      // 1. Water undulation on River maps
-      if (waterGeo && waterBase && !reducedMotion) {
-        const pos = waterGeo.attributes.position.array as Float32Array;
-        for (let i = 0; i < pos.length; i += 3) {
-          const wx = waterBase[i];
-          const wz = waterBase[i + 2];
-          pos[i + 1] =
-            Math.sin(wx * 0.42 + t * 2.1) * 0.09 + Math.cos(wz * 0.55 - t * 1.6) * 0.07;
-        }
-        waterGeo.attributes.position.needsUpdate = true;
-      }
+      // 1. The river runs
+      river?.update(reducedMotion ? 0 : t);
 
-      // 2. Silk banner cloth flutter
-      if (!reducedMotion) {
-        for (const b of banners) {
-          const pos = b.mesh.geometry.attributes.position.array as Float32Array;
-          for (let i = 0; i < pos.length; i += 3) {
-            const bx = b.base[i];
-            const by = b.base[i + 1];
-            const u = (bx + 0.65) / 1.3;
-            pos[i + 2] = b.base[i + 2] + Math.sin(t * 7.5 + u * 4.2 + by * 1.8 + b.phase) * 0.12 * u;
-          }
-          b.mesh.geometry.attributes.position.needsUpdate = true;
-        }
-      }
+      // 2. One wind for the banners: steady on the march, freshening as the lines meet
+      if (!reducedMotion) wind.update(t, inMelee ? 1.5 : 1.1);
+      if (!reducedMotion) camp?.update(t);
 
       // 3. Recon Balloon drift
       if (balloonGroup) {
@@ -1092,60 +1148,64 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
           applyRigPose3D(defRig, defFrame, dt, t);
         }
 
-        const updateArmy = (
-          slots: SoldierSlot[],
-          side: 'atk' | 'def',
-          bodies: THREE.InstancedMesh | null,
-          irons: THREE.InstancedMesh | null,
-          woods: THREE.InstancedMesh | null
-        ) => {
-          if (!bodies || !irons || !woods) return;
+        // Where each man is and what he is doing; the figure shader turns that into motion
+        const updateArmy = (slots: SoldierSlot[], side: 'atk' | 'def', crowds: FigureCrowd[]) => {
+          if (crowds.length === 0) return;
           const lostBattle = side === 'atk' ? !scene.attackerWon : scene.attackerWon;
           const retreatDist = isClimax && lostBattle ? (t - ROUT_AT) * 4.8 : 0;
+          const facing = side === 'atk' ? 0 : Math.PI;
+          // They come on at a run and slow as the lines meet
+          const chargeGait = 0.45 + 1.4 * Math.pow(1 - chargeT, 0.8);
 
           for (let i = 0; i < slots.length; i++) {
             const s = slots[i];
+            const figures = crowds[s.crowd];
             const fallenProg = progress - s.fallAt;
             const xBase = s.startX + (s.clashX - s.startX) * chargeEase;
             const zBase = s.startZ + (s.clashZ - s.startZ) * chargeEase;
 
             if (fallenProg > 0) {
-              const fallK = Math.min(1, fallenProg * 6);
-              dummy.position.set(xBase, -fallK * 0.12, zBase);
-              const dir = side === 'atk' ? 1 : -1;
-              dummy.rotation.set(0, dir > 0 ? 0 : Math.PI, dir * fallK * (Math.PI * 0.47));
-              dummy.scale.setScalar(0.95);
-            } else {
-              const lunge =
-                inMelee && retreatDist === 0 ? Math.sin(t * 9.5 + s.phase) * 0.28 : 0;
-              const strideBob =
-                !reducedMotion && (!inMelee || retreatDist > 0)
-                  ? Math.abs(Math.sin(t * 11 + s.phase)) * 0.11
-                  : Math.abs(Math.sin(t * 6 + s.phase)) * 0.04;
-              const rx =
-                side === 'atk'
-                  ? xBase + lunge - retreatDist
-                  : xBase - lunge + retreatDist;
-              const rz = zBase + (s.flank && retreatDist > 0 ? -retreatDist * 0.5 : 0);
-              dummy.position.set(rx, strideBob, rz);
-              let yaw = side === 'atk' ? 0 : Math.PI;
-              if (s.flank && chargeT < 0.92) yaw = -Math.PI * 0.36;
-              if (retreatDist > 0) yaw = side === 'atk' ? Math.PI : 0;
-              dummy.rotation.set(0, yaw, 0);
-              dummy.scale.setScalar(1);
+              figures.place(s.index, xBase, 0, zBase, facing);
+              figures.pose(s.index, 0, 0, Math.min(1, fallenProg * 6));
+              continue;
             }
-            dummy.updateMatrix();
-            bodies.setMatrixAt(i, dummy.matrix);
-            irons.setMatrixAt(i, dummy.matrix);
-            woods.setMatrixAt(i, dummy.matrix);
+            const fighting = inMelee && retreatDist === 0;
+            const front = s.rank < 3;
+            const beat = Math.sin(t * 9.5 + s.phase);
+            const lunge = fighting ? beat * (front ? 0.28 : 0.1) : 0;
+            const rx = side === 'atk' ? xBase + lunge - retreatDist : xBase - lunge + retreatDist;
+            const rz = zBase + (s.flank && retreatDist > 0 ? -retreatDist * 0.5 : 0);
+            let yaw = facing;
+            if (s.flank && chargeT < 0.92) yaw = -Math.PI * 0.36;
+            if (retreatDist > 0) yaw = side === 'atk' ? Math.PI : 0;
+            figures.place(s.index, rx, 0, rz, yaw);
+
+            let gait = chargeGait;
+            let action = front ? Math.min(1, Math.max(0, (chargeT - 0.45) / 0.45)) : 0.12;
+            if (retreatDist > 0) {
+              gait = 1.8;
+              action = 0;
+            } else if (fighting) {
+              // The front ranks thrust in time with their lunge; those behind press up, weapons raised
+              gait = front ? 0.3 : 0.18;
+              action = front ? 0.62 + 0.38 * beat : 0.14;
+            } else if (isClimax) {
+              gait = 0;
+              action = 0;
+            }
+            figures.pose(s.index, gait, action, 0);
           }
-          bodies.instanceMatrix.needsUpdate = true;
-          irons.instanceMatrix.needsUpdate = true;
-          woods.instanceMatrix.needsUpdate = true;
+          // The winners raise a cheer once the field is theirs
+          const cheer = isClimax && !lostBattle ? Math.min(1, (t - ROUT_AT) * 1.6) : 0;
+          for (const figures of crowds) {
+            figures.uniforms.uFigTime.value = reducedMotion ? 0 : t;
+            figures.uniforms.uFigCheer.value = cheer;
+            figures.commit();
+          }
         };
 
-        updateArmy(atkSlots, 'atk', atkBodies, atkIrons, atkWood);
-        updateArmy(defSlots, 'def', defBodies, defIrons, defWood);
+        updateArmy(atkSlots, 'atk', atkCrowds);
+        updateArmy(defSlots, 'def', defCrowds);
       } else {
         for (const ship of ships) {
           const lost = ship.side === 'atk' ? !scene.attackerWon : scene.attackerWon;
@@ -1221,22 +1281,39 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
           if (burning) {
             const k = after / BLAST_FIRE;
             const out = 1 - Math.pow(1 - k, 3);
-            const fade = (1 - k) * (1 - k);
-            vis.core.position.set(b.ex, 1.1 + out * 0.7, b.ez);
-            vis.core.scale.setScalar(0.35 + out * 1.25);
-            (vis.core.material as THREE.MeshBasicMaterial).opacity = fade * 0.9;
-            vis.flare.position.set(b.ex, 1.3 + out * 0.6, b.ez);
-            vis.flare.scale.setScalar(2.2 + out * 4.6);
-            vis.flare.material.opacity = fade * 0.85;
+            // The fireball is the one bright thing and it is brief: at its peak in the first
+            // instant, gone in a third of the burst. Sparks and smoke carry the rest.
+            const flashK = Math.min(1, k / 0.34);
+            const fade = (1 - flashK) * (1 - flashK);
+            vis.core.position.set(b.ex, 1.0 + out * 0.5, b.ez);
+            vis.core.scale.setScalar(0.3 + flashK * 0.75);
+            (vis.core.material as THREE.MeshBasicMaterial).opacity = fade * 0.9 * (0.35 + 0.65 * flashScale());
+            vis.flare.position.set(b.ex, 1.2 + out * 0.5, b.ez);
+            vis.flare.scale.setScalar(1.6 + flashK * 2.4);
+            vis.flare.material.opacity = fade * 0.8 * (0.35 + 0.65 * flashScale());
             vis.ring.position.set(b.ex, isRiver ? 0.12 : 0.06, b.ez);
             vis.ring.scale.setScalar(0.6 + out * 4.8);
             (vis.ring.material as THREE.MeshBasicMaterial).opacity = (1 - k) * (isRiver ? 0.5 : 0.32);
-            const flash = (1 - k) * 34;
+            const flash = fade * 34 * (0.3 + 0.7 * flashScale());
             if (flash > maxBlastFlash) {
               maxBlastFlash = flash;
               blastLight.position.set(b.ex, 3.0, b.ez);
             }
-            camShake = Math.max(camShake, (1 - k) * 0.22);
+            camShake = Math.max(camShake, (1 - k) * 0.22 * shakeScale());
+          }
+          // Sparks: thrown out fast, pulled down by their own weight, burnt out in half a second
+          for (let j = 0; j < SPARKS; j++) {
+            const o = (i * SPARKS + j) * 3;
+            if (after < 0 || after > 0.55) {
+              sparkPos[o + 1] = -50;
+              continue;
+            }
+            const turn = j * 2.399 + i * 1.7;
+            const lift = 0.35 + ((j * 0.618) % 1) * 0.85;
+            const speed = 4.5 + ((j * 0.371 + i * 0.13) % 1) * 4.5;
+            sparkPos[o] = b.ex + Math.cos(turn) * Math.cos(lift) * speed * after;
+            sparkPos[o + 1] = 0.9 + Math.sin(lift) * speed * after - 9.5 * after * after;
+            sparkPos[o + 2] = b.ez + Math.sin(turn) * Math.cos(lift) * speed * after;
           }
           const smoking = after >= 0.06 && after < BLAST_SMOKE;
           for (let si = 0; si < vis.smoke.length; si++) {
@@ -1253,6 +1330,7 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
         }
       }
       blastLight.intensity = maxBlastFlash;
+      sparkGeo.attributes.position.needsUpdate = true;
 
       // 7. Battle Dust Plumes & Melee Steel Sparks
       for (let i = 0; i < dustSprites.length; i++) {
@@ -1324,24 +1402,32 @@ export function WarStage3D({ scene, state, elapsedRef, onFallback }: WarStage3DP
         emberGeo.attributes.position.needsUpdate = true;
       }
 
-      if (post) post.render();
-      else renderer.render(world, camera);
+      post.render();
       rafId = requestAnimationFrame(renderFrame);
     };
 
-    rafId = requestAnimationFrame(renderFrame);
+    heightFog.apply(world);
+    // Shaders compile off the main thread first, so the battle does not open on a stall
+    let cancelled = false;
+    const start = () => {
+      if (!cancelled) rafId = requestAnimationFrame(renderFrame);
+    };
+    renderer.compileAsync(world, camera).then(start, start);
 
     return () => {
+      cancelled = true;
       cancelAnimationFrame(rafId);
       ro.disconnect();
-      post?.dispose();
+      post.dispose();
+      environment.dispose();
+      backdropStrip?.dispose();
       bag.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === host) {
         host.removeChild(renderer.domElement);
       }
     };
-  }, [scene, elapsedRef]);
+  }, [scene, elapsedRef, qualityTier]);
 
   return <div ref={mountRef} className="absolute inset-0 w-full h-full" />;
 }

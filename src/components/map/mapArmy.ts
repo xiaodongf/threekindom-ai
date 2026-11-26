@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { createContactShadow } from '../gfx/contactShadow.js';
+import { createWind } from '../gfx/wind.js';
 import { getHeroDuelProfile } from '../../game/heroDuelProfiles.js';
 import type { General } from '../../game/types.js';
 import { applyRigPose3D, buildMountedGeneralRig3D } from '../duel/duelModels3D.js';
@@ -62,6 +64,9 @@ export function buildMapArmy(
   );
   const flag = new THREE.Mesh(flagGeo, flagMat);
   flag.position.set(-0.34, 1.75, 0);
+  // Pinned along the pole edge, streaming out behind
+  const wind = bag.add(createWind(1, 0));
+  wind.cloth(flag, { axis: 'x', pin: 0.31, length: -0.62, amplitude: 0.07, ripples: 5 });
   const pole = new THREE.Mesh(
     bag.add(new THREE.CylinderGeometry(0.018, 0.022, 2.5, 6)),
     bag.add(new THREE.MeshStandardMaterial({ color: 0x2c2018, roughness: 0.7 }))
@@ -71,11 +76,19 @@ export function buildMapArmy(
   bannerRoot.position.set(-0.28, 0.35, -0.12);
   bannerRoot.add(pole, flag);
   rig.torso.add(bannerRoot);
-  const flagBase = (flagGeo.attributes.position.array as Float32Array).slice();
 
   const group = new THREE.Group();
   group.scale.setScalar(ARMY_SCALE);
   group.add(rig.root);
+  // Shade under the horse, so the piece sits on the map instead of floating over it. It lies
+  // on the slope the army is crossing, so it is kept beside the rig, not inside it.
+  const contact = createContactShadow(1, 1, 0.55);
+  const holder = new THREE.Group();
+  holder.add(group, contact.mesh);
+  const slopeNormal = new THREE.Vector3();
+  const tilt = new THREE.Quaternion();
+  const yaw = new THREE.Quaternion();
+  const UP = new THREE.Vector3(0, 1, 0);
 
   // The army rides the middle of the road and pulls up short of the walls.
   const a = mapToWorld(from.x, from.y);
@@ -136,22 +149,39 @@ export function buildMapArmy(
     // rig.root already carries the distance ridden along local +x
     group.position.set(a.wx + (dx / len) * startS, y, a.wz + (dz / len) * startS);
 
+    // Lay the shade on the ground under the horse, tilted to the slope there
+    const relief = 1 + (PAPER_RELIEF - 1) * paper;
+    const reach = 0.6 * scale;
+    const hE = world.heightAt(mapX + reach * 10, mapY) * relief;
+    const hW = world.heightAt(mapX - reach * 10, mapY) * relief;
+    const hS = world.heightAt(mapX, mapY + reach * 10) * relief;
+    const hN = world.heightAt(mapX, mapY - reach * 10) * relief;
+    slopeNormal.set((hW - hE) / (2 * reach), 1, (hN - hS) / (2 * reach)).normalize();
+    tilt.setFromUnitVectors(UP, slopeNormal);
+    yaw.setFromAxisAngle(UP, group.rotation.y);
+    contact.mesh.quaternion.copy(tilt).multiply(yaw);
+    contact.mesh.position.set(wx, y - 0.02, wz);
+    contact.mesh.scale.set(3.6 * scale, 1, 1.8 * scale);
+    (contact.mesh.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - paper);
+
     // The banner always shows its face to the camera, whichever way the army rides
     bannerRoot.rotation.y =
       Math.atan2(camera.position.x - wx, camera.position.z - wz) - group.rotation.y;
 
-    const pos = flagGeo.attributes.position.array as Float32Array;
-    for (let i = 0; i < pos.length; i += 3) {
-      const u = (0.31 - flagBase[i]) / 0.62;
-      pos[i + 2] = flagBase[i + 2] + Math.sin(elapsed * 9 + u * 5 + flagBase[i + 1] * 3) * 0.07 * u;
-    }
-    flagGeo.attributes.position.needsUpdate = true;
+    wind.update(elapsed, 1.4);
 
     out.set(wx, y, wz);
     return out;
   };
 
-  return { group, update, dispose: () => bag.dispose() };
+  return {
+    group: holder,
+    update,
+    dispose: () => {
+      contact.dispose();
+      bag.dispose();
+    },
+  };
 }
 
 /** A brushed arrow laid on the ground for a march that has already happened this season. */

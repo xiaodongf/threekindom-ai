@@ -5,7 +5,11 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PROVINCES, PROVINCE_ORDER } from '../game/data.js';
 import {
+  CITY_SPECIALTIES,
+  canScoutCityDetails,
+  formatScoutedTroops,
   getCityGenerals,
+  getCityLandmark,
   getCityWanderingHeroes,
   getStrikeableEnemyCityIds,
 } from '../game/engine.js';
@@ -20,7 +24,10 @@ import type {
 } from '../game/types.js';
 import { tLoc } from '../i18n/translations.js';
 import { prefersReducedMotion } from '../utils/motion.js';
+import { getQuality, useQualityTier } from '../utils/quality.js';
 import { DisposeBag } from './duel/duelGeometry3D.js';
+import { createDistanceHaze } from './gfx/heightFog.js';
+import { createSceneEnvironment } from './gfx/sceneEnvironment.js';
 import { buildMapArmy, buildMarchArrow, type MapArmy, type MarchArrow } from './map/mapArmy.js';
 import {
   cityLabelHeight,
@@ -138,6 +145,7 @@ export function WebGLStrategyMap({
   onWebGLFallback,
 }: WebGLStrategyMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const qualityTier = useQualityTier();
   const labelEls = useRef(new Map<string, HTMLDivElement>());
   const provinceEls = useRef(new Map<ProvinceId, HTMLDivElement>());
   const provinceLayerRef = useRef<HTMLDivElement | null>(null);
@@ -216,7 +224,8 @@ export function WebGLStrategyMap({
     const bag = new DisposeBag();
     let army: MapArmy | null = null;
 
-    let pixelRatio = Math.min(1.5, window.devicePixelRatio || 1);
+    // Never above 1.5: the terrain shader is the costliest thing the game draws per pixel
+    let pixelRatio = Math.min(1.5, getQuality().pixelRatioCap, window.devicePixelRatio || 1);
     const width = container.clientWidth || 920;
     const height = container.clientHeight || 600;
     renderer.setPixelRatio(pixelRatio);
@@ -268,6 +277,25 @@ export function WebGLStrategyMap({
     const sun = new THREE.DirectionalLight(myth ? 0xffc27a : 0xffe4b4, myth ? 1.7 : 1.9);
     sun.position.set(-58, 60, -55);
     scene.add(sun);
+
+    // The miniatures' metal and lacquer reflect a small sky; with only the two lamps above,
+    // a general's armour and a hall's gilt had nothing to reflect and came out near-black
+    const environment = createSceneEnvironment(renderer, {
+      skyStops: myth ? [0x1c242a, 0x50595c, 0x2c2721, 0x0c0a08] : [0x6f8aa6, 0xe9dcc0, 0x6a5a44, 0x2a2118],
+      sunDir: sun.position,
+      sunColor: sun.color,
+      sunStrength: 4,
+    });
+    scene.environment = environment.texture;
+    scene.environmentIntensity = myth ? 0.5 : 0.45;
+
+    // The terrain shader hazes its own far ground; this gives the models standing on it the
+    // same haze, in the colour that ground ends up on screen under each look
+    const haze = createDistanceHaze(
+      new THREE.Color().setRGB(myth ? 0.33 : 0.5, myth ? 0.3 : 0.47, myth ? 0.23 : 0.4, THREE.SRGBColorSpace),
+      0.00004,
+      0.45
+    );
 
     // The table and the lacquer tray the map lies in
     const table = new THREE.Mesh(
@@ -494,6 +522,7 @@ export function WebGLStrategyMap({
         const root = new THREE.Group();
         root.position.set(wx, baseY, wz);
         const model = kit.build(city);
+        haze.apply(model);
         model.scale.setScalar(CITY_SCALE_NEAR);
         const shadow = kit.blob(radius * 1.25);
         shadow.position.y = 0.05;
@@ -531,8 +560,58 @@ export function WebGLStrategyMap({
       }
       const pGeo = bag.add(new THREE.BufferGeometry());
       pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+      // Each season has its own soft-edged shape; a bare point would draw as a hard square
+      const seasonShape = (draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 48;
+        canvas.height = 48;
+        const ctx = canvas.getContext('2d')!;
+        ctx.translate(24, 24);
+        draw(ctx);
+        return bag.add(new THREE.CanvasTexture(canvas));
+      };
+      const softDisc = (ctx: CanvasRenderingContext2D, radius: number, core: number) => {
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+        g.addColorStop(0, 'rgba(255,255,255,1)');
+        g.addColorStop(core, 'rgba(255,255,255,0.85)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        ctx.fill();
+      };
+      const SEASON_SHAPE = {
+        // A blossom petal: a soft oval lying aslant
+        spring: seasonShape((ctx) => {
+          ctx.rotate(0.6);
+          ctx.scale(1, 0.55);
+          softDisc(ctx, 20, 0.55);
+        }),
+        // A mote of dust in the sun
+        summer: seasonShape((ctx) => softDisc(ctx, 13, 0.2)),
+        // A leaf: pointed at both ends
+        autumn: seasonShape((ctx) => {
+          ctx.rotate(-0.5);
+          ctx.fillStyle = 'rgba(255,255,255,0.95)';
+          ctx.shadowColor = 'rgba(255,255,255,0.9)';
+          ctx.shadowBlur = 3;
+          ctx.beginPath();
+          ctx.moveTo(-19, 0);
+          ctx.quadraticCurveTo(0, -11, 19, 0);
+          ctx.quadraticCurveTo(0, 11, -19, 0);
+          ctx.fill();
+        }),
+        // A snowflake seen from far off
+        winter: seasonShape((ctx) => softDisc(ctx, 16, 0.35)),
+      };
       const pMat = bag.add(
-        new THREE.PointsMaterial({ size: 0.26, transparent: true, opacity: 0.55, depthWrite: false })
+        new THREE.PointsMaterial({
+          size: 0.34,
+          map: SEASON_SHAPE.spring,
+          transparent: true,
+          opacity: 0.55,
+          depthWrite: false,
+        })
       );
       const drift = new THREE.Points(pGeo, pMat);
       drift.frustumCulled = false;
@@ -729,6 +808,7 @@ export function WebGLStrategyMap({
           if (sig !== marker.signature) {
             marker.root.remove(marker.model);
             marker.model = kit.build(city);
+            haze.apply(marker.model);
             marker.root.add(marker.model);
             marker.signature = sig;
             marker.labelLift = cityLabelHeight(city);
@@ -791,6 +871,7 @@ export function WebGLStrategyMap({
               toC,
               world
             );
+            haze.apply(army.group);
             scene.add(army.group);
           }
         } else if (!march && marchId) {
@@ -799,6 +880,7 @@ export function WebGLStrategyMap({
           if (army) scene.remove(army.group);
           army = null;
         }
+        haze.uniforms.uDhShape.value.z = 1 - paper;
         if (army) {
           army.update(
             debug.marchT ?? (elapsed - marchStart) / MARCH_SECONDS,
@@ -895,6 +977,10 @@ export function WebGLStrategyMap({
         if (!stillMotion) {
           const season = cur.state.season;
           pMat.color.setHex(SEASON_TINT[season]);
+          if (pMat.map !== SEASON_SHAPE[season]) {
+            pMat.map = SEASON_SHAPE[season];
+            pMat.needsUpdate = true;
+          }
           const fall = season === 'summer' ? -0.5 : 2.2;
           for (let i = 0; i < P; i++) {
             pPos[i * 3] += dt * 1.6;
@@ -990,12 +1076,13 @@ export function WebGLStrategyMap({
       apiRef.current = null;
       controls.dispose();
       army?.dispose();
+      environment.dispose();
       bag.dispose();
       renderer.dispose();
     };
     // Built once: ownership, growth, marches and selection are applied inside the frame loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [qualityTier]);
 
   if (failed) return null;
 
@@ -1225,6 +1312,14 @@ export function WebGLStrategyMap({
                       } ${city.isCapital ? 'text-[15px]' : 'text-[13px]'}`}
                     >
                       {city.isCapital && <span className="mr-1 text-amber-400">★</span>}
+                      {!city.isCapital && getCityLandmark(city.id) && (
+                        <span
+                          title={`${tLoc(getCityLandmark(city.id)!.name, lang)} · ${tLoc(getCityLandmark(city.id)!.summary, lang)}`}
+                          className="mr-1 text-amber-300/90 text-[10px]"
+                        >
+                          ◆
+                        </span>
+                      )}
                       {tLoc(city.name, lang)}
                     </span>
                     {/* Garrisons are city-level detail; the province map shows who holds what */}
@@ -1234,9 +1329,22 @@ export function WebGLStrategyMap({
                           paperShown ? 'bg-[#dfd3b4] text-[#3a2b14]' : 'bg-slate-900/90 text-amber-200'
                         }`}
                       >
-                        {city.troops.toLocaleString()}
+                        {canScoutCityDetails(state, state.playerFaction, city.id)
+                          ? city.troops.toLocaleString()
+                          : formatScoutedTroops(city.troops, lang)}
                       </span>
                     )}
+                    {/* Commandery Specialization seal on owned / scouted cities */}
+                    {!provinceLevel &&
+                      city.specialty &&
+                      canScoutCityDetails(state, state.playerFaction, city.id) && (
+                        <span
+                          title={`${tLoc(CITY_SPECIALTIES[city.specialty].name, lang)} · ${tLoc(CITY_SPECIALTIES[city.specialty].summary, lang)}`}
+                          className="px-1 py-0.5 text-[10px] font-bold leading-tight flex items-center bg-amber-600/85 text-slate-950"
+                        >
+                          {tLoc(CITY_SPECIALTIES[city.specialty].seal, lang)}
+                        </span>
+                      )}
                     {/* What is befalling the city: an event, or unrest among its people */}
                     {!provinceLevel &&
                       (() => {

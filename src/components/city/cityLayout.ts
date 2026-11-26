@@ -1,8 +1,9 @@
-import { cityTier } from '../../game/cityAspects.js';
-import { UNREST_SUPPORT } from '../../game/cityAspects.js';
+import { cityTier, UNREST_SUPPORT } from '../../game/cityAspects.js';
+import { CITY_LANDMARKS } from '../../game/citySpecialties.js';
 import type {
   City,
   CityEventKind,
+  CitySpecialtyId,
   FactionId,
   GovernorTask,
   Season,
@@ -44,6 +45,30 @@ export interface CitySpec {
   works: GovernorTask | null;
   /** A stretch of the south wall is down and being patched */
   breached: boolean;
+  /** Time-Traveler Recon Balloon tethered over the ramparts */
+  hasBalloon?: boolean;
+  /** Time-Traveler Irrigation Waterwheels turning beside the fields */
+  hasAgriculture?: boolean;
+  /** Time-Traveler Paddlewheel Steamship moored at a river port quay */
+  hasSteamship?: boolean;
+  /** Single seal character for the seated governor's command pennant outside the hall */
+  governorChar?: string | null;
+  /** A wandering hero is visiting the city: golden wayfarer pavilion outside the south gate */
+  hasWanderingHero?: boolean;
+  /** Chartered commandery specialization ward (`granary | emporium | armory | academy | bastion`) */
+  specialty?: CitySpecialtyId | null;
+  /** Permanent historical landmark monument ID (`imperial_que`, `bronze_sparrow`, `dujiangyan`, ...) */
+  landmarkId?: string | null;
+}
+
+export interface CitySpecExtras {
+  hasBalloon?: boolean;
+  hasAgriculture?: boolean;
+  hasSteamship?: boolean;
+  governorChar?: string | null;
+  hasWanderingHero?: boolean;
+  specialty?: CitySpecialtyId | null;
+  landmarkId?: string | null;
 }
 
 function level(n: number): number {
@@ -55,7 +80,8 @@ export function citySpecOf(
   season: Season,
   river: boolean,
   myth: boolean,
-  works: GovernorTask | null = null
+  works: GovernorTask | null = null,
+  extras: CitySpecExtras = {}
 ): CitySpec {
   return {
     id: city.id,
@@ -76,6 +102,16 @@ export function citySpecOf(
     drillBand: city.drill < 25 ? 0 : city.drill < 50 ? 1 : city.drill < 75 ? 2 : 3,
     works,
     breached: Boolean(city.wallScar),
+    hasBalloon: Boolean(extras.hasBalloon),
+    hasAgriculture: Boolean(extras.hasAgriculture),
+    hasSteamship: Boolean(extras.hasSteamship),
+    governorChar: extras.governorChar ?? null,
+    hasWanderingHero: Boolean(extras.hasWanderingHero),
+    specialty: extras.specialty !== undefined ? extras.specialty : city.specialty ?? null,
+    landmarkId:
+      extras.landmarkId !== undefined
+        ? extras.landmarkId
+        : CITY_LANDMARKS[city.id]?.id ?? null,
   };
 }
 
@@ -100,6 +136,13 @@ export function citySpecKey(spec: CitySpec): string {
     spec.drillBand,
     spec.works ?? '',
     spec.breached ? 1 : 0,
+    spec.hasBalloon ? 1 : 0,
+    spec.hasAgriculture ? 1 : 0,
+    spec.hasSteamship ? 1 : 0,
+    spec.governorChar ?? '',
+    spec.hasWanderingHero ? 1 : 0,
+    spec.specialty ?? '',
+    spec.landmarkId ?? '',
   ].join(':');
 }
 
