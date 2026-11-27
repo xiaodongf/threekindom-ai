@@ -127,6 +127,9 @@ const SCENES = {
       { name: 'closeup_right_horse', eval: duelCam(4.6, 1.5, 3.8, 3.5, 1.45, 0, 30), wait: 1500 },
       { name: 'wide_arena_ring', eval: duelCam(0, 5.5, 17, 0, 2.2, -4, 40), wait: 1500 },
       { name: 'closeup_spectators', eval: duelCam(-7.5, 1.8, 1.5, -12, 1.5, -5, 34), wait: 1500 },
+      { name: 'closeup_right_rider', eval: duelCam(2.0, 2.7, 4.4, 3.5, 2.3, 0, 26), wait: 1500 },
+      { name: 'portrait_left_general', eval: duelCam(-2.1, 2.95, 2.7, -3.45, 2.7, 0, 22), wait: 1500 },
+      { name: 'portrait_right_general', eval: duelCam(2.1, 2.95, 2.7, 3.45, 2.7, 0, 22), wait: 1500 },
     ],
   },
   duelnight: {
@@ -138,6 +141,56 @@ const SCENES = {
     shots: [
       { name: 'fortress_night_stage' },
       { name: 'fortress_night_brazier', eval: duelCam(-4.2, 1.9, 0.2, -6.4, 1.75, -5.2, 30), wait: 1500 },
+      { name: 'portrait_left_general', eval: duelCam(-2.1, 2.95, 2.7, -3.45, 2.7, 0, 22), wait: 1500 },
+    ],
+  },
+  // The generals' rig from the angles the stage cameras rarely show: the leg and skirt, the cloak
+  // from behind, and a scholar against a heroine (robes, hair, slimmer build)
+  duelrig: {
+    url: '/?faction=shu&lang=en&demoDuel=1',
+    ready: READY.duel,
+    settle: 1200,
+    dpr: 2,
+    clip: 'canvas',
+    shots: [
+      { name: 'leg_right_rider', eval: duelCam(2.3, 1.95, 2.6, 3.45, 1.75, 0, 26), wait: 1500 },
+      { name: 'back_right_rider', eval: duelCam(6.4, 3.1, 2.6, 3.5, 2.3, 0, 30), wait: 1500 },
+      { name: 'back_left_rider', eval: duelCam(-6.4, 3.1, -2.6, -3.5, 2.3, 0, 30), wait: 1500 },
+    ],
+  },
+  // The whole duel window, to see how much of the screen the stage is given (desktop and laptop)
+  duelui: {
+    url: '/?faction=shu&lang=en&demoDuel=1',
+    ready: READY.duel,
+    settle: 1200,
+    shots: [{ name: 'window_1600x900' }],
+  },
+  duelui_laptop: {
+    url: '/?faction=shu&lang=en&demoDuel=1',
+    ready: READY.duel,
+    settle: 1200,
+    size: [1366, 768],
+    shots: [{ name: 'window_1366x768' }],
+  },
+  // A phone held upright: the HUD and the clash line stay above and below the stage
+  duelui_phone: {
+    url: '/?faction=shu&lang=en&demoDuel=1',
+    ready: READY.duel,
+    settle: 1200,
+    size: [412, 915],
+    shots: [{ name: 'window_412x915' }],
+  },
+  duelcast: {
+    url: '/?faction=shu&lang=en&demoDuel=1&atk=zhugeliang&def=sunshangxiang',
+    ready: READY.duel,
+    settle: 1200,
+    dpr: 2,
+    clip: 'canvas',
+    shots: [
+      { name: 'closeup_left_rider', eval: duelCam(-2.0, 2.7, 4.4, -3.5, 2.3, 0, 26), wait: 1500 },
+      { name: 'closeup_right_rider', eval: duelCam(2.0, 2.7, 4.4, 3.5, 2.3, 0, 26), wait: 1500 },
+      { name: 'portrait_left_general', eval: duelCam(-2.1, 2.95, 2.7, -3.45, 2.7, 0, 22), wait: 1500 },
+      { name: 'portrait_right_general', eval: duelCam(2.1, 2.95, 2.7, 3.45, 2.7, 0, 22), wait: 1500 },
     ],
   },
   // The war theater plays on a clock with no hold, so its shots are taken at fixed times
@@ -242,6 +295,16 @@ function findChrome() {
   return found;
 }
 
+/**
+ * Every page still open, by its close function. A scene that runs past its time budget leaves its
+ * page behind (it may be stuck waiting on Chrome), so the run closes these itself, and closes any
+ * that remain when the process exits; otherwise those Chromes keep rendering and load the GPU.
+ */
+const openPages = new Set();
+process.on('exit', () => {
+  for (const close of [...openPages]) close();
+});
+
 /** Opens one page in its own headless Chrome and hands back a small driver for it. */
 async function openPage({ url, width, height, dpr, uncapped, port }) {
   const profile = mkdtempSync(path.join(os.tmpdir(), 'tk-capture-'));
@@ -277,6 +340,7 @@ async function openPage({ url, width, height, dpr, uncapped, port }) {
       ws.send(JSON.stringify({ id, method, params }));
     });
   const close = () => {
+    openPages.delete(close);
     try {
       ws?.close();
     } catch {
@@ -285,6 +349,7 @@ async function openPage({ url, width, height, dpr, uncapped, port }) {
     chrome.kill('SIGKILL');
     setTimeout(() => rmSync(profile, { recursive: true, force: true }), 400);
   };
+  openPages.add(close);
 
   try {
     let target;
@@ -386,7 +451,8 @@ async function captureScene(key, look, opts, outDir) {
   const def = SCENES[key];
   const extra = opts.query.length ? '&' + opts.query.join('&') : '';
   const url = `${opts.base}${def.url}&look=${look}${extra}`;
-  const page = await openPage({ url, width: 1600, height: 900, dpr: def.dpr ?? 1, uncapped: false, port: ++portCounter });
+  const [width, height] = def.size ?? [1600, 900];
+  const page = await openPage({ url, width, height, dpr: def.dpr ?? 1, uncapped: false, port: ++portCounter });
   const results = [];
   try {
     await waitReady(page, def);
@@ -460,6 +526,8 @@ async function runCapture(opts) {
       } catch (err) {
         failures.push(`${key} ${look}: ${err.message}`);
         console.log(`  FAILED: ${err.message}`);
+        // A scene that ran out of time is still holding its Chrome
+        for (const close of [...openPages]) close();
       }
     }
   }

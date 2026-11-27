@@ -14,9 +14,9 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
  * The kit follows what Eastern Han soldiers carried, not later imagery: a knee-length robe in the
  * realm's colour under a black-lacquered lamellar cuirass laced in red, an iron helmet or a cloth
  * cap over a topknot, a long shield, and a spear, a ji (the Han halberd, a spear with a side
- * blade) or a ring-pommel sabre. Surface detail (the rows of plates, the lacing, the shield's rim
- * and boss, eyes and hair) is drawn by the fragment shader and fades out with distance, so far
- * ranks do not shimmer.
+ * blade) or a ring-pommel sabre. Surface detail (the rows of plates, the lacing, the shield's rim,
+ * boss and painted device, eyes and hair) is drawn by the fragment shader and fades out with
+ * distance, so far ranks do not shimmer.
  */
 export type FigureHeadgear = 'helmet' | 'cap' | 'bare';
 export type FigureWeapon = 'spear' | 'ji' | 'sabre' | 'none';
@@ -59,6 +59,12 @@ export interface FigureUniforms {
   uFigValue: { value: number };
   /** 0 to 1: how far armour is pulled toward blackened iron (the dark look) */
   uFigIron: { value: number };
+  /**
+   * 0 to 1: how much each standing man differs from his neighbours (the lean of his spear, the
+   * angle of his shield, his feet, his weight, the plume and finish of his helmet), with the
+   * shading that settles a watching crowd behind the heroes. 0 keeps the drilled, uniform look.
+   */
+  uFigVariety: { value: number };
 }
 
 // --- body parts (which joint a vertex moves with)
@@ -197,9 +203,13 @@ function buildFigureGeometry(kit: FigureKit): THREE.BufferGeometry {
     const guard = new THREE.CylinderGeometry(0.118, 0.15, 0.1, round, 1, true, Math.PI * 0.82, Math.PI * 1.36);
     guard.translate(-0.005, HEAD_Y - 0.035, 0);
     add(guard, HEAD, IRON);
-    const tuft = new THREE.ConeGeometry(0.03, 0.11, 5);
-    tuft.translate(0, HEAD_Y + 0.17, 0);
-    add(tuft, HEAD, TASSEL);
+    // An iron finial on the crown, with a tassel of dyed horsehair falling round its foot
+    const finial = new THREE.ConeGeometry(0.011, 0.075, 4);
+    finial.translate(0, HEAD_Y + 0.165, 0);
+    add(finial, HEAD, IRON);
+    const tassel = new THREE.ConeGeometry(0.064, 0.085, lite ? 5 : 7, 1, true);
+    tassel.translate(0, HEAD_Y + 0.132, 0);
+    add(tassel, HEAD, TASSEL);
   } else if (kit.headgear === 'cap') {
     // A cloth cap tied over the topknot
     add(tube(0.092, 0.108, 0.07, round, 0, HEAD_Y + 0.085, 0, 1, 0.95, false), HEAD, DARK_CLOTH);
@@ -319,10 +329,15 @@ uniform float uFigTime;
 uniform float uFigCheer;
 uniform float uFigValue;
 uniform float uFigIron;
+uniform float uFigVariety;
 varying vec3 vFigLocal;
 varying vec2 vFigSurface;
 varying vec2 vFigGloss;
 
+// A second, third... random number for the same man, from his seed
+float figHash(float seed, float k) {
+  return fract(sin(seed * 91.7 + k * 13.37) * 43758.5453);
+}
 vec2 figTurn(vec2 v, float a) {
   float c = cos(a);
   float s = sin(a);
@@ -341,6 +356,11 @@ void figYaw(inout vec3 p, inout vec3 n, vec3 pivot, float a) {
   p.xz = pivot.xz + vec2(d.x * c + d.y * s, -d.x * s + d.y * c);
   n.xz = vec2(n.x * c + n.z * s, -n.x * s + n.z * c);
 }
+// Roll about the front-to-back axis: a positive angle carries a hanging limb toward -Z
+void figRoll(inout vec3 p, inout vec3 n, vec3 pivot, float a) {
+  p.yz = pivot.yz + figTurn(p.yz - pivot.yz, a);
+  n.yz = figTurn(n.yz, a);
+}
 
 void figurePose(inout vec3 p, inout vec3 n) {
   float part = aFig.x;
@@ -356,6 +376,14 @@ void figurePose(inout vec3 p, inout vec3 n) {
   float s = sin(stride);
   float c = cos(stride);
   float cheer = uFigCheer * alive;
+  // How far this man stands his own way: only while he stands, and only in a crowd that asks for it
+  float own = uFigVariety * (1.0 - march) * alive;
+
+  // A plain helmet for some: the horsehair tassel is folded away inside the crown
+  if (part > 0.5 && part < 1.5 && aFig.y > 4.5 && aFig.y < 5.5) {
+    float plumed = 1.0 - step(figHash(seed, 8.0), 0.3) * uFigVariety;
+    p = mix(vec3(0.0, ${f(HEAD_Y + 0.1)}, 0.0), p, plumed);
+  }
 
   if (part > 1.5 && part < 5.5) {
     // Legs: the thigh swings from the hip, and the knee folds while that leg comes forward
@@ -364,20 +392,37 @@ void figurePose(inout vec3 p, inout vec3 n) {
     bool lower = (part > 2.5 && part < 3.5) || part > 4.5;
     if (lower) figSwing(p, n, vec3(0.0, ${f(KNEE_Y)}, hip.z), -(max(side * c, 0.0) * 0.9 * march + fall * (0.25 + seed * 0.5)));
     figSwing(p, n, hip, side * s * 0.44 * march + fall * (seed - 0.4) * 0.5);
+    // Feet set apart, one a little forward of the other
+    figRoll(p, n, hip, -side * (0.02 + figHash(seed, 4.0) * 0.09) * own);
+    figSwing(p, n, hip, side * (figHash(seed, 9.0) - 0.5) * 0.16 * own);
   } else {
     // Trunk, head and arms lean into the march, and sway a little when standing
     float lean = 0.07 * march + 0.05 * max(gait - 1.0, 0.0) + sin(t * 0.9) * 0.014 * (1.0 - march);
     if (part > 5.5 && part < 6.5) {
-      figSwing(p, n, vec3(0.0, ${f(SHOULDER_Y)}, ${f(-SHOULDER_Z)}), s * 0.2 * march + fall * 0.6);
+      vec3 shoulder = vec3(0.0, ${f(SHOULDER_Y)}, ${f(-SHOULDER_Z)});
+      figSwing(p, n, shoulder, s * 0.2 * march + fall * 0.6);
+      // The shield turned a little out or in, carried higher or lower, tipped back or forward
+      figYaw(p, n, shoulder, (figHash(seed, 2.0) - 0.5) * 0.55 * own);
+      figSwing(p, n, shoulder, (figHash(seed, 3.0) - 0.55) * 0.22 * own);
+      p.y += (figHash(seed, 5.0) - 0.5) * 0.1 * own;
     } else if (part > 6.5) {
       // The weapon arm: levelled to strike, or pumped overhead when the ranks cheer
       vec3 shoulder = vec3(0.0, ${f(SHOULDER_Y)}, ${f(SHOULDER_Z)});
       figSwing(p, n, shoulder, -action * 1.26 - s * 0.05 * march - fall * 0.9);
+      // Each man's spear leans its own way; a few rest it back against the shoulder
+      float h = figHash(seed, 1.0);
+      figSwing(p, n, shoulder, ((h - 0.5) * 0.3 + step(0.86, h) * 0.22) * own);
+      figRoll(p, n, shoulder, (figHash(seed, 6.0) - 0.5) * 0.14 * own);
       p.y += cheer * (0.55 + 0.45 * sin(t * 9.0 + seed * 9.0)) * 0.24;
     } else if (part > 0.5) {
       figYaw(p, n, vec3(0.0, ${f(NECK_Y)}, 0.0), sin(t * 0.6 + seed * 31.0) * 0.34 * (1.0 - march) * alive);
+      figSwing(p, n, vec3(0.0, ${f(NECK_Y)}, 0.0), (figHash(seed, 7.0) - 0.6) * 0.24 * own);
     }
-    figSwing(p, n, vec3(0.0, ${f(HIP_Y)}, 0.0), -lean);
+    // Weight on one leg: the body above the hips tips and turns a little
+    vec3 hips = vec3(0.0, ${f(HIP_Y)}, 0.0);
+    figRoll(p, n, hips, (figHash(seed, 10.0) - 0.5) * 0.07 * own);
+    figYaw(p, n, hips, (figHash(seed, 11.0) - 0.5) * 0.3 * own);
+    figSwing(p, n, hips, -lean);
   }
 
   // The body dips at each footfall, and hops when cheering
@@ -409,13 +454,21 @@ const VERTEX_COLOUR = /* glsl */ `
     // Cloth and the shield's face take the realm's colour; everything else keeps its own
     if (surface < 0.5) vColor.rgb *= aLook.rgb;
     else if (surface > 6.5 && surface < 7.5) vColor.rgb *= aLook.rgb * 1.25;
+    // Each man's helmet has its own finish, from blackened to bright iron, and a few wear a
+    // black plume instead of a red one
+    bool onHead = aFig.x > 0.5 && aFig.x < 1.5;
+    float finish = figHash(aLook.w, 12.0);
+    if (onHead && surface > 2.5 && surface < 3.5) vColor.rgb *= mix(1.0, 0.55 + finish * 0.6, uFigVariety);
+    if (onHead && surface > 4.5 && surface < 5.5) vColor.rgb *= mix(1.0, step(figHash(aLook.w, 8.0), 0.5) * 0.8 + 0.2, uFigVariety);
+    // Weathered faces and hands, some darker than others, so no pale face pulls the eye from the heroes
+    if (surface > 1.5 && surface < 2.5) vColor.rgb *= mix(1.0, 0.66 + figHash(aLook.w, 13.0) * 0.2, uFigVariety);
     vColor.rgb *= uFigValue;
     vFigSurface = vec2(surface, aLook.w);
     // (roughness, metalness) per surface
     vec2 gloss = vec2(0.9, 0.0);
     if (surface > 0.5 && surface < 1.5) gloss = vec2(0.46 - uFigIron * 0.1, 0.18 + uFigIron * 0.5);
     else if (surface < 2.5 && surface > 1.5) gloss = vec2(0.72, 0.0);
-    else if (surface < 3.5 && surface > 2.5) gloss = vec2(0.42, 0.86);
+    else if (surface < 3.5 && surface > 2.5) gloss = vec2(0.42 + (0.18 + finish * 0.2) * uFigVariety, 0.86);
     else if (surface < 4.5 && surface > 3.5) gloss = vec2(0.8, 0.0);
     else if (surface < 6.5 && surface > 5.5) gloss = vec2(0.7, 0.0);
     else if (surface < 7.5 && surface > 6.5) gloss = vec2(0.52, 0.06);
@@ -424,13 +477,20 @@ const VERTEX_COLOUR = /* glsl */ `
 `;
 
 const FRAGMENT_PARS = /* glsl */ `
+uniform float uFigValue;
+uniform float uFigVariety;
 varying vec3 vFigLocal;
 varying vec2 vFigSurface;
 varying vec2 vFigGloss;
 
-// Returns a multiplier for the surface colour; rgb of 'lace' is added where the armour is laced
-float figSurfaceDetail(vec3 q, float surface, out float lace) {
-  lace = 0.0;
+// A soft-edged line of half-width w at distance d, antialiased by the pixel footprint aa
+float figLine(float d, float w, float aa) {
+  return 1.0 - smoothstep(w - aa, w + aa, abs(d));
+}
+
+// Returns a multiplier for the surface colour; 'paint' is laid over it (rgb, and how much)
+float figSurfaceDetail(vec3 q, float surface, out vec4 paint) {
+  paint = vec4(0.0);
   if (surface > 0.5 && surface < 1.5) {
     // Lamellar: rows of small plates, each row lapping the one below, tied with cord
     float rows = q.y * 16.0;
@@ -440,17 +500,46 @@ float figSurfaceDetail(vec3 q, float surface, out float lace) {
     float fade = clamp((fwidth(rows) + fwidth(around)) * 1.5, 0.0, 1.0);
     float gap = min(smoothstep(0.0, 0.18, row), smoothstep(0.0, 0.14, col));
     float lip = smoothstep(0.72, 1.0, row) * 0.3;
-    lace = step(0.8, row) * step(abs(col - 0.5), 0.13) * (1.0 - fade);
+    float lace = step(0.8, row) * step(abs(col - 0.5), 0.13) * (1.0 - fade);
+    paint = vec4(0.32, 0.035, 0.025, lace);
     return mix(mix(0.5, 1.0, gap) + lip, 0.92, fade);
   }
   if (surface > 6.5 && surface < 7.5) {
-    // Shield: a dark rim, a spine down the middle and a boss at the grip
+    // Shield: lacquered hide on a wooden frame, with a black rim, a bronze boss at the grip and
+    // one of three painted devices in black and cinnabar. The inside is left plain and darker.
     float up = (q.y - ${f(SHIELD_Y)}) / ${f(SHIELD_H * 0.54)};
     float across = (q.z - (${f(SHIELD_Z)})) / ${f(SHIELD_W * 0.5)};
-    float rim = smoothstep(0.8, 0.9, max(abs(up), abs(across)));
-    float spine = 1.0 - smoothstep(0.03, 0.08, abs(across));
-    float boss = 1.0 - smoothstep(0.16, 0.2, length(vec2(up * 1.9, across)));
-    return mix(1.0, 0.24, max(rim, spine * 0.8)) + boss * 0.7;
+    float face = step(${f(SHIELD_X)} - across * across * 0.05, q.x);
+    float aa = clamp(fwidth(up) + fwidth(across), 0.002, 0.2);
+    float rim = smoothstep(0.84 - aa, 0.84 + aa, max(abs(up), abs(across)));
+    float r = length(vec2(up * 1.9, across));
+    float boss = 1.0 - smoothstep(0.17 - aa, 0.17 + aa, r);
+    float black = rim;
+    float red = 0.0;
+    float device = fract(vFigSurface.y * 7.31);
+    if (device < 0.25) {
+      // Plain: only the rim and the boss
+    } else if (device < 0.5) {
+      // A roundel: a cinnabar ring round the boss inside a black one, black bars above and below
+      red = figLine(r - 0.42, 0.07, aa);
+      black = max(black, figLine(r - 0.56, 0.035, aa));
+      black = max(black, figLine(abs(up) - 0.66, 0.045, aa) * step(abs(across), 0.84));
+    } else if (device < 0.75) {
+      // Cloud scrolls: a cinnabar wave across the top and the foot, a black spine between
+      float wave = sin(across * 7.0 + up * 2.0) * 0.06;
+      red = max(figLine(up - 0.58 - wave, 0.06, aa), figLine(up + 0.58 + wave, 0.06, aa));
+      black = max(black, figLine(across, 0.05, aa) * step(abs(up), 0.46));
+    } else {
+      // Chevrons pointing up, black over cinnabar
+      float v = up - abs(across) * 0.55;
+      black = max(black, figLine(v - 0.35, 0.06, aa));
+      red = figLine(v - 0.12, 0.06, aa) + figLine(v + 0.55, 0.05, aa);
+    }
+    red *= face * (1.0 - boss);
+    black *= mix(1.0, face, 1.0 - rim);
+    // Old cinnabar, dulled by weather: it reads up close and stays quiet across the field
+    paint = boss > 0.0 ? vec4(0.36, 0.26, 0.14, boss * face) : vec4(0.25, 0.055, 0.04, min(red, 1.0) * (1.0 - black) * 0.8);
+    return mix(mix(0.62, 1.0, face), 0.22, black) * (1.0 - boss * face * 0.2);
   }
   if (surface > 1.5 && surface < 2.5 && q.y > ${f(NECK_Y + 0.02)}) {
     // A face: eyes and brow in front, hair behind and above
@@ -460,7 +549,9 @@ float figSurfaceDetail(vec3 q, float surface, out float lace) {
     float front = step(0.045, h.x);
     float hair = max(step(h.x, -0.035), step(0.07, h.y));
     float beard = step(0.5, vFigSurface.y) * step(h.y, -0.045) * step(0.02, h.x);
-    return 1.0 - max(max(eyes, brow * 0.7) * front * 0.8, max(hair * 0.78, beard * 0.6));
+    // In a crowd the eyes sit in the shade of the helmet's brim or the cap
+    float brim = smoothstep(0.0, 0.05, h.y) * front * uFigVariety * 0.45;
+    return (1.0 - max(max(eyes, brow * 0.7) * front * 0.8, max(hair * 0.78, beard * 0.6))) * (1.0 - brim);
   }
   return 1.0;
 }
@@ -468,9 +559,11 @@ float figSurfaceDetail(vec3 q, float surface, out float lace) {
 
 const FRAGMENT_COLOUR = /* glsl */ `
   {
-    float figLace;
-    diffuseColor.rgb *= figSurfaceDetail(vFigLocal, vFigSurface.x, figLace);
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.32, 0.035, 0.025), figLace * 0.85);
+    vec4 figPaint;
+    diffuseColor.rgb *= figSurfaceDetail(vFigLocal, vFigSurface.x, figPaint);
+    diffuseColor.rgb = mix(diffuseColor.rgb, figPaint.rgb * uFigValue, figPaint.a * 0.85);
+    // A crowd stands on the ground: the light falls off toward the feet
+    diffuseColor.rgb *= mix(1.0, 0.5 + 0.5 * smoothstep(0.0, 0.95, vFigLocal.y), uFigVariety);
   }
 `;
 
@@ -543,6 +636,7 @@ export function createFigureCrowd(kit: FigureKit, count: number): FigureCrowd {
     uFigCheer: { value: 0 },
     uFigValue: { value: 1 },
     uFigIron: { value: 0 },
+    uFigVariety: { value: 0 },
   };
   const { material, depth } = createMaterials(uniforms);
   const mesh = new THREE.Mesh(geometry, material);

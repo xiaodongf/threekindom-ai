@@ -144,6 +144,64 @@ export function buildLoft(
   return geo;
 }
 
+/**
+ * A curved sheet (armour skirt, neck guard, hood drape) from a function of two parameters:
+ * `u` runs across and `v` runs down, both 0..1. Both faces are emitted, so the sheet can use a
+ * shared single-sided palette material. `uvScale` sets how many times a tiling texture repeats.
+ */
+export function buildSheet(
+  nu: number,
+  nv: number,
+  fn: (u: number, v: number, out: THREE.Vector3) => void,
+  uvScale: [number, number] = [1, 1]
+): THREE.BufferGeometry {
+  const cols = nu + 1;
+  const rows = nv + 1;
+  const count = cols * rows;
+  const pos = new Float32Array(count * 2 * 3);
+  const uv = new Float32Array(count * 2 * 2);
+  const p = new THREE.Vector3();
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const u = c / nu;
+      const v = r / nv;
+      fn(u, v, p);
+      const i = r * cols + c;
+      for (const k of [i, i + count]) {
+        pos[k * 3] = p.x;
+        pos[k * 3 + 1] = p.y;
+        pos[k * 3 + 2] = p.z;
+        uv[k * 2] = u * uvScale[0];
+        uv[k * 2 + 1] = (1 - v) * uvScale[1];
+      }
+    }
+  }
+  const index: number[] = [];
+  for (let r = 0; r < nv; r++) {
+    for (let c = 0; c < nu; c++) {
+      const a = r * cols + c;
+      const b = a + cols;
+      const d = a + 1;
+      const e = b + 1;
+      index.push(a, b, d, d, b, e);
+      index.push(a + count, d + count, b + count, d + count, e + count, b + count);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(index);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/** Multiplies a geometry's texture coordinates, so one tiling texture can serve parts of any size. */
+export function scaleUv<T extends THREE.BufferGeometry>(geo: T, su: number, sv: number): T {
+  const uv = geo.attributes.uv as THREE.BufferAttribute;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+  return geo;
+}
+
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** A tapered limb segment with rounded joints, placed between two points of its parent space. */
@@ -233,15 +291,21 @@ export function mergeRigid(node: THREE.Object3D, palettes: PaletteMaterials, bag
         }
         g.applyMatrix4(m);
         if (m.determinant() < 0) flipWinding(g);
+        const src = mesh.material as THREE.MeshStandardMaterial;
+        const kind = src.userData.palette as keyof PaletteMaterials | undefined;
+        // A material that reads vertex colours keeps the shading painted into them
+        const keepColor = !kind && src.vertexColors;
         for (const name of Object.keys(g.attributes)) {
-          if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
+          if (name !== 'position' && name !== 'normal' && name !== 'uv' && !(keepColor && name === 'color')) {
+            g.deleteAttribute(name);
+          }
         }
         const count = g.attributes.position.count;
         if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(count * 2), 2));
         if (!g.attributes.normal) g.computeVertexNormals();
-
-        const src = mesh.material as THREE.MeshStandardMaterial;
-        const kind = src.userData.palette as keyof PaletteMaterials | undefined;
+        if (keepColor && !g.attributes.color) {
+          g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 3).fill(1), 3));
+        }
         let target: THREE.Material = src;
         if (kind) {
           target = palettes[kind];

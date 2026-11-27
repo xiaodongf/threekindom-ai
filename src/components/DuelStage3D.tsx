@@ -34,6 +34,18 @@ import { applyToneMapping, toneExposure } from './gfx/toneMapping.js';
 import { Art } from './ui/Art.js';
 import { bestArt } from '../utils/art.js';
 
+/** Strength of the lens-side key light that follows each general (candela) */
+const HERO_KEY_INTENSITY = 24;
+/**
+ * Most device pixels the stage renders per frame. The stage grows with the window, and on a
+ * high-density screen its full pixel ratio would double the GPU's work; past this budget it
+ * renders a little under the screen's density instead (about what the old, smaller stage cost).
+ */
+const STAGE_PIXEL_BUDGET = 3.0e6;
+/** The pixel ratio to render a w by h stage at: the device's, capped by quality and the budget */
+const stagePixelRatio = (dpr: number, w: number, h: number): number =>
+  Math.max(1, Math.min(dpr, Math.sqrt(STAGE_PIXEL_BUDGET / Math.max(1, w * h))));
+
 interface DuelStage3DProps {
   attacker: General;
   defender: General;
@@ -192,7 +204,7 @@ export function DuelStage3D({
     let dpr = Math.min(quality.pixelRatioCap, window.devicePixelRatio || 1);
     const width = container.clientWidth || 840;
     const height = container.clientHeight || 400;
-    renderer.setPixelRatio(dpr);
+    renderer.setPixelRatio(stagePixelRatio(dpr, width, height));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -267,6 +279,14 @@ export function DuelStage3D({
       const shade = createContactShadow(3.3, 1.5, 0.5);
       scene.add(shade.mesh);
       return { rig, shade };
+    });
+
+    // A warm key on each general from the lens side. The low sun sits behind them, and without
+    // this their faces and the fronts of their armour are lost in their own shade.
+    const heroKeys = [leftRig, rightRig].map((rig) => {
+      const key = new THREE.SpotLight('#ffe6c4', HERO_KEY_INTENSITY, 15, 0.3, 0.85, 1.4);
+      scene.add(key, key.target);
+      return { rig, key };
     });
 
     const vfx = createDuelVfx(scene, bag, look.dust, look.ember);
@@ -402,6 +422,11 @@ export function DuelStage3D({
       const h = container.clientHeight || 400;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      const ratio = stagePixelRatio(dpr, w, h);
+      if (ratio !== renderer.getPixelRatio()) {
+        renderer.setPixelRatio(ratio);
+        post.setPixelRatio(ratio);
+      }
       renderer.setSize(w, h);
       post.setSize(w, h);
     });
@@ -417,7 +442,7 @@ export function DuelStage3D({
 
     // If this machine cannot hold the frame rate, drop to one device pixel per pixel, once
     const governor = createFrameGovernor(() => {
-      if (dpr <= 1) return;
+      if (renderer.getPixelRatio() <= 1) return;
       dpr = 1;
       renderer.setPixelRatio(1);
       post.setPixelRatio(1);
@@ -556,6 +581,12 @@ export function DuelStage3D({
       }
       leftRig.root.updateMatrixWorld(true);
       rightRig.root.updateMatrixWorld(true);
+      for (const { rig, key } of heroKeys) {
+        const p = rig.root.position;
+        key.position.set(p.x * 0.3, 5.4, p.z + 7.6);
+        key.target.position.set(p.x, 2.3, p.z);
+        key.target.updateMatrixWorld();
+      }
 
       // -------------------------------------------------- blows landing this frame
       if (st.phase === 'exchange' && st.plan) {
@@ -755,13 +786,12 @@ export function DuelStage3D({
         figures.uniforms.uFigTime.value = totalElapsed;
         figures.uniforms.uFigCheer.value += (cheer - figures.uniforms.uFigCheer.value) * Math.min(1, rawDt * 6);
       }
+      // The flames draw their own licking shape; the light and the flame's height rise and fall together
+      arena.fire?.update(totalElapsed);
       arena.brazierLights.forEach((l, idx) => {
-        l.intensity = 26 + Math.sin(totalElapsed * 12 + idx * 2.1) * 5 + Math.sin(totalElapsed * 31 + idx) * 3;
-      });
-      arena.brazierFlames.forEach((fl, idx) => {
-        const lick = Math.sin(totalElapsed * 15 + idx * 1.9);
-        fl.scale.set(1 - lick * 0.07, 0.9 + lick * 0.2 + Math.sin(totalElapsed * 23 + idx) * 0.06, 1 - lick * 0.07);
-        fl.rotation.y = totalElapsed * 0.9 + idx;
+        const flicker = Math.sin(totalElapsed * 12 + idx * 2.1) * 0.6 + Math.sin(totalElapsed * 31 + idx) * 0.4;
+        l.intensity = 26 + flicker * 7;
+        arena.brazierFlames[idx]?.scale.set(1, 1 + flicker * 0.06, 1);
       });
       for (const c of contactShadows) {
         c.rig.root.getWorldPosition(vc);

@@ -37,7 +37,11 @@ function finish(
   return bag.add(tex);
 }
 
-/** Overlapping Han lamellar plates laced in rows, with a matching height map. */
+/**
+ * Lacquered lamellar: four plates across and four rows to a tile, each row overlapping the one
+ * below and laced with silk cord in the trim colour, with a matching height map. Geometry
+ * scales its own texture coordinates, so the plates stay one size on every part of the armour.
+ */
 export function createLamellarArmorTextures(
   primaryHex: string,
   trimHex: string,
@@ -46,59 +50,137 @@ export function createLamellarArmorTextures(
   const size = 256;
   const [cMap, ctx] = makeCanvas(size, size);
   const [cBump, bctx] = makeCanvas(size, size);
+  const rnd = seeded(primaryHex.charCodeAt(1) * 131 + primaryHex.charCodeAt(3) * 17 + 7);
 
-  ctx.fillStyle = '#07080c';
+  // Near-black lacquer still needs enough value for the rows to read in shade
+  const base = new THREE.Color(primaryHex);
+  const hsl = { h: 0, s: 0, l: 0 };
+  base.getHSL(hsl);
+  base.setHSL(hsl.h, Math.min(0.85, hsl.s * 1.05), Math.max(0.2, hsl.l));
+  const tone = (k: number) => {
+    const c = base.clone().multiplyScalar(k);
+    return `rgb(${Math.round(Math.min(1, c.r) * 255)},${Math.round(Math.min(1, c.g) * 255)},${Math.round(Math.min(1, c.b) * 255)})`;
+  };
+
+  ctx.fillStyle = '#050608';
   ctx.fillRect(0, 0, size, size);
-  bctx.fillStyle = '#202020';
+  bctx.fillStyle = '#181818';
   bctx.fillRect(0, 0, size, size);
 
-  const rows = 8;
-  const cols = 8;
+  const rows = 4;
+  const cols = 4;
   const rowH = size / rows;
   const colW = size / cols;
 
   for (let r = 0; r < rows; r++) {
     const offset = (r % 2) * (colW * 0.5);
+    const y = r * rowH;
     for (let c = -1; c <= cols; c++) {
       const x = c * colW + offset;
-      const y = r * rowH;
+      const k = 0.86 + rnd() * 0.28;
 
       const g = ctx.createLinearGradient(x, y, x, y + rowH);
-      g.addColorStop(0, primaryHex);
-      g.addColorStop(0.7, primaryHex);
-      g.addColorStop(1, '#0a0c12');
+      g.addColorStop(0, tone(1.5 * k));
+      g.addColorStop(0.16, tone(1.08 * k));
+      g.addColorStop(0.72, tone(0.82 * k));
+      g.addColorStop(1, tone(0.34 * k));
       ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.roundRect(x + 1.5, y + 1, colW - 3, rowH - 1, [2, 2, 7, 7]);
+      ctx.roundRect(x + 2, y + 1.5, colW - 4, rowH - 2, [3, 3, 13, 13]);
       ctx.fill();
 
+      // A soft gleam down the left edge of each plate, and a worn rim along its top
+      ctx.fillStyle = 'rgba(255,255,255,0.1)';
+      ctx.fillRect(x + 4.5, y + 7, 3, rowH - 24);
       ctx.fillStyle = 'rgba(255,255,255,0.2)';
-      ctx.fillRect(x + 3, y + 2.5, colW - 6, 2);
-      ctx.fillStyle = 'rgba(255,255,255,0.07)';
-      ctx.fillRect(x + 3, y + 5, 2.5, rowH - 12);
+      ctx.fillRect(x + 5, y + 3, colW - 10, 2.5);
 
-      // Lacing cords and rivets in the trim colour
+      // Two lacing holes with a stitch of cord between each pair
       ctx.fillStyle = trimHex;
-      ctx.globalAlpha = 0.85;
-      ctx.fillRect(x + colW * 0.3, y + rowH * 0.26, 2.2, rowH * 0.3);
-      ctx.fillRect(x + colW * 0.66, y + rowH * 0.26, 2.2, rowH * 0.3);
+      ctx.globalAlpha = 0.9;
+      for (const lx of [0.3, 0.7]) {
+        ctx.beginPath();
+        ctx.roundRect(x + colW * lx - 2.5, y + rowH * 0.2, 5, rowH * 0.26, 2);
+        ctx.fill();
+      }
       ctx.globalAlpha = 1;
 
       const bg = bctx.createLinearGradient(x, y, x, y + rowH);
-      bg.addColorStop(0, '#f2f2f2');
-      bg.addColorStop(0.8, '#9a9a9a');
-      bg.addColorStop(1, '#303030');
+      bg.addColorStop(0, '#ffffff');
+      bg.addColorStop(0.75, '#b0b0b0');
+      bg.addColorStop(1, '#3a3a3a');
       bctx.fillStyle = bg;
       bctx.beginPath();
-      bctx.roundRect(x + 1.5, y + 1, colW - 3, rowH - 1, [2, 2, 7, 7]);
+      bctx.roundRect(x + 2, y + 1.5, colW - 4, rowH - 2, [3, 3, 13, 13]);
       bctx.fill();
+      bctx.fillStyle = '#ffffff';
+      for (const lx of [0.3, 0.7]) bctx.fillRect(x + colW * lx - 2.5, y + rowH * 0.2, 5, rowH * 0.26);
     }
+    // The cast shadow of the row above
+    const sh = ctx.createLinearGradient(0, y, 0, y + 9);
+    sh.addColorStop(0, 'rgba(0,0,0,0.5)');
+    sh.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = sh;
+    ctx.fillRect(0, y, size, 9);
   }
 
   return {
-    map: finish(bag, cMap, { repeat: [3, 3] }),
-    bumpMap: finish(bag, cBump, { srgb: false, repeat: [3, 3] }),
+    map: finish(bag, cMap, { repeat: [1, 1] }),
+    bumpMap: finish(bag, cBump, { srgb: false, repeat: [1, 1] }),
   };
+}
+
+/**
+ * The general's cloak: silk in his colour with a woven roundel field, folds that darken toward
+ * the hem, and a double gilt border down both edges and along the bottom.
+ */
+export function createCloakTexture(capeHex: string, trimHex: string, bag: DisposeBag): THREE.CanvasTexture {
+  const w = 256;
+  const h = 512;
+  const [c, ctx] = makeCanvas(w, h);
+  ctx.fillStyle = capeHex;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.strokeStyle = 'rgba(255,236,190,0.11)';
+  ctx.lineWidth = 2;
+  for (let y = 40; y < h - 40; y += 58) {
+    for (let x = ((y / 58) % 2) * 29 + 30; x < w - 20; x += 58) {
+      ctx.beginPath();
+      ctx.arc(x, y, 15, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // Hanging folds
+  for (let i = 0; i < 7; i++) {
+    const x = (i + 0.5) * (w / 7);
+    const fold = ctx.createLinearGradient(x - 18, 0, x + 18, 0);
+    fold.addColorStop(0, 'rgba(0,0,0,0)');
+    fold.addColorStop(0.5, 'rgba(0,0,0,0.3)');
+    fold.addColorStop(1, 'rgba(255,255,255,0.05)');
+    ctx.fillStyle = fold;
+    ctx.fillRect(x - 18, 0, 36, h);
+  }
+  const fall = ctx.createLinearGradient(0, 0, 0, h);
+  fall.addColorStop(0, 'rgba(255,255,255,0.08)');
+  fall.addColorStop(0.5, 'rgba(0,0,0,0)');
+  fall.addColorStop(1, 'rgba(0,0,0,0.38)');
+  ctx.fillStyle = fall;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.fillStyle = trimHex;
+  for (const x of [0, w - 12]) ctx.fillRect(x, 0, 12, h);
+  for (const x of [18, w - 22]) ctx.fillRect(x, 0, 4, h);
+  ctx.fillRect(0, h - 16, w, 16);
+  ctx.fillRect(0, h - 28, w, 5);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  for (const x of [12, w - 15]) ctx.fillRect(x, 0, 3, h);
+  ctx.fillRect(0, h - 19, w, 3);
+
+  return finish(bag, c);
 }
 
 /**
@@ -123,9 +205,9 @@ export function createHorseCoatTextures(
   grad.addColorStop(1, pal.highlight);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, size, size);
-  // Keep the belly from going fully to the mane colour
+  // Keep the belly from going to the mane colour: the rig paints its own shading into the coat
   ctx.fillStyle = pal.body;
-  ctx.globalAlpha = 0.45;
+  ctx.globalAlpha = 0.72;
   ctx.fillRect(0, 0, size, size);
   ctx.globalAlpha = 1;
 
@@ -168,6 +250,39 @@ export function createHorseCoatTextures(
     map: finish(bag, cMap, { repeat: [1, 1] }),
     bumpMap: finish(bag, cBump, { srgb: false, repeat: [1, 1] }),
   };
+}
+
+/**
+ * Loose hair for mane, tail and feathering cards: pale strands on a transparent ground, roots
+ * along the top edge, ending raggedly and thinning toward the sides so a card has no hard edge.
+ * The material's colour tints it; an alpha test cuts it out.
+ */
+export function createHairCardTexture(bag: DisposeBag): THREE.CanvasTexture {
+  const W = 128;
+  const H = 256;
+  const [c, ctx] = makeCanvas(W, H);
+  const rnd = seeded(4242);
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 240; i++) {
+    const x = 2 + rnd() * (W - 4);
+    const middle = 1 - Math.abs(x / W - 0.5) * 2;
+    const len = H * (0.3 + 0.7 * Math.pow(rnd(), 0.55) * (0.45 + 0.55 * middle));
+    const s = Math.round(150 + rnd() * 105);
+    const sway = (rnd() - 0.5) * 12;
+    const g = ctx.createLinearGradient(0, 0, 0, len);
+    g.addColorStop(0, `rgba(${s},${s},${s},1)`);
+    g.addColorStop(0.72, `rgba(${s},${s},${s},1)`);
+    g.addColorStop(1, `rgba(${s},${s},${s},0)`);
+    ctx.strokeStyle = g;
+    ctx.lineWidth = 1.4 + rnd() * 2.4;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.quadraticCurveTo(x + sway * 0.4, len * 0.5, x + sway, len);
+    ctx.stroke();
+  }
+  const tex = finish(bag, c);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
 }
 
 /** Silk brocade saddle cloth with a gold double hem. */
@@ -374,34 +489,147 @@ export function createPaintedPanoramaTexture(
 }
 
 /**
- * A flame on a card: a white-hot core low in the middle, falling off through yellow and orange
- * to nothing at the edges and the tip. Drawn additively, so only the core is bright enough to
- * bloom and the rest of the flame keeps its colour.
+ * A war drum's head: stretched ox hide, mottled and darker where it wraps over the rim, worn pale
+ * where the sticks land, painted with a cinnabar roundel inside a band of ink fret work and the
+ * army's character at the centre. The paint is chipped where the drum has been beaten.
  */
-export function createFlameTexture(bag: DisposeBag): THREE.CanvasTexture {
-  const [c, ctx] = makeCanvas(64, 128);
-  ctx.globalCompositeOperation = 'lighter';
-  // Three stacked lobes, each a stretched radial falloff: broad base, narrowing body, thin tip
-  const lobes: Array<[number, number, number, number, string, string]> = [
-    [104, 24, 1.0, 0.55, '255,170,70', '255,80,20'],
-    [80, 16, 2.4, 0.6, '255,205,120', '255,110,30'],
-    [50, 9, 4.6, 0.42, '255,190,110', '255,90,20'],
-    [100, 9, 2.0, 0.9, '255,250,225', '255,200,110'],
-  ];
-  for (const [cy, r, stretch, alpha, inner, outer] of lobes) {
-    ctx.save();
-    ctx.translate(32, cy);
-    ctx.scale(1, stretch);
-    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
-    g.addColorStop(0, `rgba(${inner},${alpha})`);
-    g.addColorStop(0.55, `rgba(${outer},${alpha * 0.45})`);
-    g.addColorStop(1, `rgba(${outer},0)`);
+export function createDrumSkinTexture(glyph: string, bag: DisposeBag): THREE.CanvasTexture {
+  const S = 256;
+  const C = S / 2;
+  const [c, ctx] = makeCanvas(S, S);
+  const rnd = seeded(glyph.charCodeAt(0) * 7 + 311);
+
+  // Hide, with mottling
+  ctx.fillStyle = '#a48a62';
+  ctx.fillRect(0, 0, S, S);
+  for (let i = 0; i < 140; i++) {
+    const x = rnd() * S;
+    const y = rnd() * S;
+    const r = 6 + rnd() * 26;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    const dark = rnd() < 0.55;
+    g.addColorStop(0, dark ? 'rgba(70,45,22,0.16)' : 'rgba(225,205,165,0.14)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+
+  // Ink fret band: a meander running round between two rules
+  ctx.strokeStyle = 'rgba(28,18,12,0.85)';
+  ctx.lineWidth = 2.2;
+  for (const r of [C * 0.66, C * 0.8]) {
+    ctx.beginPath();
+    ctx.arc(C, C, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.lineWidth = 2.6;
+  ctx.beginPath();
+  const steps = 48;
+  for (let i = 0; i <= steps; i++) {
+    const a0 = (i / steps) * Math.PI * 2;
+    const a1 = ((i + 0.5) / steps) * Math.PI * 2;
+    const rin = C * 0.69;
+    const rout = C * 0.77;
+    const p = (a: number, r: number): [number, number] => [C + Math.cos(a) * r, C + Math.sin(a) * r];
+    const pts = [p(a0, rin), p(a0, rout), p(a1, rout), p(a1, rin)];
+    if (i === 0) ctx.moveTo(...pts[0]);
+    for (const q of pts) ctx.lineTo(...q);
+  }
+  ctx.stroke();
+
+  // Cinnabar roundel with an ink edge, and the army's character in ink
+  ctx.fillStyle = '#7e2116';
+  ctx.beginPath();
+  ctx.arc(C, C, C * 0.58, 0, Math.PI * 2);
+  ctx.arc(C, C, C * 0.44, 0, Math.PI * 2, true);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(28,18,12,0.9)';
+  ctx.lineWidth = 2;
+  for (const r of [C * 0.44, C * 0.58]) {
+    ctx.beginPath();
+    ctx.arc(C, C, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(30,18,12,0.82)';
+  ctx.font = '900 74px "Noto Serif SC", "Songti SC", Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(glyph.slice(0, 1), C, C + 3);
+
+  // Beaten pale and the paint chipped where the sticks land, just below and left of centre
+  for (let i = 0; i < 70; i++) {
+    const a = rnd() * Math.PI * 2;
+    const d = Math.pow(rnd(), 0.7) * C * 0.42;
+    const x = C - 14 + Math.cos(a) * d;
+    const y = C + 18 + Math.sin(a) * d * 0.8;
+    const r = 2 + rnd() * 7;
+    ctx.fillStyle = `rgba(196,172,128,${0.25 + rnd() * 0.4})`;
+    ctx.beginPath();
+    ctx.ellipse(x, y, r, r * (0.4 + rnd() * 0.6), rnd() * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Darker toward the rim, where the hide turns over the edge of the shell
+  const rim = ctx.createRadialGradient(C, C, C * 0.62, C, C, C);
+  rim.addColorStop(0, 'rgba(40,24,12,0)');
+  rim.addColorStop(0.75, 'rgba(40,24,12,0.35)');
+  rim.addColorStop(1, 'rgba(30,18,10,0.85)');
+  ctx.fillStyle = rim;
+  ctx.fillRect(0, 0, S, S);
+  return finish(bag, c);
+}
+
+/** Embers in a brazier's bowl: black charcoal lumps with cracks of orange heat between them. */
+export function createCoalBedTexture(bag: DisposeBag): THREE.CanvasTexture {
+  const S = 128;
+  const [c, ctx] = makeCanvas(S, S);
+  const rnd = seeded(5150);
+  const heat = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  heat.addColorStop(0, '#ffb04a');
+  heat.addColorStop(0.45, '#e0521a');
+  heat.addColorStop(0.85, '#5a1606');
+  heat.addColorStop(1, '#120604');
+  ctx.fillStyle = heat;
+  ctx.fillRect(0, 0, S, S);
+  for (let i = 0; i < 46; i++) {
+    const a = rnd() * Math.PI * 2;
+    const d = Math.sqrt(rnd()) * S * 0.46;
+    const x = S / 2 + Math.cos(a) * d;
+    const y = S / 2 + Math.sin(a) * d;
+    const r = 5 + rnd() * 9;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(22,14,12,0.95)');
+    g.addColorStop(0.7, 'rgba(34,18,12,0.85)');
+    g.addColorStop(1, 'rgba(34,18,12,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.ellipse(x, y, r, r * (0.6 + rnd() * 0.4), rnd() * Math.PI, 0, Math.PI * 2);
     ctx.fill();
-    ctx.restore();
   }
+  return finish(bag, c);
+}
+
+/** A silk lantern lit from inside: red silk over bamboo ribs, brightest at the middle. */
+export function createSilkLanternTexture(bag: DisposeBag): THREE.CanvasTexture {
+  const [c, ctx] = makeCanvas(64, 128);
+  const glow = ctx.createLinearGradient(0, 0, 0, 128);
+  glow.addColorStop(0, '#3a0d08');
+  glow.addColorStop(0.18, '#9a2214');
+  glow.addColorStop(0.5, '#e8662c');
+  glow.addColorStop(0.82, '#9a2214');
+  glow.addColorStop(1, '#3a0d08');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, 64, 128);
+  // Ribs run from cap to cap
+  ctx.fillStyle = 'rgba(40,10,6,0.55)';
+  for (let i = 0; i < 8; i++) ctx.fillRect(i * 8, 0, 1.5, 128);
+  // Bands of gilt paper at the caps
+  ctx.fillStyle = 'rgba(30,8,4,0.9)';
+  ctx.fillRect(0, 0, 64, 9);
+  ctx.fillRect(0, 119, 64, 9);
+  ctx.fillStyle = 'rgba(214,160,70,0.8)';
+  ctx.fillRect(0, 9, 64, 3);
+  ctx.fillRect(0, 116, 64, 3);
   return finish(bag, c);
 }
 
@@ -521,8 +749,10 @@ export function createHeroFaceTexture(
   profile: HeroDuelProfile,
   bag: DisposeBag
 ): THREE.CanvasTexture {
+  // Painted on a 256 grid at twice the resolution, so the eyes and brows hold up in a close-up
   const S = 256;
-  const [c, ctx] = makeCanvas(S, S);
+  const [c, ctx] = makeCanvas(S * 2, S * 2);
+  ctx.scale(2, 2);
   const id = hero.id;
 
   const baseSkin =
@@ -577,6 +807,37 @@ export function createHeroFaceTexture(
     ctx.closePath();
     ctx.fill();
   }
+
+  // Hair at the temples, running down in front of each ear to the sideburn
+  for (const sx of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(128 + sx * 36, 76);
+    ctx.quadraticCurveTo(128 + sx * 54, 90, 128 + sx * 52, 112);
+    ctx.lineTo(128 + sx * 58, 122);
+    ctx.lineTo(128 + sx * 82, 122);
+    ctx.lineTo(128 + sx * 82, 74);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Shade under the brow ridge, beneath the cheekbones and under the nose
+  for (const sx of [-1, 1]) {
+    const lid = ctx.createRadialGradient(128 + sx * 20, 121, 1, 128 + sx * 20, 121, 13);
+    lid.addColorStop(0, 'rgba(46, 20, 12, 0.3)');
+    lid.addColorStop(1, 'rgba(46, 20, 12, 0)');
+    ctx.fillStyle = lid;
+    ctx.fillRect(128 + sx * 20 - 14, 108, 28, 26);
+    const hollow = ctx.createRadialGradient(128 + sx * 34, 156, 2, 128 + sx * 34, 156, 20);
+    hollow.addColorStop(0, 'rgba(46, 20, 12, 0.2)');
+    hollow.addColorStop(1, 'rgba(46, 20, 12, 0)');
+    ctx.fillStyle = hollow;
+    ctx.fillRect(128 + sx * 34 - 20, 136, 40, 40);
+  }
+  ctx.fillStyle = 'rgba(46, 20, 12, 0.26)';
+  ctx.beginPath();
+  ctx.ellipse(128, 155, 9, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = hairCol;
 
   // Sculpted ears at U = 0.25 (x = 62) and U = 0.75 (x = 194)
   for (const ex of [61, 195]) {
@@ -678,7 +939,11 @@ export function createHeroFaceTexture(
     ctx.fill();
   } else {
     ctx.fillStyle = 'rgba(84, 38, 30, 0.78)';
-    ctx.fillRect(119, 163, 18, 3);
+    ctx.fillRect(119, 163, 18, 2.5);
+    ctx.fillStyle = 'rgba(150, 72, 60, 0.42)';
+    ctx.beginPath();
+    ctx.ellipse(128, 168, 7.5, 2.6, 0, 0, Math.PI * 2);
+    ctx.fill();
     if (hero.war >= 78 || profile.hasLongBeard || hero.intellect >= 85) {
       ctx.strokeStyle = hairCol;
       ctx.lineWidth = 3.4;

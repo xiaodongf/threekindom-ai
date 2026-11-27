@@ -3,10 +3,23 @@ import type { General } from '../../game/types.js';
 import type { HeroDuelProfile } from '../../game/heroDuelProfiles.js';
 import { HORSE_COAT_PALETTES } from '../../game/heroDuelProfiles.js';
 import type { RiderActionPose, RiderFrameState } from './duelTypes.js';
-import type { DisposeBag, LoftRing } from './duelGeometry3D.js';
-import { buildLoft, limbBetween, mergeRigid, shadowMesh } from './duelGeometry3D.js';
+import type { DisposeBag } from './duelGeometry3D.js';
+import { mergeRigid } from './duelGeometry3D.js';
+import type { RiderArm, RiderParts } from './duelRider3D.js';
+import { ARM_FORE, ARM_UPPER, buildRider3D } from './duelRider3D.js';
+import type { HorseMaterials } from './duelHorse3D.js';
+import {
+  bakeCoatShading,
+  buildHorseBody3D,
+  buildHorseHead3D,
+  buildHorseLeg3D,
+  buildHorseNeck3D,
+  buildHorseTail3D,
+} from './duelHorse3D.js';
 import {
   createCaparisonTexture,
+  createCloakTexture,
+  createHairCardTexture,
   createHeroFaceTexture,
   createHorseCoatTextures,
   createLamellarArmorTextures,
@@ -30,8 +43,6 @@ const NECK_BASE = { x: 0.78, y: 1.5 };
 const HEAD_REST = -0.88;
 const SEAT = { x: -0.02, y: 1.79 };
 export const RIDER_SCALE = 1.1;
-const ARM_UPPER = 0.35;
-const ARM_FORE = 0.34;
 const SHOULDER = new THREE.Vector3(0, 0.6, 0.29);
 
 interface HorseLeg {
@@ -77,9 +88,9 @@ export interface MountedGeneralRig3D {
   torso: THREE.Group;
   head: THREE.Group;
   plumes: THREE.Group[][];
-  cape: { geo: THREE.BufferGeometry; cols: number; rows: number } | null;
-  armR: { upper: THREE.Group; fore: THREE.Group };
-  armL: { upper: THREE.Group; fore: THREE.Group };
+  cape: RiderParts['cape'] | null;
+  armR: RiderArm;
+  armL: RiderArm;
   weapon: THREE.Group;
   offWeapon: THREE.Group | null;
   trailBase: THREE.Object3D;
@@ -117,240 +128,6 @@ export interface MountedGeneralRig3D {
   };
 }
 
-function ring(x: number, y: number, ry: number, rz: number): LoftRing {
-  return { x, y, ry, rz };
-}
-
-function buildHorseLeg(
-  bag: DisposeBag,
-  front: boolean,
-  coatMat: THREE.Material,
-  pointsMat: THREE.Material,
-  hoofMat: THREE.Material
-): Pick<HorseLeg, 'upper' | 'lower' | 'pastern' | 'hoofAnchor'> {
-  const l1 = front ? FRONT_L1 : HIND_L1;
-  const l2 = front ? FRONT_L2 : HIND_L2;
-  const cannon = l2 - 0.16;
-
-  const upper = new THREE.Group();
-  const upperRings = front
-    ? [
-        ring(0.02, 0.16, 0.19, 0.11),
-        ring(0.0, -0.06, 0.16, 0.105),
-        ring(0.0, -0.3, 0.105, 0.082),
-        ring(0.0, -l1 + 0.06, 0.076, 0.066),
-        ring(0.0, -l1, 0.086, 0.074),
-      ]
-    : [
-        ring(-0.02, 0.18, 0.24, 0.13),
-        ring(0.0, -0.04, 0.2, 0.12),
-        ring(0.0, -0.3, 0.12, 0.088),
-        ring(0.0, -l1 + 0.08, 0.08, 0.068),
-        ring(0.0, -l1, 0.09, 0.074),
-      ];
-  upper.add(shadowMesh(bag.add(buildLoft(upperRings, { radial: 10 })), coatMat));
-
-  const lower = new THREE.Group();
-  lower.position.y = -l1;
-  upper.add(lower);
-  const lowerRings = [
-    ring(0, 0.03, 0.082, 0.07),
-    ring(0, -0.08, 0.062, 0.054),
-    ring(0, -cannon + 0.1, 0.054, 0.048),
-    ring(0, -cannon, 0.072, 0.062),
-  ];
-  lower.add(shadowMesh(bag.add(buildLoft(lowerRings, { radial: 8 })), pointsMat));
-
-  const pastern = new THREE.Group();
-  pastern.position.y = -cannon;
-  lower.add(pastern);
-  const pasternMesh = shadowMesh(bag.add(new THREE.CylinderGeometry(0.06, 0.056, 0.08, 8)), pointsMat);
-  pasternMesh.position.y = -0.03;
-  pastern.add(pasternMesh);
-  const hoof = shadowMesh(bag.add(new THREE.CylinderGeometry(0.07, 0.1, 0.11, 10)), hoofMat);
-  hoof.position.set(0.02, -0.105, 0);
-  pastern.add(hoof);
-  const hoofAnchor = new THREE.Object3D();
-  hoofAnchor.position.set(0.02, -0.16, 0);
-  pastern.add(hoofAnchor);
-
-  return { upper, lower, pastern, hoofAnchor };
-}
-
-function buildHeadgear(
-  bag: DisposeBag,
-  hero: General,
-  profile: HeroDuelProfile,
-  head: THREE.Group,
-  mats: {
-    armor: THREE.Material;
-    trim: THREE.Material;
-    cape: THREE.Material;
-    robe: THREE.Material;
-    hair: THREE.Material;
-  }
-): THREE.Group[][] {
-  const plumes: THREE.Group[][] = [];
-  const put = (mesh: THREE.Mesh, x: number, y: number, z = 0) => {
-    mesh.position.set(x, y, z);
-    head.add(mesh);
-    return mesh;
-  };
-  const dome = (r: number, mat: THREE.Material, y: number, phi = 0.52) => {
-    const m = put(
-      shadowMesh(bag.add(new THREE.SphereGeometry(r, 16, 10, 0, Math.PI * 2, 0, Math.PI * phi)), mat),
-      0,
-      y
-    );
-    // Tilt cap back slightly so the front brow opens cleanly above the hero's eyes
-    m.rotation.z = 0.24;
-    return m;
-  };
-
-  const tasselMat = bag.add(new THREE.MeshStandardMaterial({ color: profile.tasselColor }));
-  tasselMat.userData.palette = 'matte';
-
-  // A chain of segments that trails behind the head and whips with the rider's motion.
-  const chain = (
-    x: number,
-    y: number,
-    z: number,
-    count: number,
-    segLen: number,
-    radius: number,
-    mat: THREE.Material,
-    baseRot: number,
-    curl: number
-  ) => {
-    const segs: THREE.Group[] = [];
-    let parent: THREE.Object3D = head;
-    for (let i = 0; i < count; i++) {
-      const seg = new THREE.Group();
-      if (i === 0) seg.position.set(x, y, z);
-      else seg.position.set(0, segLen, 0);
-      seg.rotation.z = i === 0 ? baseRot : curl;
-      seg.userData.rest = seg.rotation.z;
-      const r0 = radius * (1 - (i / count) * 0.75);
-      const r1 = radius * (1 - ((i + 1) / count) * 0.75);
-      const m = shadowMesh(bag.add(new THREE.CylinderGeometry(r1, r0, segLen, 6)), mat);
-      m.position.y = segLen * 0.5;
-      m.scale.z = 0.55;
-      seg.add(m);
-      parent.add(seg);
-      parent = seg;
-      segs.push(seg);
-    }
-    plumes.push(segs);
-  };
-
-  switch (profile.headgear) {
-    case 'pheasant_crown': {
-      put(shadowMesh(bag.add(new THREE.CylinderGeometry(0.12, 0.15, 0.16, 12)), mats.trim), 0, 0.15);
-      put(shadowMesh(bag.add(new THREE.SphereGeometry(0.06, 10, 8)), tasselMat), 0, 0.27);
-      const feather = bag.add(new THREE.MeshStandardMaterial({ color: '#f43f5e' }));
-      feather.userData.palette = 'matte';
-      chain(-0.02, 0.24, 0.07, 5, 0.31, 0.028, feather, 0.35, 0.28);
-      chain(-0.02, 0.24, -0.07, 5, 0.31, 0.028, feather, 0.45, 0.26);
-      break;
-    }
-    case 'green_hood': {
-      dome(0.158, mats.cape, 0.025, 0.52);
-      const band = put(shadowMesh(bag.add(new THREE.TorusGeometry(0.15, 0.02, 6, 16)), mats.trim), 0, 0.068);
-      band.rotation.x = Math.PI * 0.5;
-      band.rotation.y = -0.22;
-      const peak = put(shadowMesh(bag.add(new THREE.ConeGeometry(0.1, 0.2, 8)), mats.cape), -0.04, 0.2);
-      peak.rotation.z = 0.5;
-      chain(-0.13, 0.04, 0, 3, 0.16, 0.07, mats.cape, 2.3, 0.2);
-      break;
-    }
-    case 'scholar_crown': {
-      put(shadowMesh(bag.add(new THREE.CylinderGeometry(0.1, 0.13, 0.2, 10)), mats.robe), -0.01, 0.2);
-      put(shadowMesh(bag.add(new THREE.BoxGeometry(0.26, 0.02, 0.07)), mats.trim), -0.01, 0.31);
-      const pin = put(shadowMesh(bag.add(new THREE.CylinderGeometry(0.012, 0.012, 0.34, 6)), mats.trim), -0.01, 0.2);
-      pin.rotation.x = Math.PI * 0.5;
-      dome(0.15, mats.hair, 0.02, 0.5);
-      break;
-    }
-    case 'phoenix_hairpin': {
-      dome(0.152, mats.hair, 0.02, 0.62);
-      put(shadowMesh(bag.add(new THREE.SphereGeometry(0.075, 10, 8)), mats.hair), -0.06, 0.2);
-      const tiara = put(
-        shadowMesh(bag.add(new THREE.TorusGeometry(0.13, 0.02, 6, 14, Math.PI)), mats.trim),
-        0.03,
-        0.1
-      );
-      tiara.rotation.y = Math.PI * 0.5;
-      put(shadowMesh(bag.add(new THREE.OctahedronGeometry(0.04)), tasselMat), 0.14, 0.14);
-      chain(-0.12, 0.1, 0, 5, 0.17, 0.06, mats.hair, 2.6, 0.12);
-      break;
-    }
-    case 'imperial_crown': {
-      put(shadowMesh(bag.add(new THREE.CylinderGeometry(0.13, 0.15, 0.16, 12)), mats.trim), 0, 0.15);
-      put(shadowMesh(bag.add(new THREE.BoxGeometry(0.42, 0.02, 0.24)), mats.trim), 0, 0.25);
-      put(shadowMesh(bag.add(new THREE.OctahedronGeometry(0.045)), tasselMat), 0.14, 0.16);
-      dome(0.15, mats.hair, 0.02, 0.5);
-      break;
-    }
-    case 'bandana_crest': {
-      dome(0.15, mats.hair, 0.02, 0.55);
-      const band = put(shadowMesh(bag.add(new THREE.TorusGeometry(0.148, 0.03, 6, 16)), mats.cape), 0, 0.06);
-      band.rotation.x = Math.PI * 0.5;
-      put(shadowMesh(bag.add(new THREE.OctahedronGeometry(0.045)), mats.trim), 0.15, 0.07);
-      chain(-0.14, 0.06, 0.03, 4, 0.15, 0.035, mats.cape, 2.2, 0.15);
-      chain(-0.14, 0.06, -0.03, 4, 0.13, 0.035, mats.cape, 2.5, 0.12);
-      break;
-    }
-    default: {
-      // Crested war helm with cheek guards, neck guard and a horsehair plume
-      dome(0.168, mats.armor, 0.025, 0.52);
-      const brim = put(shadowMesh(bag.add(new THREE.TorusGeometry(0.165, 0.02, 6, 18)), mats.trim), 0, 0.065);
-      brim.rotation.x = Math.PI * 0.5;
-      brim.rotation.y = -0.22;
-      const visor = put(shadowMesh(bag.add(new THREE.BoxGeometry(0.1, 0.03, 0.2)), mats.trim), 0.145, 0.088);
-      visor.rotation.z = -0.22;
-      for (const side of [-1, 1]) {
-        const cheek = put(
-          shadowMesh(bag.add(new THREE.BoxGeometry(0.11, 0.17, 0.02)), mats.armor),
-          0.03,
-          -0.05,
-          side * 0.15
-        );
-        cheek.rotation.x = side * -0.12;
-      }
-      const neckGuard = put(
-        shadowMesh(
-          bag.add(new THREE.CylinderGeometry(0.17, 0.22, 0.17, 12, 1, true, Math.PI * 1.1, Math.PI * 0.8)),
-          mats.armor
-        ),
-        0,
-        -0.07
-      );
-      (neckGuard.material as THREE.Material).side = THREE.DoubleSide;
-      put(shadowMesh(bag.add(new THREE.ConeGeometry(0.04, 0.16, 6)), mats.trim), 0, 0.24);
-      chain(0, 0.3, 0, 4, 0.13, 0.06, tasselMat, 1.25, 0.32);
-      break;
-    }
-  }
-
-  if (profile.hasLongBeard) {
-    const beardMat = bag.add(
-      new THREE.MeshStandardMaterial({
-        color: hero.id === 'huangzhong' || hero.id === 'huatuo' ? '#e2e8f0' : '#15131a',
-      })
-    );
-    beardMat.userData.palette = 'matte';
-    const beard = put(shadowMesh(bag.add(new THREE.ConeGeometry(0.1, 0.52, 8)), beardMat), 0.1, -0.3);
-    beard.rotation.z = Math.PI - 0.12;
-    beard.scale.z = 0.8;
-    for (const side of [-1, 1]) {
-      const whisk = put(shadowMesh(bag.add(new THREE.ConeGeometry(0.03, 0.3, 6)), beardMat), 0.12, -0.16, side * 0.07);
-      whisk.rotation.z = Math.PI - 0.2;
-      whisk.rotation.x = side * 0.2;
-    }
-  }
-
-  return plumes;
-}
 
 /** Builds a warhorse and its general as one articulated rig. */
 export function buildMountedGeneralRig3D(
@@ -367,16 +144,32 @@ export function buildMountedGeneralRig3D(
   const std = (params: THREE.MeshStandardMaterialParameters) =>
     bag.add(new THREE.MeshStandardMaterial(params));
 
-  const coatMat = std({ map: horseTex.map, bumpMap: horseTex.bumpMap, bumpScale: 0.6, roughness: 0.46, metalness: 0.05 });
-  const pointsMat = std({ color: coatPal.mane, roughness: 0.55 });
+  // The coat is groomed hair, not lacquer: a broad soft sheen instead of a mirror highlight
+  // The coat is groomed hair, matte with a broad soft sheen; its light and shade are painted into
+  // the vertex colours (bakeCoatShading)
+  const coatMat = std({
+    map: horseTex.map,
+    bumpMap: horseTex.bumpMap,
+    bumpScale: 0.35,
+    roughness: 0.78,
+    metalness: 0,
+    envMapIntensity: 0.45,
+    vertexColors: true,
+  });
   const maneMat = std({ color: coatPal.mane, roughness: 0.82 });
+  // Mane, tail and feathering: strand cards cut out by an alpha test, so shadows follow the strands
+  const horseHairMat = std({ color: coatPal.mane, map: createHairCardTexture(bag), alphaTest: 0.45, roughness: 0.8 });
   const hoofMat = std({ color: coatPal.hoof, roughness: 0.35, metalness: 0.2 });
+  const eyeMat = std({ color: '#0d0907', roughness: 0.1, metalness: 0, envMapIntensity: 1.4 });
   const bardingMat = std({ map: caparisonTex, roughness: 0.62, metalness: 0.12, side: THREE.DoubleSide });
   const leatherMat = std({ color: '#3b1f14', roughness: 0.55, metalness: 0.1 });
-  const armorMat = std({ map: armorTex.map, bumpMap: armorTex.bumpMap, bumpScale: 1.4, roughness: 0.34, metalness: 0.78 });
+  // Lacquered lamellar: coloured plates with a soft gloss, so the rows read instead of glittering
+  const armorMat = std({ map: armorTex.map, bumpMap: armorTex.bumpMap, bumpScale: 1.1, roughness: 0.44, metalness: 0.42, envMapIntensity: 0.9 });
   const trimMat = std({ color: profile.armorTrim, roughness: 0.26, metalness: 1 });
-  const capeMat = std({ color: profile.capeColor, roughness: 0.72, side: THREE.DoubleSide });
-  const robeMat = std({ color: profile.isScholarRobe ? profile.armorPrimary : profile.capeColor, roughness: 0.78 });
+  const capeMat = std({ map: createCloakTexture(profile.capeColor, profile.armorTrim, bag), roughness: 0.74, side: THREE.DoubleSide });
+  const robeColor = new THREE.Color(profile.isScholarRobe ? profile.armorPrimary : profile.capeColor);
+  if (!profile.isScholarRobe) robeColor.multiplyScalar(0.78);
+  const robeMat = std({ color: robeColor, roughness: 0.78 });
   const skinColor =
     hero.id === 'guanyu'
       ? '#b84c3e'
@@ -384,9 +177,11 @@ export function buildMountedGeneralRig3D(
         ? '#ecc3a8'
         : hero.id === 'zhangfei' || hero.id === 'menghuo' || hero.id === 'yanbaihu'
           ? '#be825c'
-          : '#d69e78';
+          : profile.isScholarRobe
+            ? '#e2b290'
+            : '#d69e78';
   const skinMat = std({ color: skinColor, roughness: 0.62 });
-  const faceMat = std({ map: createHeroFaceTexture(hero, profile, bag), roughness: 0.58, metalness: 0.02 });
+  const faceMat = std({ map: createHeroFaceTexture(hero, profile, bag), roughness: 0.6, metalness: 0 });
   const reinMat = std({ color: '#381d12', roughness: 0.58, side: THREE.DoubleSide });
   const hairMat = std({
     color:
@@ -400,11 +195,12 @@ export function buildMountedGeneralRig3D(
   const darkMat = std({ color: '#0b0b0e', roughness: 0.25, metalness: 0.3 });
   const tasselMat = std({ color: profile.tasselColor, roughness: 0.7, emissive: profile.tasselColor, emissiveIntensity: 0.22 });
 
-  // Plain materials are baked into two shared vertex-coloured palettes when the rig is merged
-  const matte = std({ vertexColors: true, roughness: 0.68, metalness: 0.02 });
-  const metal = std({ vertexColors: true, roughness: 0.27, metalness: 1, envMapIntensity: 1.2 });
+  // Plain materials are baked into two shared vertex-coloured palettes when the rig is merged.
+  // The metal palette is gilt bronze, burnished but not a mirror.
+  const matte = std({ vertexColors: true, roughness: 0.7, metalness: 0 });
+  const metal = std({ vertexColors: true, roughness: 0.36, metalness: 0.92, envMapIntensity: 1.05 });
   const clothMat = std({ color: profile.capeColor });
-  for (const m of [pointsMat, maneMat, hoofMat, leatherMat, robeMat, skinMat, hairMat, darkMat, tasselMat, clothMat]) {
+  for (const m of [maneMat, hoofMat, leatherMat, robeMat, skinMat, hairMat, darkMat, tasselMat, clothMat]) {
     m.userData.palette = 'matte';
   }
   trimMat.userData.palette = 'metal';
@@ -416,216 +212,48 @@ export function buildMountedGeneralRig3D(
     baseIntensity: mat.emissiveIntensity,
   }));
 
-  // ---------------------------------------------------------------- horse body
+  // ---------------------------------------------------------------- horse
   const pitchPivot = new THREE.Group();
   pitchPivot.position.set(HIP.x, HIP.y, 0);
   root.add(pitchPivot);
   const body = new THREE.Group();
   body.position.set(-HIP.x, -HIP.y, 0);
   pitchPivot.add(body);
+  const horse: HorseMaterials = {
+    coat: coatMat,
+    hair: horseHairMat,
+    crest: maneMat,
+    hoof: hoofMat,
+    barding: bardingMat,
+    leather: leatherMat,
+    trim: trimMat,
+    tassel: tasselMat,
+    dark: darkMat,
+    eye: eyeMat,
+  };
+  buildHorseBody3D(bag, body, horse);
 
-  const barrelRings = [
-    ring(-1.03, 1.44, 0.02, 0.02),
-    ring(-0.98, 1.43, 0.2, 0.17),
-    ring(-0.82, 1.41, 0.38, 0.33),
-    ring(-0.58, 1.38, 0.43, 0.37),
-    ring(-0.3, 1.35, 0.41, 0.36),
-    ring(0.0, 1.32, 0.42, 0.37),
-    ring(0.3, 1.3, 0.45, 0.375),
-    ring(0.56, 1.31, 0.47, 0.36),
-    ring(0.78, 1.35, 0.45, 0.32),
-    ring(0.95, 1.38, 0.36, 0.26),
-    ring(1.04, 1.41, 0.17, 0.14),
-    ring(1.07, 1.41, 0.02, 0.02),
-  ];
-  body.add(shadowMesh(bag.add(buildLoft(barrelRings, { radial: 18 })), coatMat));
-
-  const muscleGeo = bag.add(new THREE.SphereGeometry(1, 14, 12));
-  for (const side of [-1, 1]) {
-    const haunch = shadowMesh(muscleGeo, coatMat);
-    haunch.position.set(-0.58, 1.36, side * 0.19);
-    haunch.scale.set(0.38, 0.42, 0.22);
-    body.add(haunch);
-    const shoulder = shadowMesh(muscleGeo, coatMat);
-    shoulder.position.set(0.7, 1.32, side * 0.17);
-    shoulder.scale.set(0.27, 0.42, 0.19);
-    body.add(shoulder);
-  }
-
-  // Saddle cloth draped over the barrel, breast band, crupper band and their tassels
-  const clothRings = [
-    ring(-0.4, 1.365, 0.445, 0.39),
-    ring(-0.2, 1.345, 0.44, 0.39),
-    ring(0.08, 1.315, 0.45, 0.4),
-    ring(0.3, 1.3, 0.475, 0.405),
-    ring(0.44, 1.305, 0.485, 0.4),
-  ];
-  body.add(
-    shadowMesh(
-      bag.add(buildLoft(clothRings, { radial: 16, arc: [-Math.PI * 0.56, Math.PI * 0.56] })),
-      bardingMat
-    )
-  );
-  const breastBand = [ring(0.82, 1.36, 0.455, 0.325), ring(0.88, 1.37, 0.43, 0.305), ring(0.94, 1.38, 0.385, 0.28)];
-  body.add(shadowMesh(bag.add(buildLoft(breastBand, { radial: 16, smooth: 1 })), trimMat));
-  const crupperBand = [ring(-0.78, 1.405, 0.41, 0.355), ring(-0.72, 1.395, 0.425, 0.365)];
-  body.add(shadowMesh(bag.add(buildLoft(crupperBand, { radial: 16, smooth: 1 })), leatherMat));
-  const bigTasselGeo = bag.add(new THREE.ConeGeometry(0.055, 0.26, 8));
-  const tasselSpots: Array<[number, number, number]> = [
-    [1.07, 1.3, 0],
-    [-0.75, 1.52, 0.35],
-    [-0.75, 1.52, -0.35],
-  ];
-  for (const [x, y, z] of tasselSpots) {
-    const t = shadowMesh(bigTasselGeo, tasselMat);
-    t.position.set(x, y - 0.12, z);
-    t.rotation.z = Math.PI;
-    body.add(t);
-    const knob = shadowMesh(bag.add(new THREE.SphereGeometry(0.05, 8, 8)), trimMat);
-    knob.position.set(x, y + 0.04, z);
-    body.add(knob);
-  }
-
-  const saddleRings = [
-    ring(-0.44, 1.9, 0.03, 0.18),
-    ring(-0.37, 1.87, 0.09, 0.24),
-    ring(-0.24, 1.8, 0.06, 0.25),
-    ring(-0.02, 1.765, 0.05, 0.25),
-    ring(0.2, 1.79, 0.055, 0.21),
-    ring(0.3, 1.86, 0.085, 0.14),
-    ring(0.34, 1.91, 0.03, 0.08),
-  ];
-  body.add(shadowMesh(bag.add(buildLoft(saddleRings, { radial: 12 })), leatherMat));
-
-  // ---------------------------------------------------------------- neck & head
   const neck = new THREE.Group();
   neck.position.set(NECK_BASE.x, NECK_BASE.y, 0);
   body.add(neck);
-  const neckRings = [
-    ring(-0.14, -0.22, 0.4, 0.26),
-    ring(0.04, 0.06, 0.35, 0.23),
-    ring(0.2, 0.34, 0.28, 0.185),
-    ring(0.34, 0.6, 0.22, 0.15),
-    ring(0.44, 0.8, 0.175, 0.125),
-    ring(0.5, 0.94, 0.12, 0.1),
-  ];
-  neck.add(shadowMesh(bag.add(buildLoft(neckRings, { radial: 14 })), coatMat));
-
-  const crestRings = [
-    ring(-0.3, 0.16, 0.05, 0.05),
-    ring(-0.2, 0.34, 0.075, 0.06),
-    ring(-0.03, 0.56, 0.075, 0.055),
-    ring(0.14, 0.76, 0.07, 0.05),
-    ring(0.28, 0.92, 0.06, 0.045),
-    ring(0.4, 1.02, 0.03, 0.03),
-  ];
-  neck.add(shadowMesh(bag.add(buildLoft(crestRings, { radial: 8 })), maneMat));
-
-  const mane: THREE.Group[] = [];
-  const lockGeo = bag.add(new THREE.ConeGeometry(0.075, 0.44, 6));
-  for (let i = 0; i < 6; i++) {
-    const f = i / 5;
-    const lock = new THREE.Group();
-    lock.position.set(-0.24 + f * 0.58, 0.3 + f * 0.66, 0.06 + (1 - f) * 0.05);
-    const m = shadowMesh(lockGeo, maneMat);
-    m.rotation.z = Math.PI;
-    m.position.set(0, -0.2, 0.05 + (1 - f) * 0.04);
-    m.scale.set(1.7, 1 - f * 0.25, 0.32);
-    lock.add(m);
-    lock.rotation.x = -0.32;
-    neck.add(lock);
-    mane.push(lock);
-  }
+  const mane = buildHorseNeck3D(bag, neck, horse);
 
   const headGroup = new THREE.Group();
   headGroup.position.set(0.47, 0.9, 0);
   headGroup.rotation.z = HEAD_REST;
   headGroup.scale.setScalar(1.1);
   neck.add(headGroup);
-  const skullRings = [
-    ring(-0.08, 0.0, 0.07, 0.07),
-    ring(0.03, 0.0, 0.155, 0.125),
-    ring(0.16, -0.012, 0.165, 0.12),
-    ring(0.3, -0.02, 0.13, 0.098),
-    ring(0.44, -0.03, 0.1, 0.08),
-    ring(0.56, -0.04, 0.094, 0.082),
-    ring(0.635, -0.046, 0.05, 0.05),
-  ];
-  headGroup.add(shadowMesh(bag.add(buildLoft(skullRings, { radial: 12 })), coatMat));
-  const cheek = shadowMesh(muscleGeo, coatMat);
-  cheek.position.set(0.12, -0.09, 0);
-  cheek.scale.set(0.15, 0.13, 0.105);
-  headGroup.add(cheek);
-  const muzzle = shadowMesh(muscleGeo, pointsMat);
-  muzzle.position.set(0.59, -0.045, 0);
-  muzzle.scale.set(0.07, 0.085, 0.078);
-  headGroup.add(muzzle);
-  const earGeo = bag.add(new THREE.ConeGeometry(0.04, 0.17, 6));
-  for (const side of [-1, 1]) {
-    const ear = shadowMesh(earGeo, coatMat);
-    ear.position.set(-0.03, 0.2, side * 0.075);
-    ear.rotation.z = 0.35;
-    ear.rotation.x = side * 0.18;
-    headGroup.add(ear);
-    const eye = new THREE.Mesh(bag.add(new THREE.SphereGeometry(0.026, 8, 8)), darkMat);
-    eye.position.set(0.15, 0.055, side * 0.108);
-    headGroup.add(eye);
-    const nostril = new THREE.Mesh(bag.add(new THREE.SphereGeometry(0.016, 6, 6)), darkMat);
-    nostril.position.set(0.63, -0.01, side * 0.04);
-    headGroup.add(nostril);
-  }
-  const forelock = shadowMesh(lockGeo, maneMat);
-  forelock.position.set(0.1, 0.13, 0);
-  forelock.rotation.z = -1.9;
-  forelock.scale.set(0.8, 0.6, 0.6);
-  headGroup.add(forelock);
-  // Gilded chanfron and bridle
-  const chanfron = shadowMesh(bag.add(new THREE.CapsuleGeometry(0.05, 0.3, 4, 8)), trimMat);
-  chanfron.position.set(0.24, 0.115, 0);
-  chanfron.rotation.z = -Math.PI * 0.5 - 0.06;
-  chanfron.scale.set(0.4, 1, 1.5);
-  headGroup.add(chanfron);
-  for (const x of [0.4, 0.07]) {
-    const band = shadowMesh(bag.add(new THREE.TorusGeometry(x > 0.2 ? 0.108 : 0.15, 0.012, 6, 14)), leatherMat);
-    band.position.set(x, x > 0.2 ? -0.025 : -0.02, 0);
-    band.rotation.y = Math.PI * 0.5;
-    band.scale.set(0.8, 1, 1);
-    headGroup.add(band);
-  }
-  const headTassel = shadowMesh(bag.add(new THREE.ConeGeometry(0.045, 0.2, 6)), tasselMat);
-  headTassel.position.set(0.02, -0.22, 0);
-  headTassel.rotation.z = Math.PI - HEAD_REST * 0.5;
-  headGroup.add(headTassel);
+  // The muzzle and lower legs shade toward the darker points colour
+  const pointsTint = new THREE.Color(coatPal.mane);
+  const bodyTint = new THREE.Color(coatPal.body);
+  pointsTint.setRGB(
+    Math.min(1, pointsTint.r / Math.max(0.01, bodyTint.r)),
+    Math.min(1, pointsTint.g / Math.max(0.01, bodyTint.g)),
+    Math.min(1, pointsTint.b / Math.max(0.01, bodyTint.b))
+  );
+  const bitAnchors = buildHorseHead3D(bag, headGroup, horse, pointsTint, HEAD_REST);
+  const tail = buildHorseTail3D(bag, body, horse);
 
-  // Bronze bridle bit rings & rein attachment anchors on both corners of the mouth
-  const bitAnchors: [THREE.Object3D, THREE.Object3D] = [new THREE.Object3D(), new THREE.Object3D()];
-  for (let si = 0; si < 2; si++) {
-    const side = si === 0 ? -1 : 1;
-    const bitRing = shadowMesh(bag.add(new THREE.TorusGeometry(0.028, 0.007, 6, 10)), trimMat);
-    bitRing.position.set(0.45, -0.055, side * 0.095);
-    headGroup.add(bitRing);
-    bitAnchors[si].position.set(0.45, -0.06, side * 0.1);
-    headGroup.add(bitAnchors[si]);
-  }
-
-  // ---------------------------------------------------------------- tail
-  const tail: THREE.Group[] = [];
-  let tailParent: THREE.Object3D = body;
-  for (let i = 0; i < 6; i++) {
-    const seg = new THREE.Group();
-    if (i === 0) seg.position.set(-1.0, 1.6, 0);
-    else seg.position.set(0, -0.22, 0);
-    const r0 = 0.085 - i * 0.008;
-    const hair = shadowMesh(bag.add(new THREE.CylinderGeometry(r0, Math.max(0.012, r0 - 0.014), 0.24, 7)), maneMat);
-    hair.position.y = -0.11;
-    hair.scale.z = 0.7;
-    seg.add(hair);
-    tailParent.add(seg);
-    tailParent = seg;
-    tail.push(seg);
-  }
-
-  // ---------------------------------------------------------------- legs
   const legs: HorseLeg[] = [];
   const legSpecs: Array<{ front: boolean; side: number; gallop: number; trot: number }> = [
     { front: true, side: -1, gallop: 0.5, trot: 0 },
@@ -634,7 +262,9 @@ export function buildMountedGeneralRig3D(
     { front: false, side: 1, gallop: 0, trot: 0 },
   ];
   for (const spec of legSpecs) {
-    const built = buildHorseLeg(bag, spec.front, coatMat, pointsMat, hoofMat);
+    const l1 = spec.front ? FRONT_L1 : HIND_L1;
+    const l2 = spec.front ? FRONT_L2 : HIND_L2;
+    const built = buildHorseLeg3D(bag, spec.front, l1, l2, horse);
     const joint = spec.front ? FRONT_JOINT : HIND_JOINT;
     built.upper.position.set(joint.x, joint.y, spec.side * (spec.front ? 0.2 : 0.22));
     body.add(built.upper);
@@ -644,8 +274,8 @@ export function buildMountedGeneralRig3D(
       front: spec.front,
       jx: joint.x,
       jy: joint.y,
-      l1: spec.front ? FRONT_L1 : HIND_L1,
-      l2: spec.front ? FRONT_L2 : HIND_L2,
+      l1,
+      l2,
       restX,
       gallopOffset: spec.gallop,
       trotOffset: spec.trot,
@@ -654,190 +284,27 @@ export function buildMountedGeneralRig3D(
       wasStance: true,
     });
   }
+  bakeCoatShading(root, coatMat, pointsTint);
 
   // ---------------------------------------------------------------- rider
-  const riderRoot = new THREE.Group();
+  const rider = buildRider3D(hero, profile, bag, {
+    armor: armorMat,
+    trim: trimMat,
+    leather: leatherMat,
+    robe: robeMat,
+    cloth: clothMat,
+    cape: capeMat,
+    skin: skinMat,
+    face: faceMat,
+    hair: hairMat,
+    dark: darkMat,
+    tassel: tasselMat,
+    rein: reinMat,
+  });
+  const { riderRoot, torso, head, plumes, armR, armL, chest, reins } = rider;
   riderRoot.position.set(SEAT.x, SEAT.y, 0);
   riderRoot.scale.setScalar(RIDER_SCALE);
   body.add(riderRoot);
-
-  const slim = profile.isHeroine ? 0.86 : 1;
-  const legMat = profile.isScholarRobe ? robeMat : armorMat;
-  for (const side of [-1, 1]) {
-    const hip = new THREE.Vector3(0, 0.03, side * 0.14);
-    const knee = new THREE.Vector3(0.34, -0.1, side * 0.39);
-    const ankle = new THREE.Vector3(0.24, -0.58, side * 0.43);
-    const toe = new THREE.Vector3(0.42, -0.66, side * 0.44);
-    riderRoot.add(limbBetween(bag, hip, knee, 0.115, 0.09, legMat));
-    riderRoot.add(limbBetween(bag, knee, ankle, 0.085, 0.066, trimMat));
-    riderRoot.add(limbBetween(bag, ankle, toe, 0.062, 0.05, leatherMat));
-    const kneeCap = shadowMesh(bag.add(new THREE.SphereGeometry(0.1, 10, 8)), trimMat);
-    kneeCap.position.copy(knee);
-    kneeCap.scale.set(1, 0.9, 0.9);
-    riderRoot.add(kneeCap);
-    // Layered armour skirt over the thigh
-    for (let i = 0; i < 2; i++) {
-      const plate = shadowMesh(bag.add(new THREE.BoxGeometry(0.4, 0.26, 0.03)), profile.isScholarRobe ? robeMat : armorMat);
-      plate.position.set(0.14, 0.0 - i * 0.14, side * (0.3 + i * 0.05));
-      plate.rotation.set(side * -(0.35 + i * 0.12), 0, 0.28);
-      riderRoot.add(plate);
-      const hem = shadowMesh(bag.add(new THREE.BoxGeometry(0.41, 0.03, 0.036)), trimMat);
-      hem.position.set(0.175, -0.125 - i * 0.14, side * (0.345 + i * 0.065));
-      hem.rotation.copy(plate.rotation);
-      riderRoot.add(hem);
-    }
-    // Stirrup & leather stirrup strap hanging from the saddle tree
-    riderRoot.add(
-      limbBetween(
-        bag,
-        new THREE.Vector3(0.22, -0.06, side * 0.37),
-        new THREE.Vector3(0.3, -0.59, side * 0.44),
-        0.015,
-        0.013,
-        leatherMat
-      )
-    );
-    const stirrup = shadowMesh(bag.add(new THREE.TorusGeometry(0.075, 0.014, 6, 12)), trimMat);
-    stirrup.position.set(0.3, -0.66, side * 0.44);
-    stirrup.rotation.y = Math.PI * 0.5;
-    riderRoot.add(stirrup);
-  }
-
-  // Dynamic 3D leather reins connecting both bridle bit rings to the rider's rein hand
-  const makeReinStrap = () => {
-    const geo = bag.add(new THREE.PlaneGeometry(1, 0.026, 6, 1));
-    const mesh = shadowMesh(geo, reinMat, true, false);
-    mesh.frustumCulled = false;
-    mesh.userData.keep = true;
-    riderRoot.add(mesh);
-    return geo;
-  };
-  const reins: [THREE.BufferGeometry, THREE.BufferGeometry] = [makeReinStrap(), makeReinStrap()];
-
-  const torso = new THREE.Group();
-  torso.position.set(0, 0.06, 0);
-  torso.rotation.order = 'ZYX';
-  riderRoot.add(torso);
-
-  const torsoRings = [
-    ring(0, -0.04, 0.15, 0.2 * slim),
-    ring(0, 0.1, 0.155, 0.205 * slim),
-    ring(0.012, 0.28, 0.19, 0.25 * slim),
-    ring(0.016, 0.44, 0.205, 0.28 * slim),
-    ring(0, 0.56, 0.17, 0.27 * slim),
-    ring(-0.005, 0.63, 0.105, 0.16),
-    ring(0, 0.69, 0.066, 0.078),
-    ring(0, 0.76, 0.06, 0.066),
-  ];
-  torso.add(
-    shadowMesh(bag.add(buildLoft(torsoRings, { radial: 14 })), profile.isScholarRobe ? robeMat : armorMat)
-  );
-  const belt = shadowMesh(bag.add(new THREE.TorusGeometry(0.18, 0.035, 6, 16)), trimMat);
-  belt.rotation.x = Math.PI * 0.5;
-  belt.position.y = 0.09;
-  belt.scale.set(0.86, 1.14 * slim, 1);
-  torso.add(belt);
-  const sashKnot = shadowMesh(bag.add(new THREE.SphereGeometry(0.055, 8, 8)), tasselMat);
-  sashKnot.position.set(0.17, 0.09, 0);
-  torso.add(sashKnot);
-  if (!profile.isScholarRobe) {
-    const mirror = shadowMesh(bag.add(new THREE.SphereGeometry(0.1, 14, 10)), trimMat);
-    mirror.position.set(0.19, 0.42, 0);
-    mirror.scale.set(0.3, 1, 1);
-    torso.add(mirror);
-  }
-  const collar = shadowMesh(bag.add(new THREE.TorusGeometry(0.11, 0.03, 6, 14)), trimMat);
-  collar.rotation.x = Math.PI * 0.5;
-  collar.position.y = 0.66;
-  torso.add(collar);
-
-  // Tiered shoulder guards
-  for (const side of [-1, 1]) {
-    for (let i = 0; i < 2; i++) {
-      const pauldron = shadowMesh(
-        bag.add(new THREE.SphereGeometry(0.17 - i * 0.025, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55)),
-        profile.isScholarRobe ? robeMat : armorMat
-      );
-      pauldron.position.set(0, 0.56 - i * 0.1, side * (0.31 + i * 0.045));
-      pauldron.rotation.x = side * (0.5 + i * 0.3);
-      pauldron.scale.set(1.1, 1, 1);
-      torso.add(pauldron);
-    }
-    const stud = shadowMesh(bag.add(new THREE.SphereGeometry(0.045, 8, 8)), trimMat);
-    stud.position.set(0.02, 0.7, side * 0.3);
-    torso.add(stud);
-  }
-
-  const chest = new THREE.Object3D();
-  chest.position.set(0.1, 0.42, 0);
-  torso.add(chest);
-
-  // Cloak: a cloth sheet re-shaped every frame from the rider's motion
-  const capeCols = 6;
-  const capeRows = 9;
-  const capeGeo = bag.add(new THREE.PlaneGeometry(1, 1, capeCols, capeRows));
-  const capeMesh = shadowMesh(capeGeo, capeMat);
-  capeMesh.frustumCulled = false;
-  capeMesh.userData.keep = true;
-  torso.add(capeMesh);
-
-  // Head with procedurally painted expressive hero face texture
-  const head = new THREE.Group();
-  head.position.set(0.02, 0.88, 0);
-  torso.add(head);
-  const face = shadowMesh(bag.add(new THREE.SphereGeometry(0.135, 18, 16)), faceMat);
-  face.scale.set(0.98, 1.1, 0.92);
-  head.add(face);
-  const nose = shadowMesh(bag.add(new THREE.ConeGeometry(0.02, 0.056, 6)), skinMat);
-  nose.position.set(0.134, -0.012, 0);
-  nose.rotation.z = -Math.PI * 0.5 - 0.3;
-  head.add(nose);
-  if (hero.id === 'xiahoudun') {
-    const patch = shadowMesh(bag.add(new THREE.SphereGeometry(0.032, 8, 6)), darkMat);
-    patch.position.set(0.126, 0.004, -0.056);
-    patch.scale.set(0.45, 0.85, 1.1);
-    head.add(patch);
-  }
-  const plumes = buildHeadgear(bag, hero, profile, head, {
-    armor: armorMat,
-    trim: trimMat,
-    cape: clothMat,
-    robe: robeMat,
-    hair: hairMat,
-  });
-
-  // Arms are posed by inverse kinematics every frame, so they hang off the rider root
-  const buildArm = () => {
-    const upper = new THREE.Group();
-    const upperMesh = shadowMesh(
-      bag.add(new THREE.CylinderGeometry(0.078, 0.064, ARM_UPPER, 10)),
-      profile.isScholarRobe ? robeMat : armorMat
-    );
-    upperMesh.position.y = -ARM_UPPER * 0.5;
-    upper.add(upperMesh);
-    const shoulderBall = shadowMesh(bag.add(new THREE.SphereGeometry(0.082, 10, 8)), profile.isScholarRobe ? robeMat : armorMat);
-    upper.add(shoulderBall);
-
-    const fore = new THREE.Group();
-    const elbow = shadowMesh(bag.add(new THREE.SphereGeometry(0.07, 10, 8)), trimMat);
-    fore.add(elbow);
-    const foreMesh = shadowMesh(bag.add(new THREE.CylinderGeometry(0.066, 0.05, ARM_FORE, 10)), trimMat);
-    foreMesh.position.y = -ARM_FORE * 0.5;
-    fore.add(foreMesh);
-    if (profile.isScholarRobe) {
-      const sleeve = shadowMesh(bag.add(new THREE.ConeGeometry(0.15, ARM_FORE * 1.1, 10, 1, true)), robeMat);
-      (sleeve.material as THREE.Material).side = THREE.DoubleSide;
-      sleeve.position.y = -ARM_FORE * 0.5;
-      fore.add(sleeve);
-    }
-    const hand = shadowMesh(bag.add(new THREE.SphereGeometry(0.058, 8, 8)), leatherMat);
-    hand.position.y = -ARM_FORE;
-    fore.add(hand);
-    riderRoot.add(upper, fore);
-    return { upper, fore };
-  };
-  const armR = buildArm();
-  const armL = buildArm();
 
   const built = buildSignatureWeapon3D(profile, bag);
   const weapon = new THREE.Group();
@@ -872,7 +339,7 @@ export function buildMountedGeneralRig3D(
     torso,
     head,
     plumes,
-    cape: { geo: capeGeo, cols: capeCols, rows: capeRows },
+    cape: rider.cape,
     armR,
     armL,
     weapon,
@@ -1071,8 +538,28 @@ const vX = new THREE.Vector3();
 const vZ = new THREE.Vector3();
 const mBasis = new THREE.Matrix4();
 
+const qHand = new THREE.Quaternion();
+const vGrip = new THREE.Vector3();
+const vWrist = new THREE.Vector3();
+const vBack = new THREE.Vector3();
+const vAxis = new THREE.Vector3();
+const REIN_AXIS = new THREE.Vector3(0.35, 0.94, 0).normalize();
+
+/** Turns the fist so the shaft (or rein) direction `axis`, given in rider space, runs through it. */
+function orientHand(arm: RiderArm, axis: THREE.Vector3): void {
+  qHand.copy(arm.fore.quaternion).invert();
+  vGrip.copy(axis.lengthSq() > 1e-6 ? axis : REIN_AXIS).applyQuaternion(qHand).normalize();
+  // The wrist sits toward the elbow, square to the shaft
+  vWrist.set(0, 1, 0).addScaledVector(vGrip, -vGrip.y);
+  if (vWrist.lengthSq() < 1e-4) vWrist.set(1, 0, 0).addScaledVector(vGrip, -vGrip.x);
+  vWrist.normalize();
+  vBack.crossVectors(vWrist, vGrip);
+  mBasis.makeBasis(vBack, vWrist, vGrip);
+  arm.hand.quaternion.setFromRotationMatrix(mBasis);
+}
+
 function solveArm(
-  arm: { upper: THREE.Group; fore: THREE.Group },
+  arm: RiderArm,
   shoulder: THREE.Vector3,
   hand: THREE.Vector3,
   poleX: number,
@@ -1351,6 +838,7 @@ export function applyRigPose3D(
   vH.copy(s.hand);
   solveArm(rig.armR, vS, vH, -0.35, -0.75, 0.6);
   orientWeapon(rig.weapon, vH, s.dir, s.horiz);
+  orientHand(rig.armR, s.dir);
   rig.weapon.visible = !frame.disarmed;
 
   // Off hand: second grip on a polearm, a mirrored blade for twin weapons, otherwise the reins
@@ -1363,13 +851,16 @@ export function applyRigPose3D(
     solveArm(rig.armL, vS, vH, -0.35, -0.75, -0.6);
     vDir.set(s.dir.x, s.dir.y, -s.dir.z);
     orientWeapon(rig.offWeapon, vH, vDir, s.horiz);
+    orientHand(rig.armL, vDir);
     rig.offWeapon.visible = !frame.disarmed;
   } else {
     const rein = vTmp.set(0.3, 0.26 + s.bounce * 0.4, -0.05);
+    const onShaft = frame.disarmed ? 0 : s.gripOn;
     vH.copy(s.hand).addScaledVector(s.dir, s.grip);
-    vH.lerpVectors(rein, vH, frame.disarmed ? 0 : s.gripOn);
+    vH.lerpVectors(rein, vH, onShaft);
     solveArm(rig.armL, vS, vH, -0.35, -0.75, -0.6);
     reinPommel.lerpVectors(vH, reinPommel, frame.disarmed ? 1 : s.gripOn);
+    orientHand(rig.armL, vAxis.lerpVectors(REIN_AXIS, s.dir, onShaft));
   }
 
   // Update 3D leather reins from the horse's bit rings to the rein hand / saddle pommel
@@ -1398,19 +889,25 @@ export function applyRigPose3D(
   const lift = Math.min(1, wind * 0.9 + (gait === 'rear' ? 0.3 : 0) + Math.max(0, -s.lean) * 0.5 + 0.08);
   s.capeLift = damp(s.capeLift, lift, 5 * quick, dt);
   if (rig.cape) {
-    const { geo, cols, rows } = rig.cape;
+    const { geo, cols, rows, shoulder } = rig.cape;
     const pos = geo.attributes.position as THREE.BufferAttribute;
     const segLen = 1.02 / rows;
     for (let c = 0; c <= cols; c++) {
       const across = c / cols - 0.5;
-      let x = -0.19;
-      let y = 0.63;
+      // 0 down the spine, 1 at the corners fastened on top of the shoulders
+      const edge = across * across * 4;
+      let x = -0.17 + 0.16 * edge;
+      let y = 0.69 + 0.015 * edge;
       for (let r = 0; r <= rows; r++) {
         const fr = r / rows;
         if (r > 0) {
-          const drape = 0.3 + 0.95 * ease((fr - 0.12) / 0.5);
+          // Hangs down the back to the saddle, then lies back over the horse's croup
+          const drape = 0.1 + 0.95 * ease((fr - 0.5) / 0.25);
+          // The corners first run back over the shoulder before the cloth falls
+          const over = edge * (1 - ease(fr / 0.22)) * 1.2;
           const angle =
             drape +
+            over +
             s.capeLift * (0.55 - fr * 0.25) +
             Math.sin(elapsedSec * (4.5 + s.capeLift * 7) - fr * 5.2 + across * 2.4) *
               (0.05 + s.capeLift * 0.2) *
@@ -1418,9 +915,11 @@ export function applyRigPose3D(
           x -= Math.sin(angle) * segLen;
           y -= Math.cos(angle) * segLen;
         }
-        const width = 0.5 + fr * 0.42;
+        const width = shoulder * 2 + fr * 0.42;
+        // The sides fall away round the rider and over the horse's flanks, so the cloak is curved
+        const fall = edge * ease(fr / 0.6);
         const idx = r * (cols + 1) + c;
-        pos.setXYZ(idx, x - Math.abs(across) * 0.1 * (1 - fr), y, across * width);
+        pos.setXYZ(idx, x + fall * 0.05, y - fall * 0.13, across * width);
       }
     }
     pos.needsUpdate = true;

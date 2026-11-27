@@ -1,0 +1,1085 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>封面预览 · 滚滚长江</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,500;1,400&family=Inter:wght@300;400;500;600&family=Noto+Serif+SC:wght@300;500;700;900&display=swap" rel="stylesheet" />
+<style>
+/*
+ * Cover redesign preview: 《临江仙·滚滚长江东逝水》 (Yang Shen), the opening verse of
+ * Romance of the Three Kingdoms, drawn as an annotated modern landscape.
+ * Palette: ink night, bone type, one vermilion sun; chrono cyan stays the one anachronism.
+ */
+:root {
+  --ink-0: #05070a;
+  --bone: #ede7da;
+  --bone-2: rgba(237, 231, 218, 0.74);
+  --bone-3: rgba(237, 231, 218, 0.48);
+  --bone-4: rgba(237, 231, 218, 0.26);
+  --hair: rgba(237, 231, 218, 0.13);
+  --sun: #e5482f;
+  --chrono: #22d3ee;
+  --wei: #4c78a8;
+  --shu: #438554;
+  --wu: #c2432f;
+  --serif: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', serif;
+  --sans: 'Inter', system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif;
+  --latin: 'Crimson Pro', Georgia, serif;
+  --gutter: clamp(20px, 5.6vw, 96px);
+  --ease: cubic-bezier(0.16, 0.84, 0.2, 1);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--ink-0);
+  color: var(--bone);
+  font-family: var(--sans);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; text-align: inherit; }
+button:focus-visible { outline: 1px solid var(--chrono); outline-offset: 4px; }
+
+.cover { position: fixed; inset: 0; overflow: hidden; isolation: isolate; background: var(--ink-0); }
+.layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#scene { z-index: 0; opacity: 0; transition: opacity 1.8s ease; }
+#river { z-index: 1; }
+#front { z-index: 2; opacity: 0; transition: opacity 1.6s ease 1.4s; }
+.scrim {
+  z-index: 3;
+  background:
+    linear-gradient(90deg, rgba(5, 7, 10, 0.74) 0%, rgba(5, 7, 10, 0.36) 27%, rgba(5, 7, 10, 0) 48%),
+    linear-gradient(180deg, rgba(5, 7, 10, 0.55) 0%, rgba(5, 7, 10, 0) 15%, rgba(5, 7, 10, 0) 74%, rgba(5, 7, 10, 0.6) 100%);
+}
+.grain {
+  z-index: 4;
+  opacity: 0.09;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .6 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+#leaders { z-index: 5; opacity: 0; transition: opacity 0.6s ease; }
+#leaders.show { opacity: 1; }
+.ui { position: absolute; z-index: 7; }
+.cover.ready #scene, .cover.ready #front { opacity: 1; }
+
+/* ---------- intro choreography ---------- */
+.rise {
+  transition:
+    opacity 1.1s var(--ease) var(--d, 0s),
+    transform 1.1s var(--ease) var(--d, 0s),
+    color 0.7s ease,
+    box-shadow 0.4s ease;
+}
+.cover:not(.ready) .rise { opacity: 0; transform: translateY(14px); }
+.ridge-in { transition: transform 2.4s var(--ease) var(--d), opacity 2.4s ease var(--d); }
+.cover:not(.ready) .ridge-in { transform: translateY(28px); opacity: 0; }
+.sun-in { transition: transform 3.2s var(--ease) 0.2s; }
+.cover:not(.ready) .sun-in { transform: translateY(80px); }
+.cover.instant *, .cover.instant { transition: none !important; }
+
+/* ---------- scene reactions, one per line of the poem ---------- */
+#mtn { transition: filter 1.4s ease; }
+.cover[data-line='4'] #mtn { filter: brightness(1.5) saturate(1.3); }
+.ring { fill: none; stroke: var(--sun); transform-box: fill-box; transform-origin: center; vector-effect: non-scaling-stroke; }
+.ring.spin { animation: spin 150s linear infinite; }
+.ring.spin.rev { animation-duration: 220s; animation-direction: reverse; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.echo { opacity: 0; }
+.cover[data-line='5'] .echo { animation: echo 3s var(--ease) infinite; animation-delay: var(--d); }
+@keyframes echo { 0% { transform: scale(1); opacity: 0.75; } 100% { transform: scale(3.1); opacity: 0; } }
+#moon { opacity: 0.5; transition: opacity 1.2s ease; }
+.moon-halo { opacity: 0; transition: opacity 1.4s ease; }
+.cover[data-line='7'] #moon { opacity: 1; }
+.cover[data-line='7'] .moon-halo { opacity: 1; }
+.ink { fill: none; stroke: var(--bone); stroke-opacity: 0.72; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; transition: stroke-opacity 0.8s; }
+.ink.thin { stroke-width: 1; stroke-opacity: 0.55; }
+.ink.hair { stroke-width: 0.8; stroke-opacity: 0.35; }
+.hat { fill: var(--bone); fill-opacity: 0.8; }
+.cover[data-line='6'] .ink, .cover[data-line='8'] #boat .ink { stroke-opacity: 1; }
+.bob { transform-box: fill-box; transform-origin: center; animation: bob 4.8s ease-in-out infinite; }
+@keyframes bob { 50% { transform: translateY(1.6px) rotate(-1.1deg); } }
+#lanternGlow { opacity: 0.35; transition: opacity 1s ease; }
+.cover[data-line='8'] #lanternGlow { opacity: 1; animation: flicker 1.6s ease-in-out infinite; }
+@keyframes flicker { 50% { opacity: 0.75; } }
+
+/* ---------- top bar ---------- */
+.topbar {
+  left: var(--gutter); right: var(--gutter); top: clamp(16px, 3vh, 28px);
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.brand { display: flex; align-items: center; gap: 10px; font: 700 14px var(--serif); letter-spacing: 0.24em; }
+.brand-mark { width: 10px; height: 10px; border-radius: 50%; background: var(--sun); box-shadow: 0 0 14px rgba(229, 72, 47, 0.75); }
+.brand small { font: 500 10px var(--sans); letter-spacing: 0.22em; color: var(--bone-3); }
+.chips { display: flex; gap: 8px; }
+.chip {
+  display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px;
+  border: 1px solid var(--hair); border-radius: 999px;
+  font: 500 11.5px var(--sans); letter-spacing: 0.04em; color: var(--bone-2);
+  background: rgba(8, 11, 15, 0.35); backdrop-filter: blur(8px);
+  transition: border-color 0.3s, color 0.3s;
+}
+.chip:hover { border-color: rgba(237, 231, 218, 0.42); color: var(--bone); }
+.chip svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.chip b { font-weight: 600; color: var(--chrono); }
+.chip .muted { color: var(--bone-4); }
+
+/* ---------- title ---------- */
+.title-block { left: var(--gutter); top: clamp(92px, 17vh, 168px); }
+.overline {
+  display: flex; align-items: center; gap: 10px;
+  font: 500 11px var(--sans); letter-spacing: 0.28em; text-transform: uppercase; color: var(--bone-3);
+}
+.overline .tick { width: 28px; height: 1px; background: var(--sun); }
+.overline .slash { color: var(--bone-4); }
+#year { font-weight: 600; color: var(--bone); font-variant-numeric: tabular-nums; letter-spacing: 0.12em; transition: color 0.6s, text-shadow 0.6s; }
+#year.chrono { color: var(--chrono); text-shadow: 0 0 14px rgba(34, 211, 238, 0.55); }
+.title {
+  margin-top: 16px; display: flex; align-items: flex-start;
+  font-family: var(--serif); font-weight: 900; font-size: clamp(80px, 10.4vw, 172px);
+  line-height: 0.95; letter-spacing: -0.04em; color: var(--bone);
+}
+.t-char {
+  display: inline-block;
+  transition: clip-path 1.3s var(--ease) var(--d), transform 1.3s var(--ease) var(--d), opacity 1.3s ease var(--d);
+}
+.cover:not(.ready) .t-char { clip-path: inset(100% 0 0 0); transform: translateY(22px); opacity: 0; }
+.cover.ready .t-char { clip-path: inset(0 0 0 0); }
+.t-ai {
+  font: 600 max(12px, 0.12em) var(--sans); letter-spacing: 0.14em; line-height: 1;
+  color: var(--chrono); border: 1px solid rgba(34, 211, 238, 0.55); border-radius: 2px;
+  padding: 0.45em 0.55em 0.4em; margin: 0.5em 0 0 0.45em;
+}
+.title-en { margin-top: 16px; font: 300 13px var(--sans); letter-spacing: 0.62em; color: var(--bone-2); }
+.pitch { margin-top: 18px; max-width: 29em; font: 400 14px/1.75 var(--sans); color: var(--bone-3); }
+.cover[lang='zh'] .pitch { font-family: var(--serif); font-weight: 500; letter-spacing: 0.04em; }
+
+/* ---------- poem column ---------- */
+.poem { right: var(--gutter); top: clamp(92px, 13vh, 128px); display: flex; flex-direction: row-reverse; gap: 22px; align-items: flex-start; }
+.poem-head { writing-mode: vertical-rl; display: flex; align-items: center; gap: 10px; font: 500 12px var(--serif); letter-spacing: 0.5em; color: var(--sun); }
+.poem-head i { display: block; width: 1px; height: 26px; background: var(--bone-4); }
+.poem-head .author { color: var(--bone-3); }
+.poem-lines { list-style: none; display: flex; flex-direction: row-reverse; gap: 14px; }
+.poem-lines li {
+  writing-mode: vertical-rl; position: relative; padding-top: 16px;
+  font: 300 20px/1 var(--serif); letter-spacing: 0.38em; color: var(--bone-4);
+  cursor: pointer; user-select: none;
+}
+.poem-lines li:nth-child(5) { margin-left: 26px; }
+.poem-lines li:hover { color: var(--bone-2); }
+.poem-lines li::before {
+  content: ''; position: absolute; top: 0; left: 50%; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--sun); transform: translateX(-50%) scale(0); transition: transform 0.5s var(--ease);
+}
+.poem-lines li.on { color: var(--bone); font-weight: 500; }
+.poem-lines li.on::before { transform: translateX(-50%) scale(1); }
+
+/* ---------- bottom dock: menu + caption ---------- */
+.dock {
+  left: var(--gutter); right: var(--gutter); bottom: clamp(44px, 7vh, 72px);
+  display: flex; justify-content: space-between; align-items: flex-end; gap: 40px;
+}
+.menu { width: min(400px, 100%); flex: none; }
+.cta {
+  width: 100%; display: flex; align-items: center; gap: 16px; padding: 17px 22px 17px 24px;
+  background: var(--bone); color: #0b0d10; border-radius: 2px; position: relative; overflow: hidden;
+}
+.cta::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--sun); }
+.cta-idx { font: 600 10px var(--sans); letter-spacing: 0.1em; opacity: 0.45; }
+.cta-main { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.cta-zh { font: 700 19px/1.1 var(--serif); letter-spacing: 0.14em; }
+.cover[lang='en'] .cta-zh { font: 600 17px/1.1 var(--sans); letter-spacing: 0.02em; }
+.cta-sub { font: 600 9.5px var(--sans); letter-spacing: 0.28em; text-transform: uppercase; opacity: 0.5; }
+.cover[lang='en'] .cta-sub { font: 500 11px var(--serif); letter-spacing: 0.3em; }
+.cta-arrow { font-size: 20px; transition: transform 0.45s var(--ease); }
+.cta kbd { font: 500 10px var(--sans); border: 1px solid rgba(11, 13, 16, 0.22); padding: 3px 6px; border-radius: 3px; opacity: 0.55; }
+.cta:hover .cta-arrow { transform: translateX(6px); }
+.cta:hover { box-shadow: 0 18px 50px -14px rgba(229, 72, 47, 0.6); }
+.cover[data-line='10'] .cta { animation: call 2.2s var(--ease) infinite; }
+@keyframes call {
+  0% { box-shadow: 0 0 0 0 rgba(229, 72, 47, 0.65); }
+  70% { box-shadow: 0 0 0 16px rgba(229, 72, 47, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(229, 72, 47, 0); }
+}
+.rows { margin-top: 8px; }
+.row {
+  width: 100%; display: flex; align-items: baseline; gap: 14px; padding: 13px 2px;
+  border-bottom: 1px solid var(--hair); color: var(--bone-2);
+}
+.row { transition: opacity 1.1s var(--ease) var(--d, 0s), transform 1.1s var(--ease) var(--d, 0s), color 0.3s, padding 0.45s var(--ease); }
+.row:hover { color: var(--bone); padding-left: 10px; }
+.row .idx { font: 500 10px var(--sans); letter-spacing: 0.1em; color: var(--bone-4); width: 16px; }
+.row-label { flex: 1; font: 500 15px var(--serif); letter-spacing: 0.14em; }
+.row-label small { margin-left: 10px; font: 500 9.5px var(--sans); letter-spacing: 0.24em; text-transform: uppercase; color: var(--bone-4); }
+.cover[lang='en'] .row-label { font: 500 14px var(--sans); letter-spacing: 0.02em; }
+.cover[lang='en'] .row-label small { font-family: var(--serif); font-size: 11px; letter-spacing: 0.2em; }
+.row-meta { display: flex; align-items: center; gap: 7px; font: 400 12px var(--sans); color: var(--bone-3); white-space: nowrap; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
+.row[hidden] { display: none; }
+
+.caption { width: min(470px, 38vw); text-align: right; }
+.cap-en, .cap-zh, .cap-src { text-wrap: balance; }
+.cap-progress { display: flex; align-items: center; justify-content: flex-end; gap: 10px; font: 500 10px var(--sans); letter-spacing: 0.14em; color: var(--bone-4); font-variant-numeric: tabular-nums; }
+.segs { display: flex; }
+.seg { width: 22px; height: 14px; display: flex; align-items: center; padding: 0 2px; }
+.seg i { display: block; width: 100%; height: 2px; background: rgba(237, 231, 218, 0.16); position: relative; overflow: hidden; }
+.seg.done i { background: rgba(237, 231, 218, 0.5); }
+.seg.on i::after { content: ''; position: absolute; inset: 0; background: var(--sun); transform-origin: left; animation: segfill var(--dur, 5s) linear forwards; }
+.paused .seg.on i::after { animation-play-state: paused; }
+@keyframes segfill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.cap-body { margin-top: 12px; transition: opacity 0.35s ease, transform 0.35s ease; }
+.cap-body.swap { opacity: 0; transform: translateY(6px); }
+.cap-zh { display: none; font: 500 22px var(--serif); letter-spacing: 0.3em; margin-bottom: 6px; }
+.cap-en { font: italic 400 21px/1.35 var(--latin); color: var(--bone); }
+.cap-coda { margin-top: 6px; font: 500 13px var(--serif); letter-spacing: 0.12em; color: var(--sun); min-height: 0; }
+.cap-src { margin-top: 12px; font: 400 11px/1.5 var(--sans); letter-spacing: 0.05em; color: var(--bone-4); }
+
+/* ---------- annotation (leader line + label) ---------- */
+.callout {
+  position: absolute; left: 0; top: 0; z-index: 6; pointer-events: none; white-space: nowrap;
+  padding: 0 2px 6px; border-bottom: 1px solid rgba(237, 231, 218, 0.55);
+  font: 500 11px var(--sans); letter-spacing: 0.08em; color: var(--bone-2);
+  opacity: 0; transition: opacity 0.5s ease;
+}
+.callout.show { opacity: 1; }
+.callout b { font: 700 13px var(--serif); letter-spacing: 0.22em; color: var(--bone); margin-right: 8px; }
+#ldRing { transform-box: fill-box; transform-origin: center; animation: ping 2.2s ease-out infinite; }
+@keyframes ping { 0% { transform: scale(0.5); opacity: 0.9; } 100% { transform: scale(1.8); opacity: 0; } }
+.east-tag {
+  position: absolute; right: var(--gutter); z-index: 6; display: flex; align-items: center; gap: 10px;
+  font: 500 10px var(--sans); letter-spacing: 0.32em; color: var(--bone-4); pointer-events: none;
+}
+.east-tag i { display: block; width: 44px; height: 1px; background: linear-gradient(90deg, transparent, var(--bone-4)); }
+
+/* ---------- preview-only controls ---------- */
+.review {
+  position: absolute; z-index: 9; left: 50%; bottom: 10px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 12px;
+  border: 1px dashed rgba(251, 191, 36, 0.55); border-radius: 999px; background: rgba(5, 7, 10, 0.72);
+  font: 500 11px var(--sans); color: var(--bone-2); backdrop-filter: blur(6px);
+}
+.review .rv-tag { color: #fbbf24; letter-spacing: 0.16em; margin-right: 6px; font-weight: 600; }
+.review button { padding: 5px 10px; border-radius: 999px; }
+.review button:hover { background: rgba(237, 231, 218, 0.1); color: var(--bone); }
+.toast {
+  position: absolute; z-index: 9; left: 50%; bottom: 52px; transform: translate(-50%, 8px);
+  padding: 10px 16px; border-radius: 4px; background: rgba(237, 231, 218, 0.95); color: #0b0d10;
+  font: 500 12.5px var(--sans); opacity: 0; pointer-events: none; transition: opacity 0.3s, transform 0.3s;
+  white-space: nowrap;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- responsive ---------- */
+@media (max-width: 1180px) {
+  .poem { display: none; }
+  .cap-zh { display: block; }
+}
+@media (max-width: 820px) {
+  .chip .lbl, .brand small { display: none; }
+  .title-block { top: 72px; }
+  .title { font-size: clamp(64px, 19vw, 104px); }
+  .pitch { display: none; }
+  .title-en { letter-spacing: 0.5em; font-size: 11px; }
+  .dock { flex-direction: column-reverse; align-items: stretch; gap: 18px; bottom: 20px; }
+  .menu { width: 100%; }
+  .row { padding: 11px 2px; }
+  .row-label small { display: none; }
+  .caption { width: 100%; text-align: left; }
+  .cap-progress { justify-content: flex-start; }
+  .cap-zh { font-size: 18px; }
+  .cap-en { font-size: 16px; }
+  .cap-src, .review, .east-tag { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bob, .ring.spin, #ldRing { animation: none; }
+}
+</style>
+</head>
+<body>
+<main id="cover" class="cover" lang="zh">
+  <!-- Sky, sun, moon and the green hills (viewBox coords; same mapping as the river canvas) -->
+  <svg id="scene" class="layer" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+    <defs>
+      <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#05070b" />
+        <stop offset=".32" stop-color="#0a0f17" />
+        <stop offset=".52" stop-color="#121722" />
+        <stop offset=".6" stop-color="#1d1a21" />
+        <stop offset=".68" stop-color="#36201e" />
+      </linearGradient>
+      <radialGradient id="sunGlow">
+        <stop offset="0" stop-color="#ff5a36" stop-opacity=".5" />
+        <stop offset=".32" stop-color="#e5482f" stop-opacity=".2" />
+        <stop offset="1" stop-color="#e5482f" stop-opacity="0" />
+      </radialGradient>
+      <radialGradient id="sunBody" cx=".42" cy=".36" r=".72">
+        <stop offset="0" stop-color="#ff7a4c" />
+        <stop offset=".62" stop-color="#ea4a2e" />
+        <stop offset="1" stop-color="#c8341f" />
+      </radialGradient>
+      <radialGradient id="moonGlow">
+        <stop offset="0" stop-color="#efe6cf" stop-opacity=".35" />
+        <stop offset="1" stop-color="#efe6cf" stop-opacity="0" />
+      </radialGradient>
+      <mask id="crescent">
+        <circle r="13" fill="#fff" />
+        <circle cx="5.5" cy="-4" r="12" fill="#000" />
+      </mask>
+      <linearGradient id="g0" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#36525f" /><stop offset=".55" stop-color="#243742" /><stop offset="1" stop-color="#1c2a33" />
+      </linearGradient>
+      <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#22404b" /><stop offset=".6" stop-color="#192c35" /><stop offset="1" stop-color="#17262f" />
+      </linearGradient>
+      <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#132832" /><stop offset=".7" stop-color="#0f1d25" /><stop offset="1" stop-color="#111d25" />
+      </linearGradient>
+      <linearGradient id="g3" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#0b171d" /><stop offset="1" stop-color="#0a131a" />
+      </linearGradient>
+      <linearGradient id="mist" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#7d93a0" stop-opacity="0" />
+        <stop offset=".6" stop-color="#7d93a0" stop-opacity=".16" />
+        <stop offset="1" stop-color="#7d93a0" stop-opacity="0" />
+      </linearGradient>
+    </defs>
+
+    <rect width="1600" height="900" fill="url(#sky)" />
+
+    <g id="moonP"><g id="moon" transform="translate(800 150)">
+      <circle class="moon-halo" r="70" fill="url(#moonGlow)" />
+      <circle r="13" fill="#ece3cc" mask="url(#crescent)" />
+    </g></g>
+
+    <g id="sunP"><g class="sun-in"><g transform="translate(800 500)">
+      <circle r="440" fill="url(#sunGlow)" />
+      <g class="ringwrap">
+        <circle class="ring" r="152" stroke-opacity=".26" />
+        <circle class="ring spin" r="186" stroke-opacity=".2" stroke-dasharray="2 7" />
+        <circle class="ring" r="228" stroke-opacity=".12" />
+        <circle class="ring spin rev" r="282" stroke-opacity=".12" stroke-dasharray="1 10" />
+        <circle class="ring" r="350" stroke-opacity=".06" />
+      </g>
+      <circle class="ring echo" r="118" stroke-opacity=".8" style="--d:0s" />
+      <circle class="ring echo" r="118" stroke-opacity=".8" style="--d:1s" />
+      <circle class="ring echo" r="118" stroke-opacity=".8" style="--d:2s" />
+      <circle r="118" fill="url(#sunBody)" />
+    </g></g></g>
+
+    <g id="mtn">
+      <g class="ridge" data-i="0"><g class="ridge-in" style="--d:.1s"><path id="m0" fill="url(#g0)" /></g></g>
+      <circle cx="800" cy="500" r="320" fill="url(#sunGlow)" opacity=".45" style="mix-blend-mode: screen" />
+      <rect x="-100" y="470" width="1800" height="110" fill="url(#mist)" />
+      <g class="ridge" data-i="1"><g class="ridge-in" style="--d:.35s"><path id="m1" fill="url(#g1)" /></g></g>
+      <rect x="-100" y="520" width="1800" height="90" fill="url(#mist)" opacity=".8" />
+      <g class="ridge" data-i="2"><g class="ridge-in" style="--d:.6s"><path id="m2" fill="url(#g2)" /></g></g>
+      <g class="ridge" data-i="3"><g class="ridge-in" style="--d:.8s"><path id="m3" fill="url(#g3)" /></g></g>
+    </g>
+  </svg>
+
+  <!-- The Yangtze: flow lines, the sun's broken reflection, three faction threads, drifting names -->
+  <canvas id="river" class="layer" aria-hidden="true"></canvas>
+
+  <!-- 白发渔樵江渚上: monoline figures above the water -->
+  <svg id="front" class="layer" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+    <defs>
+      <radialGradient id="lanternG">
+        <stop offset="0" stop-color="#ffb35c" stop-opacity=".8" />
+        <stop offset="1" stop-color="#ffb35c" stop-opacity="0" />
+      </radialGradient>
+    </defs>
+    <g id="isle" transform="translate(1222 650) scale(1.2)">
+      <path d="M-130 2 C-90 -6 -30 -9 30 -8 C80 -7 118 -3 140 2 C70 5 -60 6 -130 2 Z" fill="#0b1419" />
+      <path class="ink" d="M-130 2 C-90 -6 -30 -9 30 -8 C80 -7 118 -3 140 2" />
+      <path class="ink thin" d="M84 -6 L80 -30 M90 -6 L91 -34 M96 -5 L102 -27 M102 -5 L110 -22 M-96 -2 L-101 -18 M-90 -3 L-89 -21 M-84 -3 L-79 -15" />
+      <g transform="translate(8 -8)">
+        <circle class="ink" cy="-23" r="2.6" />
+        <path class="ink" d="M0 -20 L-1 -9 M-1 -9 L-4 0 M-1 -9 L3 0 M0 -16 L-7 -12" />
+        <path class="ink" d="M-11 -19 L14 -17" />
+        <path class="ink thin" d="M-15 -19 L-16 -11 L-9 -11 L-10 -19 M12 -17 L11 -9 L18 -9 L17 -17" />
+      </g>
+    </g>
+    <g id="boat" transform="translate(1096 672) scale(1.28)">
+      <g class="bob">
+        <path d="M-46 -6 C-30 5 30 5 48 -8 Z" fill="#0a1116" />
+        <path class="ink" d="M-46 -6 C-30 5 30 5 48 -8 M-46 -6 L48 -8" />
+        <path class="ink" d="M-2 -7 C0 -21 22 -22 26 -7.5" />
+        <path class="ink thin" d="M7 -7.2 C8 -15 10 -18.5 12 -19.4 M18 -7.4 C18.6 -14 18.6 -17 18.2 -19.4" />
+        <path class="hat" d="M-35 -18 L-26 -25 L-17 -18 Z" />
+        <path class="ink" d="M-26 -18 L-27 -8 M-27 -12 L-20 -13" />
+        <path class="ink thin" d="M-21 -13 L-74 -46" />
+        <path class="ink hair" d="M-74 -46 Q-77 -20 -78 3" />
+        <path class="ink thin" d="M-12 -7.5 C-15 -9 -15 -13 -12 -14 L-9 -14 C-6 -13 -6 -9 -9 -7.5 Z M-11.5 -14 L-11.5 -16 L-9.5 -16 L-9.5 -14" />
+        <circle id="lanternGlow" cx="27" cy="-14" r="13" fill="url(#lanternG)" />
+        <path class="ink hair" d="M26 -8 L27 -12" />
+        <circle cx="27" cy="-14" r="2" fill="#ffc07a" />
+      </g>
+      <path d="M-40 7 L40 7 M-30 11 L28 11 M-16 15 L12 15" stroke="rgba(237,231,218,.16)" stroke-width="1" vector-effect="non-scaling-stroke" />
+    </g>
+  </svg>
+
+  <div class="scrim layer"></div>
+  <div class="grain layer"></div>
+
+  <svg id="leaders" class="layer" aria-hidden="true">
+    <line id="ldLine" stroke="rgba(237,231,218,.55)" stroke-width="1" />
+    <circle id="ldRing" r="9" fill="none" stroke="#e5482f" stroke-opacity=".7" />
+    <circle id="ldDot" r="2.6" fill="#e5482f" />
+  </svg>
+  <div id="callout" class="callout"><b></b><span></span></div>
+  <div id="eastTag" class="east-tag"><i></i><span data-t="east"></span></div>
+
+  <header class="topbar ui rise" style="--d:.4s">
+    <div class="brand"><span class="brand-mark"></span><span>三国志 AI</span><small>THREE KINGDOMS AI</small></div>
+    <div class="chips">
+      <button class="chip" type="button">
+        <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2" /><rect x="9.5" y="9.5" width="5" height="5" /><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" /></svg>
+        <span class="lbl" data-t="engine"></span><b>AUTO</b><span class="muted lbl" data-t="offline"></span>
+      </button>
+      <button class="chip" type="button">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" /></svg>
+        <span class="lbl" data-t="guest"></span>
+      </button>
+      <button class="chip" type="button" id="langBtn">
+        <svg viewBox="0 0 24 24"><path d="M4 5h9M8.5 3v2M6 5c.8 3.5 3 6 6 7.5M11 5c-.8 3.5-3 6.5-6.5 8.5M13 21l4-10 4 10M14.5 17.5h5" /></svg>
+        <span data-t="langBtn"></span>
+      </button>
+    </div>
+  </header>
+
+  <section class="title-block ui">
+    <p class="overline rise" style="--d:1s"><i class="tick"></i><span data-t="era"></span><span class="slash">/</span><span data-t="ad"></span><b id="year">214</b></p>
+    <h1 class="title" aria-label="三国志 AI">
+      <span class="t-char" style="--d:1.15s">三</span><span class="t-char" style="--d:1.28s">国</span><span class="t-char" style="--d:1.41s">志</span><span class="t-ai rise" style="--d:1.9s">AI</span>
+    </h1>
+    <p class="title-en rise" style="--d:1.65s">THREE KINGDOMS</p>
+    <p class="pitch rise" style="--d:1.8s" data-t="pitch"></p>
+  </section>
+
+  <aside class="poem ui" aria-label="临江仙 · 杨慎">
+    <div class="poem-head rise" style="--d:.8s"><span>临江仙</span><i></i><span class="author">杨慎</span></div>
+    <ol class="poem-lines" id="poemLines"></ol>
+  </aside>
+
+  <div class="dock ui">
+    <nav class="menu" aria-label="Main menu">
+      <button class="cta rise" id="cta" type="button" style="--d:2s">
+        <span class="cta-idx">01</span>
+        <span class="cta-main"><span class="cta-zh" data-t="cta"></span><span class="cta-sub" data-t="ctaSub"></span></span>
+        <kbd>↵</kbd>
+        <span class="cta-arrow" aria-hidden="true">→</span>
+      </button>
+      <div class="rows">
+        <button class="row rise" id="rowCont" type="button" style="--d:2.1s">
+          <span class="idx"></span>
+          <span class="row-label"><span data-t="cont"></span><small data-t="contSub"></small></span>
+          <span class="row-meta"><i class="dot" style="--c: var(--wei)"></i><span data-t="contMeta"></span></span>
+        </button>
+        <button class="row rise" type="button" style="--d:2.2s">
+          <span class="idx"></span>
+          <span class="row-label"><span data-t="mp"></span><small data-t="mpSub"></small></span>
+          <span class="row-meta"><i class="dot" style="--c: var(--chrono)"></i><span data-t="mpMeta"></span></span>
+        </button>
+        <button class="row rise" type="button" style="--d:2.3s">
+          <span class="idx"></span>
+          <span class="row-label"><span data-t="arch"></span><small data-t="archSub"></small></span>
+          <span class="row-meta"><span data-t="archMeta"></span></span>
+        </button>
+      </div>
+    </nav>
+
+    <div class="caption rise" style="--d:2.4s" aria-live="polite">
+      <div class="cap-progress"><span id="capIdx">01</span><div class="segs" id="segs"></div><span>10</span></div>
+      <div class="cap-body" id="capBody">
+        <p class="cap-zh" id="capZh"></p>
+        <p class="cap-en" id="capEn"></p>
+        <p class="cap-coda" id="capCoda"></p>
+      </div>
+      <p class="cap-src" data-t="src"></p>
+    </div>
+  </div>
+
+  <div class="review" id="review">
+    <span class="rv-tag">PREVIEW 预览</span>
+    <button type="button" data-rv="save"></button>
+    <button type="button" data-rv="pause"></button>
+    <button type="button" data-rv="replay">↺ 重播开场 Replay</button>
+  </div>
+  <div class="toast" id="toast"></div>
+</main>
+
+<script>
+(() => {
+  const cover = document.getElementById('cover');
+  const qs = new URLSearchParams(location.search);
+  let lang = qs.get('lang') === 'en' ? 'en' : 'zh';
+  let hasSave = qs.get('save') !== '0';
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------------- copy ---------------- */
+  const T = {
+    zh: {
+      era: '建安十九年', ad: '公元',
+      pitch: '汉室倾颓，群雄割据。你自 2026 年而来，携后世之学与五十五位名将的史册——择一主而事之，改写天下。',
+      cta: '开始新的征程', ctaSub: 'New Campaign',
+      cont: '继续征程', contSub: 'Continue', contMeta: '曹魏 · 214 年春 · 第 3 季',
+      mp: '联机对弈', mpSub: 'Multiplayer', mpMeta: '1 局进行中',
+      arch: '史册存档', archSub: 'Archives', archMeta: '3 份',
+      engine: 'AI 引擎', offline: '离线', guest: '游客 · 登录', langBtn: 'EN',
+      east: '东流',
+      src: '杨慎《临江仙》 · 《三国演义》卷首词',
+      toast: '预览：此处将进入「择主」—— 现有的三位君主选择界面',
+      toastRow: '预览：此按钮沿用现有的存档 / 联机窗口',
+    },
+    en: {
+      era: 'Jian’an 19', ad: 'AD',
+      pitch: '214 AD. The Han is falling and warlords carve up the realm. You arrive from 2026 with tomorrow’s knowledge and the histories of 55 heroes — choose a lord, and rewrite the age.',
+      cta: 'New Campaign', ctaSub: '开始新的征程',
+      cont: 'Continue', contSub: '继续征程', contMeta: 'Wei · Spring 214 · Turn 3',
+      mp: 'Multiplayer', mpSub: '联机对弈', mpMeta: '1 active',
+      arch: 'Archives', archSub: '史册存档', archMeta: '3 saves',
+      engine: 'AI Engine', offline: 'offline', guest: 'Guest · Sign in', langBtn: '中文',
+      east: 'EAST',
+      src: 'Yang Shen, “Immortal by the River” — the opening verse of Romance of the Three Kingdoms',
+      toast: 'Preview: this opens lord selection (the existing three-lord screen)',
+      toastRow: 'Preview: this keeps the existing saves / multiplayer dialogs',
+    },
+  };
+
+  // The poem, line by line, each with its own English rendering and annotation.
+  const LINES = [
+    { zh: '滚滚长江东逝水', en: 'Wave after wave, the Yangtze runs east —', cz: ['长江', '东流不息'], ce: ['长江', 'The Yangtze, flowing east'] },
+    { zh: '浪花淘尽英雄', en: 'and its foam has worn the heroes away.', cz: ['浪花', '214 年前已逝的英雄'], ce: ['浪花', 'Heroes gone before 214'] },
+    { zh: '是非成败转头空', en: 'Right and wrong, rise and fall — gone at a glance back.', cz: ['是非成败', '魏 · 蜀 · 吴'], ce: ['是非成败', 'Wei · Shu · Wu'] },
+    { zh: '青山依旧在', en: 'The green hills remain,', cz: ['青山', '依旧在'], ce: ['青山', 'Still standing'] },
+    { zh: '几度夕阳红', en: 'through how many red sunsets?', cz: ['夕阳', '自中平元年 · 第 {n} 度'], ce: ['夕阳', 'Sunset no. {n} since 184'] },
+    { zh: '白发渔樵江渚上', en: 'Grey-haired, the fisher and the woodsman on the sandbar', cz: ['渔樵', '江渚之上'], ce: ['渔樵', 'Fisher & woodsman'] },
+    { zh: '惯看秋月春风', en: 'have seen their fill of autumn moons and spring winds.', cz: ['秋月', '春风'], ce: ['秋月', 'Autumn moon'] },
+    { zh: '一壶浊酒喜相逢', en: 'Over a jug of cloudy wine, old friends meet;', cz: ['浊酒', '喜相逢'], ce: ['浊酒', 'Cloudy wine, old friends'] },
+    { zh: '古今多少事', en: 'all the affairs of then and now', cz: ['古今', '184 → 2026'], ce: ['古今', '184 → 2026'] },
+    { zh: '都付笑谈中', en: 'pass into their easy laughter.', coda: { zh: '—— 而今，由你书写。', en: '— and now, yours to write.' } },
+  ];
+  const DUR = [5600, 5600, 5800, 5200, 5800, 5600, 5200, 5400, 5800, 7600];
+  const SUNSETS = 10957; // days from 184 (Yellow Turbans) to 214
+
+  // Heroes the river had already taken before the campaign opens.
+  const FALLEN = [
+    ['吕布', 'Lü Bu', 199], ['周瑜', 'Zhou Yu', 210], ['孙策', 'Sun Ce', 200], ['郭嘉', 'Guo Jia', 207],
+    ['董卓', 'Dong Zhuo', 192], ['典韦', 'Dian Wei', 197], ['袁绍', 'Yuan Shao', 202], ['孙坚', 'Sun Jian', 191],
+    ['颜良', 'Yan Liang', 200], ['文丑', 'Wen Chou', 200], ['陈宫', 'Chen Gong', 199], ['高顺', 'Gao Shun', 199],
+    ['袁术', 'Yuan Shu', 199], ['公孙瓒', 'Gongsun Zan', 199], ['荀彧', 'Xun Yu', 212], ['华雄', 'Hua Xiong', 191],
+    ['何进', 'He Jin', 189], ['张角', 'Zhang Jue', 184],
+  ];
+
+  /* ---------------- noise ---------------- */
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const rng = mulberry32(214);
+  const TAB = new Float32Array(4096);
+  for (let i = 0; i < 4096; i++) TAB[i] = rng();
+  const noise = (x) => {
+    const i = Math.floor(x), f = x - i, u = f * f * (3 - 2 * f);
+    const a = TAB[i & 4095], b = TAB[(i + 1) & 4095];
+    return a + (b - a) * u;
+  };
+  const fbm = (x) => noise(x) * 0.58 + noise(x * 2.07 + 19.3) * 0.28 + noise(x * 4.31 + 51.7) * 0.14;
+  const clamp01 = (x) => Math.min(1, Math.max(0, x));
+  const smooth = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+  const easeOut = (t) => 1 - Math.pow(1 - clamp01(t), 3);
+  const easeInOut = (t) => { t = clamp01(t); return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
+
+  /* ---------------- view mapping (matches preserveAspectRatio xMidYMax slice) ---------------- */
+  const VB_W = 1600, VB_H = 900, HORIZON = 600, SUN = { x: 800, y: 500, r: 118 };
+  let W = 0, H = 0, s = 1, ox = 0, oy = 0, dpr = 1;
+  const toScreen = (x, y) => ({ x: ox + x * s, y: oy + y * s });
+
+  /* ---------------- the green hills ---------------- */
+  const RIDGES = [
+    { id: 'm0', depth: 0.18, detail: 15, keys: [[-80, 540], [80, 522], [200, 500], [330, 515], [450, 474], [560, 500], [660, 478], [740, 505], [820, 540], [900, 528], [990, 500], [1060, 452], [1160, 424], [1250, 362], [1330, 398], [1420, 334], [1520, 380], [1680, 420]] },
+    { id: 'm1', depth: 0.38, detail: 12, keys: [[-80, 556], [100, 540], [240, 556], [380, 526], [500, 548], [620, 562], [720, 572], [840, 578], [960, 562], [1080, 522], [1180, 472], [1290, 502], [1400, 452], [1500, 482], [1680, 500]] },
+    { id: 'm2', depth: 0.66, detail: 9, keys: [[-80, 520], [60, 536], [170, 562], [280, 582], [420, 594], [620, 602], [900, 604], [1100, 594], [1250, 566], [1380, 548], [1480, 524], [1560, 540], [1680, 556]] },
+    { id: 'm3', depth: 1.0, detail: 6, keys: [[-80, 574], [90, 584], [220, 598], [400, 607], [1200, 607], [1350, 597], [1480, 585], [1680, 574]] },
+  ];
+  function cosInterp(keys, x) {
+    for (let k = 0; k < keys.length - 1; k++) {
+      const [x0, y0] = keys[k], [x1, y1] = keys[k + 1];
+      if (x >= x0 && x <= x1) {
+        const u = (1 - Math.cos(((x - x0) / (x1 - x0)) * Math.PI)) / 2;
+        return y0 + (y1 - y0) * u;
+      }
+    }
+    return keys[keys.length - 1][1];
+  }
+  RIDGES.forEach((r, idx) => {
+    const seed = 40 + idx * 31;
+    r.pts = [];
+    for (let x = -80; x <= 1680; x += 6) {
+      const y = cosInterp(r.keys, x) + (fbm(x * 0.011 + seed) - 0.5) * r.detail * 2 + (noise(x * 0.07 + seed * 2) - 0.5) * r.detail * 0.6;
+      r.pts.push([x, y]);
+    }
+    const d = 'M-80,720 ' + r.pts.map((p) => `L${p[0]},${p[1].toFixed(1)}`).join(' ') + ' L1680,720 Z';
+    document.getElementById(r.id).setAttribute('d', d);
+    r.g = document.querySelector(`.ridge[data-i="${idx}"]`);
+    r.px = 0; r.py = 0;
+  });
+  const ridgeAt = (r, x) => r.pts[Math.max(0, Math.min(r.pts.length - 1, Math.round((x + 80) / 6)))][1];
+
+  /* ---------------- parallax ---------------- */
+  let mx = 0, my = 0, cmx = 0, cmy = 0;
+  addEventListener('pointermove', (e) => {
+    mx = (e.clientX / innerWidth) * 2 - 1;
+    my = (e.clientY / innerHeight) * 2 - 1;
+  });
+  const sunP = document.getElementById('sunP');
+  const moonP = document.getElementById('moonP');
+  const par = { sun: { x: 0, y: 0 }, moon: { x: 0, y: 0 } };
+  function applyParallax(dt) {
+    const k = Math.min(1, dt * 3);
+    cmx += (mx - cmx) * k; cmy += (my - cmy) * k;
+    RIDGES.forEach((r) => {
+      r.px = -cmx * r.depth * 16; r.py = -cmy * r.depth * 5;
+      r.g.style.transform = `translate(${r.px.toFixed(2)}px, ${r.py.toFixed(2)}px)`;
+    });
+    par.sun.x = -cmx * 5; par.sun.y = -cmy * 2;
+    par.moon.x = -cmx * 3; par.moon.y = -cmy * 1.5;
+    sunP.style.transform = `translate(${par.sun.x.toFixed(2)}px, ${par.sun.y.toFixed(2)}px)`;
+    moonP.style.transform = `translate(${par.moon.x.toFixed(2)}px, ${par.moon.y.toFixed(2)}px)`;
+  }
+
+  /* ---------------- the river ---------------- */
+  const canvas = document.getElementById('river');
+  const ctx = canvas.getContext('2d');
+  const eastTag = document.getElementById('eastTag');
+  function resize() {
+    W = innerWidth; H = innerHeight;
+    dpr = Math.min(2, devicePixelRatio || 1);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    s = Math.max(W / VB_W, H / VB_H);
+    ox = (W - VB_W * s) / 2; oy = H - VB_H * s;
+    eastTag.style.top = `${oy + HORIZON * s + 14}px`;
+  }
+  addEventListener('resize', resize);
+  resize();
+
+  const NL = 58;
+  const THREADS = [
+    { rgb: '96,140,190', t: 0.3, seed: 11, zh: '魏', en: 'WEI' },
+    { rgb: '82,160,104', t: 0.37, seed: 23, zh: '蜀', en: 'SHU' },
+    { rgb: '214,84,60', t: 0.44, seed: 37, zh: '吴', en: 'WU' },
+  ];
+  let flowPhase = 0, flow = 1, flowT = 1, refl = 1, reflT = 1, threadA = 0.34, riverAlpha = 0;
+  const names = [], foam = [];
+  let nameIdx = 0, nextName = 0, featured = null;
+  const hyNow = () => oy + HORIZON * s;
+  const depthY = (pp, hy) => hy + 2 + (H - hy) * pp * 1.04;
+
+  // Each new name takes the open water farthest from the names already drifting.
+  const LANES = [0.36, 0.41, 0.46, 0.51]; // the featured name keeps 0.6 to itself
+  function spawnName(now, isFeatured) {
+    const h = FALLEN[nameIdx++ % FALLEN.length];
+    const hy = hyNow();
+    let best = { t: 0.6, x: W * 0.36, score: -1 };
+    if (!isFeatured) {
+      for (let k = 0; k < 12; k++) {
+        const t = LANES[Math.floor(Math.random() * LANES.length)];
+        const x = W * (0.37 + Math.random() * 0.24);
+        const y = depthY(Math.pow(t, 1.9), hy);
+        let score = 1e9;
+        names.forEach((n) => { score = Math.min(score, Math.hypot(x - n.x, (y - n.y) * 4)); });
+        if (score > best.score) best = { t, x, score };
+      }
+    }
+    const pp = Math.pow(best.t, 1.9);
+    const n = {
+      h, pp, born: now, life: isFeatured ? 8200 : 7200 + Math.random() * 2400,
+      x: best.x, w: 0, y: depthY(pp, hy), size: 0, featured: isFeatured,
+    };
+    names.push(n);
+    if (isFeatured) featured = n;
+  }
+
+  function drawRiver(now, dt) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const hy = hyNow();
+    const sun = toScreen(SUN.x + par.sun.x, SUN.y);
+    ctx.globalAlpha = riverAlpha;
+
+    // water body + the sun's glow lying on it
+    const g = ctx.createLinearGradient(0, hy, 0, H);
+    g.addColorStop(0, '#17212a'); g.addColorStop(0.3, '#0c141a'); g.addColorStop(1, '#05080b');
+    ctx.fillStyle = g; ctx.fillRect(0, hy, W, H - hy);
+    ctx.save();
+    ctx.translate(sun.x, hy); ctx.scale(1, 0.3);
+    const rg = ctx.createRadialGradient(0, 0, 0, 0, 0, 460 * s);
+    rg.addColorStop(0, `rgba(229,72,47,${0.3 * refl})`); rg.addColorStop(1, 'rgba(229,72,47,0)');
+    ctx.fillStyle = rg; ctx.fillRect(-460 * s, 0, 920 * s, (H - hy) / 0.3);
+    ctx.restore();
+
+    const step = Math.max(3, 4 * s);
+    for (let i = 0; i < NL; i++) {
+      const t = (i + 0.5) / NL, pp = Math.pow(t, 1.9);
+      const y0 = depthY(pp, hy);
+      const amp = (0.5 + 7 * pp) * s;
+      const off = flowPhase * (12 + 130 * pp) * s;
+      const sc = 1 / ((34 + 300 * pp) * s);
+      ctx.strokeStyle = `rgba(196,210,222,${0.05 + 0.34 * pp})`;
+      ctx.lineWidth = 0.6 + 1.3 * pp;
+      ctx.beginPath();
+      let pen = false;
+      for (let x = -step; x <= W + step; x += step) {
+        const u = (x - off) * sc + i * 37.1;
+        const n = noise(u), m = noise(u * 2.3 + 300);
+        const y = y0 + (m - 0.5) * amp * 1.6 + Math.sin(u * 2.1) * amp * 0.35;
+        if (n * 0.72 + m * 0.28 > 0.5) {
+          if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+        } else pen = false;
+      }
+      ctx.stroke();
+
+      // 夕阳: the sun broken into vermilion dashes on the water
+      if (pp < 0.55) {
+        const fade = 1 - pp / 0.55;
+        const half = (16 + 250 * pp) * s * (0.7 + 0.6 * noise(i * 1.9 + flowPhase * 0.7)) * (0.5 + 0.5 * refl);
+        const cx = sun.x + (noise(i * 3.7 + flowPhase * 0.35) - 0.5) * 16 * s;
+        ctx.strokeStyle = `rgba(244,96,62,${Math.min(1, 0.78 * fade * refl)})`;
+        ctx.lineWidth = 0.8 + 1.8 * pp;
+        ctx.beginPath();
+        for (let k = 0; k < 3; k++) {
+          const a0 = cx - half + 2 * half * (k / 3) + (noise(k * 7 + i * 1.3 + flowPhase * 1.1) - 0.5) * 8 * s;
+          const len = ((2 * half) / 3) * (0.25 + 0.7 * noise(k * 5.1 + i * 0.7 + flowPhase * 0.9));
+          const yy = y0 + (noise(a0 * 0.01 + i) - 0.5) * amp;
+          ctx.moveTo(a0, yy); ctx.lineTo(a0 + len, yy);
+        }
+        ctx.stroke();
+      }
+    }
+
+    // 是非成败: Wei, Shu and Wu as three threads that rise in the west and dissolve to the east
+    THREADS.forEach((th) => {
+      const pp = Math.pow(th.t, 1.9);
+      const y0 = depthY(pp, hy);
+      const amp = (1 + 7 * pp) * s;
+      const off = flowPhase * (12 + 130 * pp) * s;
+      const sc = 1 / ((70 + 300 * pp) * s);
+      const A = threadA;
+      const lg = ctx.createLinearGradient(0, 0, W, 0);
+      lg.addColorStop(0, `rgba(${th.rgb},0)`);
+      lg.addColorStop(0.3, `rgba(${th.rgb},0)`);
+      lg.addColorStop(0.36, `rgba(${th.rgb},${A * 0.8})`);
+      lg.addColorStop(0.44, `rgba(${th.rgb},${A})`);
+      lg.addColorStop(0.56, `rgba(${th.rgb},${A * 0.7})`);
+      lg.addColorStop(0.72, `rgba(${th.rgb},${A * 0.2})`);
+      lg.addColorStop(0.86, `rgba(${th.rgb},0)`);
+      ctx.strokeStyle = lg;
+      ctx.lineWidth = (1.8 + 2 * pp) * Math.max(1, s * 0.9);
+      ctx.beginPath();
+      for (let x = -step; x <= W + step; x += step) {
+        const u = (x - off) * sc;
+        const y = y0 + (noise(u + th.seed) - 0.5) * amp * 2 + Math.sin(u * 1.7 + th.seed) * amp * 0.6;
+        if (x <= -step + 0.01) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        if (Math.abs(x - W * 0.4) < step / 2) th.sy = y;
+      }
+      ctx.stroke();
+    });
+
+    // 浪花淘尽英雄: names of the fallen drift east and break into foam
+    for (let k = names.length - 1; k >= 0; k--) {
+      const n = names[k];
+      const age = (now - n.born) / n.life;
+      if (age >= 1) { names.splice(k, 1); if (n === featured) featured = null; continue; }
+      const speed = (12 + 130 * n.pp) * s * 0.85 * flow;
+      n.x += speed * dt;
+      n.y = depthY(n.pp, hy) - 3 * s;
+      n.size = Math.max(11, (12 + 20 * n.pp) * s);
+      const d = smooth(0.42, 1, age);
+      const a = (age < 0.12 ? age / 0.12 : 1) * (1 - d) * (0.5 + 0.5 * n.pp) * 0.9;
+      const label = lang === 'zh' ? n.h[0] : n.h[1];
+      ctx.save();
+      ctx.globalAlpha = a * riverAlpha;
+      if (d > 0.02) ctx.filter = `blur(${(d * 5).toFixed(1)}px)`;
+      ctx.font = lang === 'zh' ? `500 ${n.size}px "Noto Serif SC", serif` : `italic 400 ${n.size * 1.1}px "Crimson Pro", serif`;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = lang === 'zh' ? `${(n.size * 0.22).toFixed(1)}px` : '0.5px';
+      ctx.fillStyle = '#ede7da';
+      ctx.fillText(label, n.x, n.y);
+      n.w = ctx.measureText(label).width;
+      ctx.font = `400 ${Math.max(9, n.size * 0.5)}px Inter, sans-serif`;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '1px';
+      ctx.fillStyle = '#e5482f';
+      ctx.fillText(String(n.h[2]), n.x + n.w + n.size * 0.35, n.y);
+      ctx.restore();
+      if (d > 0 && !reduce) {
+        let count = d * 70 * dt * (0.6 + n.pp * 2);
+        while (count > 0 && foam.length < 700) {
+          if (count < 1 && Math.random() > count) break;
+          count -= 1;
+          foam.push({
+            x: n.x + Math.random() * n.w, y: n.y - Math.random() * n.size * 0.8,
+            vx: speed * (1.05 + Math.random() * 0.3), vy: -(3 + Math.random() * 9) * s,
+            born: now, life: 900 + Math.random() * 1300, r: (0.6 + Math.random()) * Math.max(1, s),
+          });
+        }
+      }
+    }
+    ctx.fillStyle = '#ede7da';
+    for (let k = foam.length - 1; k >= 0; k--) {
+      const f = foam[k];
+      const age = (now - f.born) / f.life;
+      if (age >= 1) { foam.splice(k, 1); continue; }
+      f.x += f.vx * dt; f.y += f.vy * dt; f.vy *= 0.97;
+      ctx.globalAlpha = (1 - age) * 0.55 * riverAlpha;
+      ctx.fillRect(f.x, f.y, f.r, f.r);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /* ---------------- copy rendering ---------------- */
+  const poemList = document.getElementById('poemLines');
+  LINES.forEach((L, i) => {
+    const li = document.createElement('li');
+    li.textContent = L.zh;
+    li.className = 'rise';
+    li.style.setProperty('--d', `${0.95 + i * 0.09}s`);
+    li.addEventListener('click', () => setActive(i, performance.now()));
+    poemList.appendChild(li);
+  });
+  const segs = document.getElementById('segs');
+  LINES.forEach((_, i) => {
+    const b = document.createElement('button');
+    b.className = 'seg'; b.type = 'button'; b.setAttribute('aria-label', `Line ${i + 1}`);
+    b.appendChild(document.createElement('i'));
+    b.addEventListener('click', () => setActive(i, performance.now()));
+    segs.appendChild(b);
+  });
+
+  const rowCont = document.getElementById('rowCont');
+  function applySave() {
+    rowCont.hidden = !hasSave;
+    let n = 2;
+    document.querySelectorAll('.row').forEach((r) => {
+      if (!r.hidden) r.querySelector('.idx').textContent = String(n++).padStart(2, '0');
+    });
+    document.querySelector('[data-rv="save"]').textContent = hasSave ? '存档：有 · Save ✓' : '存档：无 · No save';
+  }
+  function applyLang() {
+    cover.setAttribute('lang', lang);
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    document.querySelectorAll('[data-t]').forEach((el) => { el.textContent = T[lang][el.dataset.t]; });
+    if (active >= 0) { renderCaption(false); renderCallout(); }
+  }
+
+  /* ---------------- the cycle through the poem ---------------- */
+  let active = -1, lineStart = 0, paused = false, pausedAt = 0, cycleOn = false;
+  const capBody = document.getElementById('capBody');
+  const capZh = document.getElementById('capZh'), capEn = document.getElementById('capEn'), capCoda = document.getElementById('capCoda');
+  const capIdx = document.getElementById('capIdx');
+  const yearEl = document.getElementById('year');
+  const callout = document.getElementById('callout');
+  const leaders = document.getElementById('leaders');
+  const ldLine = document.getElementById('ldLine'), ldDot = document.getElementById('ldDot'), ldRing = document.getElementById('ldRing');
+  let calloutText = '';
+
+  function renderCaption(animate = true) {
+    const L = LINES[active];
+    const fill = () => {
+      capZh.textContent = L.zh;
+      capEn.textContent = L.en;
+      capCoda.textContent = L.coda ? L.coda[lang] : '';
+      capIdx.textContent = String(active + 1).padStart(2, '0');
+      capBody.classList.remove('swap');
+    };
+    if (!animate) return fill();
+    capBody.classList.add('swap');
+    setTimeout(fill, 280);
+  }
+
+  function setActive(i, now) {
+    active = i; lineStart = now;
+    if (paused) pausedAt = now;
+    cover.dataset.line = String(i + 1);
+    poemList.querySelectorAll('li').forEach((li, k) => li.classList.toggle('on', k === i));
+    segs.querySelectorAll('.seg').forEach((b, k) => {
+      b.classList.toggle('done', k < i);
+      b.classList.remove('on');
+      if (k === i) { b.style.setProperty('--dur', `${DUR[i]}ms`); void b.offsetWidth; b.classList.add('on'); }
+    });
+    renderCaption(true);
+    if (i === 1) spawnName(now, true);
+    if (i !== 8) { yearEl.textContent = '214'; yearEl.classList.remove('chrono'); }
+    callout.classList.remove('show'); leaders.classList.remove('show');
+    clearTimeout(setActive.t);
+    setActive.t = setTimeout(() => { renderCallout(); }, 420);
+  }
+
+  // Where each annotation points, in screen px, with the label offset from it.
+  const CALL = [
+    { at: () => toScreen(640, 728), dx: 64, dy: -58 },
+    { at: () => (featured ? { x: featured.x + featured.w * 0.5, y: featured.y - featured.size * 0.9 } : null), dx: 40, dy: -54 },
+    { at: () => (THREADS[0].sy ? { x: W * 0.4, y: THREADS[0].sy } : null), dx: 40, dy: -52 },
+    { at: () => { const r = RIDGES[1]; return toScreen(1180 + r.px, ridgeAt(r, 1180) + r.py); }, dx: 54, dy: -58 },
+    { at: () => { const a = -0.42; return toScreen(SUN.x + par.sun.x + SUN.r * Math.cos(a), SUN.y + par.sun.y + SUN.r * Math.sin(a)); }, dx: 70, dy: -40 },
+    { at: () => toScreen(1096 - 26 * 1.28, 672 - 23 * 1.28), dx: -46, dy: -50 },
+    { at: () => toScreen(800 + par.moon.x + 10, 150 + par.moon.y), dx: 48, dy: -6 },
+    { at: () => toScreen(1096 + 27 * 1.28, 672 - 14 * 1.28), dx: 58, dy: -64 },
+    { at: () => { const r = yearEl.getBoundingClientRect(); return { x: r.right + 4, y: r.top + r.height / 2 }; }, dx: 70, dy: -26 },
+    null,
+  ];
+
+  function calloutLabel(now) {
+    const L = LINES[active];
+    const pair = lang === 'zh' ? L.cz : L.ce;
+    if (!pair) return null;
+    let sub = pair[1];
+    if (active === 4) {
+      const n = Math.round(SUNSETS * easeOut((now - lineStart - 500) / 2200));
+      sub = sub.replace('{n}', n.toLocaleString('en-US'));
+    }
+    return [pair[0], sub];
+  }
+  function renderCallout() {
+    if (active < 0 || !CALL[active]) return;
+    callout.classList.add('show'); leaders.classList.add('show');
+    calloutText = '';
+  }
+  function updateCallout(now) {
+    const spec = active >= 0 ? CALL[active] : null;
+    if (!spec || !callout.classList.contains('show')) return;
+    const p = spec.at();
+    if (!p) { callout.style.opacity = '0'; leaders.style.opacity = '0'; return; }
+    callout.style.opacity = ''; leaders.style.opacity = '';
+    const lab = calloutLabel(now);
+    if (lab) {
+      const txt = lab.join('|');
+      if (txt !== calloutText) {
+        calloutText = txt;
+        callout.querySelector('b').textContent = lab[0];
+        callout.querySelector('span').textContent = lab[1];
+      }
+    }
+    const k = W < 820 ? 0.7 : 1;
+    // Flip the label to the other side when it would run off the screen.
+    const cw = callout.offsetWidth;
+    let dx = spec.dx;
+    if (dx > 0 && p.x + dx * k + cw > W - 12) dx = -dx;
+    else if (dx < 0 && p.x + dx * k - cw < 12) dx = -dx;
+    const lx = p.x + dx * k, ly = p.y + spec.dy * k;
+    callout.style.transform = `translate(${lx.toFixed(1)}px, ${ly.toFixed(1)}px) translate(${dx < 0 ? '-100%' : '0'}, -100%)`;
+    ldLine.setAttribute('x1', p.x); ldLine.setAttribute('y1', p.y);
+    ldLine.setAttribute('x2', lx); ldLine.setAttribute('y2', ly);
+    ldDot.setAttribute('cx', p.x); ldDot.setAttribute('cy', p.y);
+    ldRing.setAttribute('cx', p.x); ldRing.setAttribute('cy', p.y);
+  }
+
+  /* ---------------- main loop ---------------- */
+  let last = performance.now(), introStart = performance.now();
+  function update(now, dt) {
+    const tl = now - lineStart;
+    // per-line targets for the river
+    flowT = active === 0 ? 2 : 1;
+    reflT = active === 4 ? 1.7 : 1;
+    let thrT = 0.3;
+    if (active === 2) thrT = tl < 3800 ? 1 : 0;
+    flow += (flowT - flow) * Math.min(1, dt * 1.5);
+    refl += (reflT - refl) * Math.min(1, dt * 1.5);
+    threadA += (thrT - threadA) * Math.min(1, dt * (active === 2 && tl >= 3800 ? 1.4 : 2.4));
+    if (!reduce) flowPhase += dt * flow;
+    riverAlpha = reduce ? 1 : clamp01((now - introStart) / 1800);
+
+    if (!reduce && cycleOn && !paused && now > nextName) {
+      spawnName(now, false);
+      nextName = now + (active === 1 ? 1500 : 2600 + Math.random() * 1200);
+    }
+
+    // 古今: the year runs from the Yellow Turbans to the traveller's own
+    if (active === 8) {
+      const v = Math.round(184 + (2026 - 184) * easeInOut((tl - 500) / 2600));
+      yearEl.textContent = String(v);
+      yearEl.classList.toggle('chrono', v >= 2026);
+    }
+
+    if (cycleOn && !paused && tl > DUR[active]) setActive((active + 1) % LINES.length, now);
+  }
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    applyParallax(dt);
+    update(now, paused ? 0 : dt);
+    drawRiver(now, paused ? 0 : dt);
+    updateCallout(now);
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------------- intro ---------------- */
+  let introTimers = [];
+  function intro() {
+    introTimers.forEach(clearTimeout);
+    introStart = performance.now();
+    cycleOn = false; active = -1;
+    names.length = 0; foam.length = 0; featured = null;
+    cover.removeAttribute('data-line');
+    callout.classList.remove('show'); leaders.classList.remove('show');
+    poemList.querySelectorAll('li').forEach((li) => li.classList.remove('on'));
+    capZh.textContent = capEn.textContent = capCoda.textContent = '';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      cover.classList.remove('instant');
+      cover.classList.add('ready');
+    }));
+    introTimers.push(setTimeout(() => { nextName = performance.now() + 300; cycleOn = true; setActive(0, performance.now()); }, reduce ? 0 : 2600));
+  }
+  function replay() {
+    cover.classList.add('instant');
+    cover.classList.remove('ready');
+    void cover.offsetWidth;
+    intro();
+  }
+
+  /* ---------------- controls ---------------- */
+  const toastEl = document.getElementById('toast');
+  function toast(msg) {
+    toastEl.textContent = msg; toastEl.classList.add('show');
+    clearTimeout(toast.t); toast.t = setTimeout(() => toastEl.classList.remove('show'), 2600);
+  }
+  document.getElementById('cta').addEventListener('click', () => toast(T[lang].toast));
+  document.querySelectorAll('.row').forEach((r) => r.addEventListener('click', () => toast(T[lang].toastRow)));
+  document.getElementById('langBtn').addEventListener('click', () => { lang = lang === 'zh' ? 'en' : 'zh'; applyLang(); });
+  const pauseBtn = document.querySelector('[data-rv="pause"]');
+  function setPaused(p) {
+    const now = performance.now();
+    if (p && !paused) pausedAt = now;
+    if (!p && paused) lineStart += now - pausedAt;
+    paused = p;
+    cover.classList.toggle('paused', paused);
+    pauseBtn.textContent = paused ? '▶ 继续轮播 Resume' : '❙❙ 暂停轮播 Pause';
+  }
+  pauseBtn.addEventListener('click', () => setPaused(!paused));
+  document.querySelector('[data-rv="save"]').addEventListener('click', () => { hasSave = !hasSave; applySave(); });
+  document.querySelector('[data-rv="replay"]').addEventListener('click', replay);
+  addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && document.activeElement === document.body) document.getElementById('cta').click();
+    if (e.key === 'ArrowRight' && active >= 0) setActive((active + 1) % LINES.length, performance.now());
+    if (e.key === 'ArrowLeft' && active >= 0) setActive((active + LINES.length - 1) % LINES.length, performance.now());
+    if (e.key === ' ') { e.preventDefault(); setPaused(!paused); }
+  });
+
+  applyLang();
+  applySave();
+  setPaused(false);
+  drawRiver(performance.now(), 0);
+  (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => {
+    intro();
+    requestAnimationFrame(frame);
+  });
+  // Exposed for review tooling (jump to a line, finish the intro).
+  window.__cover = { setActive: (i) => setActive(i, performance.now()), replay, setPaused };
+})();
+</script>
+</body>
+</html>

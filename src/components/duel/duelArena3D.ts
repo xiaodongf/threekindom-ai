@@ -5,14 +5,17 @@ import { FACTION_CLOTH } from '../../utils/factionPalette.js';
 import { SOLDIER_KITS, createFigureCrowd, figureTint, type FigureCrowd } from '../gfx/figures.js';
 import { buildCamp, type Camp } from '../gfx/camp.js';
 import { createWind, type Wind } from '../gfx/wind.js';
-import type { DisposeBag } from './duelGeometry3D.js';
+import { createFire, type Fire } from '../gfx/fire.js';
+import { mergeRigid, type DisposeBag } from './duelGeometry3D.js';
 import {
   createFortressWallTextures,
   createDustPuffTexture,
-  createFlameTexture,
+  createCoalBedTexture,
+  createDrumSkinTexture,
   createGroundDetailTextures,
   createPaintedPanoramaTexture,
   createSilkBannerTexture,
+  createSilkLanternTexture,
   createSkyDomeTexture,
 } from './duelTextures3D.js';
 
@@ -277,6 +280,8 @@ export interface DuelArena3D {
   camp: Camp;
   brazierLights: THREE.PointLight[];
   brazierFlames: THREE.Object3D[];
+  /** The braziers' flames and embers (none where the field has no fires); the stage sets its clock */
+  fire: Fire | null;
   /** The painted horizon, so the fog can take its colour from it */
   backdrop: { texture: THREE.Texture; horizonV: number; tint: THREE.Color; arc: number };
   spectators: { left: THREE.Group; right: THREE.Group };
@@ -416,63 +421,72 @@ export function buildDuelArena3D(
     gateRoof.position.set(0, 9.8, -21);
     group.add(arch, gateHall, gateRoof);
 
-    const lanternMat = bag.add(new THREE.MeshBasicMaterial({ color: new THREE.Color(3.0, 0.75, 0.25) }));
-    const lanternGeo = bag.add(new THREE.SphereGeometry(0.28, 10, 8));
+    // Silk lanterns lit from inside: red silk over ribs, dark caps, a tassel below. Bright enough
+    // to glow, not so bright that bloom turns them into white discs.
+    const lanternMat = bag.add(
+      new THREE.MeshBasicMaterial({ map: createSilkLanternTexture(bag), color: new THREE.Color(1.35, 1.15, 1.05) })
+    );
+    const capMat = bag.add(new THREE.MeshStandardMaterial({ color: '#1d1512', roughness: 0.6 }));
+    const lanternGeo = bag.add(new THREE.SphereGeometry(0.28, 16, 12));
+    const capGeo = bag.add(new THREE.CylinderGeometry(0.13, 0.15, 0.07, 10));
+    const lanternTasselGeo = bag.add(new THREE.ConeGeometry(0.05, 0.26, 6));
+    lanternTasselGeo.rotateX(Math.PI);
+    const tasselMat = bag.add(new THREE.MeshStandardMaterial({ color: '#7d1a12', roughness: 0.8 }));
     for (const lx of [-15, -9, -3.6, 3.6, 9, 15]) {
       const lan = new THREE.Mesh(lanternGeo, lanternMat);
-      lan.scale.set(1, 1.32, 1);
+      lan.scale.set(1, 1.18, 1);
       lan.position.set(lx, 5.7, -19.55);
-      group.add(lan);
+      const top = new THREE.Mesh(capGeo, capMat);
+      top.position.set(lx, 5.7 + 0.33, -19.55);
+      const bottom = new THREE.Mesh(capGeo, capMat);
+      bottom.position.set(lx, 5.7 - 0.33, -19.55);
+      const tassel = new THREE.Mesh(lanternTasselGeo, tasselMat);
+      tassel.position.set(lx, 5.7 - 0.5, -19.55);
+      group.add(lan, top, bottom, tassel);
     }
   }
 
+  let fire: Fire | null = null;
   if (look.torches) {
+    fire = createFire(bag);
     const ironMat = bag.add(new THREE.MeshStandardMaterial({ color: '#262220', metalness: 0.7, roughness: 0.45 }));
-    // Each flame is two crossed cards drawn additively. Their colour sits below the bloom
-    // threshold except where the cards overlap along the axis, so the fire has a bright core
-    // inside an orange body instead of clipping to a white shape.
-    const flameMat = bag.add(
-      new THREE.MeshBasicMaterial({
-        map: createFlameTexture(bag),
-        color: new THREE.Color(1.9, 1.05, 0.38),
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        fog: false,
-      })
+    // The coals glow on their own; the bowl's rim catches the light from them
+    const coalMat = bag.add(
+      new THREE.MeshBasicMaterial({ map: createCoalBedTexture(bag), color: new THREE.Color(1.25, 1.1, 1.0) })
     );
     const standGeo = bag.add(new THREE.CylinderGeometry(0.1, 0.24, 1.3, 8));
-    const bowlGeo = bag.add(new THREE.CylinderGeometry(0.42, 0.22, 0.32, 10));
-    const flameGeo = bag.add(new THREE.PlaneGeometry(0.78, 1.25));
-    flameGeo.translate(0, 0.56, 0);
+    const bowlGeo = bag.add(new THREE.CylinderGeometry(0.42, 0.22, 0.32, 14));
+    const rimGeo = bag.add(new THREE.TorusGeometry(0.42, 0.035, 6, 24));
+    rimGeo.rotateX(Math.PI / 2);
+    const coalGeo = bag.add(new THREE.CircleGeometry(0.39, 18));
+    coalGeo.rotateX(-Math.PI / 2);
     const spots: Array<[number, number]> = [
       [-6.4, -5.2],
       [6.4, -5.2],
       [-10.5, -2.2],
       [10.5, -2.2],
     ];
-    for (const [bx, bz] of spots) {
+    spots.forEach(([bx, bz], i) => {
       const stand = new THREE.Mesh(standGeo, ironMat);
       stand.position.set(bx, 0.65, bz);
       stand.castShadow = true;
       const bowl = new THREE.Mesh(bowlGeo, ironMat);
       bowl.position.set(bx, 1.42, bz);
+      const rim = new THREE.Mesh(rimGeo, ironMat);
+      rim.position.set(bx, 1.58, bz);
+      const coals = new THREE.Mesh(coalGeo, coalMat);
+      coals.position.set(bx, 1.535, bz);
       const flame = new THREE.Group();
-      flame.position.set(bx, 1.5, bz);
-      for (const turn of [0.35, 0.35 + Math.PI / 2]) {
-        const card = new THREE.Mesh(flameGeo, flameMat);
-        card.rotation.y = turn;
-        card.renderOrder = 3;
-        flame.add(card);
-      }
-      group.add(stand, bowl, flame);
+      flame.position.set(bx, 1.52, bz);
+      flame.add(fire!.flame(0.9, 1.4, i * 0.29 + 0.11));
+      group.add(stand, bowl, rim, coals, flame);
       brazierFlames.push(flame);
       const light = new THREE.PointLight('#ff8a36', 26, 22, 1.8);
       light.position.set(bx, 2.5, bz + 0.3);
       group.add(light);
       brazierLights.push(light);
-    }
+    });
+    group.add(fire.embers(spots.map(([bx, bz]) => new THREE.Vector3(bx, 1.75, bz)), 16, 2.6));
   }
 
   // ------------------------------------------------------------ ground mist (dark look)
@@ -513,11 +527,16 @@ export function buildDuelArena3D(
   const populate = (side: 'left' | 'right', target: THREE.Group, bgHex: string) => {
     const rows = 3;
     const perRow = Math.max(12, Math.round(26 * crowd));
+    // The ring's colours are muted toward grey, so the realm reads but the heroes' colours lead
     const realm = new THREE.Color(bgHex);
+    const grey = realm.r * 0.3 + realm.g * 0.59 + realm.b * 0.11;
+    realm.lerp(new THREE.Color(grey, grey, grey), 0.3);
     const men: Array<{ x: number; z: number; yaw: number; size: number; seed: number; kit: number }> = [];
     for (let r = 0; r < rows; r++) {
       for (let i = 0; i < perRow; i++) {
-        const f = (i + (r % 2) * 0.5) / perRow;
+        // Shoulder to shoulder, but not on a surveyor's line: each man is a little off his mark
+        const jitter = Math.sin(i * 47.13 + r * 9.7 + (side === 'left' ? 0 : 3.1)) * 0.3;
+        const f = (i + (r % 2) * 0.5 + jitter) / perRow;
         // The two armies close a ring around the duel: each wraps from the far side, past its
         // champion's flank, round toward the camera. Only the arc the camera stands in is left open.
         const ang =
@@ -550,8 +569,10 @@ export function buildDuelArena3D(
       });
       figures.commit();
       figures.uniforms.uFigIron.value = look.armyIron;
-      // The ring is the audience: kept a little under the two champions in brightness
-      figures.uniforms.uFigValue.value = 0.82;
+      // The ring is the audience: kept well under the two champions in brightness, and every
+      // man stands his own way instead of the whole ring copying one pose
+      figures.uniforms.uFigValue.value = 0.7;
+      figures.uniforms.uFigVariety.value = 1;
       target.add(figures.mesh);
       crowds[side].push(figures);
     });
@@ -559,41 +580,114 @@ export function buildDuelArena3D(
   populate('left', leftSpectators, atkPal.bg);
   populate('right', rightSpectators, defPal.bg);
 
-  // War drums flanking the field
-  const drumSkin = bag.add(new THREE.MeshStandardMaterial({ color: '#d9c7a0', roughness: 0.8 }));
-  const drumBody = bag.add(new THREE.MeshStandardMaterial({ color: '#7f1d1d', roughness: 0.55 }));
-  const drumGeo = bag.add(new THREE.CylinderGeometry(0.75, 0.75, 0.6, 18));
-  const skinGeo = bag.add(new THREE.CylinderGeometry(0.7, 0.7, 0.62, 18));
-  const legGeo = bag.add(new THREE.CylinderGeometry(0.05, 0.06, 1.3, 6));
+  const factionGlyph = (f: FactionId) => (FACTION_CLOTH[f] ?? FACTION_CLOTH.neutral).glyph;
+
+  // ------------------------------------------------------------ war drums
+  // Each army's drum stands on a wooden cradle by its braziers: a bellied barrel of red lacquer
+  // with bronze hoops and side rings, hide heads nailed down with a row of studs and painted with
+  // the army's character, and two sticks resting across the top.
+  const lacquerMat = bag.add(new THREE.MeshStandardMaterial({ color: '#5a1912', roughness: 0.42, metalness: 0.04 }));
+  const bronzeMat = bag.add(new THREE.MeshStandardMaterial({ color: '#8a6a34', roughness: 0.4, metalness: 0.85 }));
+  const knobMat = bag.add(new THREE.MeshStandardMaterial({ color: '#6e1810', roughness: 0.85 }));
+  const DRUM_HALF = 0.37;
+  const barrelProfile: THREE.Vector2[] = [];
+  for (let i = 0; i <= 12; i++) {
+    const t = i / 12;
+    barrelProfile.push(new THREE.Vector2(0.64 + 0.1 * Math.sin(t * Math.PI), (t - 0.5) * DRUM_HALF * 2));
+  }
+  const barrelGeo = bag.add(new THREE.LatheGeometry(barrelProfile, 32));
+  barrelGeo.rotateX(Math.PI / 2);
+  const drumHeadGeo = bag.add(new THREE.CircleGeometry(0.645, 40));
+  const hoopGeo = bag.add(new THREE.TorusGeometry(0.652, 0.024, 6, 40));
+  const studGeo = bag.add(new THREE.SphereGeometry(0.019, 6, 4));
+  const sideRingGeo = bag.add(new THREE.TorusGeometry(0.075, 0.013, 5, 14));
+  sideRingGeo.rotateY(Math.PI / 2);
+  const legGeo = bag.add(new THREE.CylinderGeometry(0.04, 0.05, 1, 6));
+  const stickGeo = bag.add(new THREE.CylinderGeometry(0.016, 0.02, 0.52, 6));
+  const knobGeo = bag.add(new THREE.SphereGeometry(0.045, 8, 6));
+  /** A wooden member running between two points of the cradle */
+  const beam = (parent: THREE.Object3D, a: THREE.Vector3, b: THREE.Vector3): void => {
+    const m = new THREE.Mesh(legGeo, woodMat);
+    m.position.copy(a).add(b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+    m.scale.y = a.distanceTo(b);
+    m.castShadow = true;
+    parent.add(m);
+  };
+  const STUDS = 36;
+  const studMatrix = new THREE.Matrix4();
   for (const sx of [-1, 1]) {
     const drum = new THREE.Group();
-    const shell = new THREE.Mesh(drumGeo, drumBody);
-    shell.rotation.x = Math.PI * 0.5;
-    shell.castShadow = true;
-    const skin = new THREE.Mesh(skinGeo, drumSkin);
-    skin.rotation.x = Math.PI * 0.5;
-    drum.add(shell, skin);
     drum.position.set(sx * 8.4, 1.55, -6.4);
     drum.rotation.y = sx * -0.5;
     group.add(drum);
-    for (const lx of [-0.45, 0.45]) {
-      const leg = new THREE.Mesh(legGeo, woodMat);
-      leg.position.set(sx * 8.4 + lx, 0.65, -6.4);
-      leg.rotation.z = lx > 0 ? -0.2 : 0.2;
-      leg.castShadow = true;
-      group.add(leg);
+
+    const barrel = new THREE.Mesh(barrelGeo, lacquerMat);
+    barrel.castShadow = true;
+    drum.add(barrel);
+    const glyph = factionGlyph(sx < 0 ? attacker.faction : defender.faction);
+    const skinMat = bag.add(
+      new THREE.MeshStandardMaterial({ map: createDrumSkinTexture(glyph, bag), color: '#a39b90', roughness: 0.9 })
+    );
+    const studs = new THREE.InstancedMesh(studGeo, bronzeMat, STUDS * 2);
+    studs.userData.keep = true;
+    for (const face of [1, -1]) {
+      const head = new THREE.Mesh(drumHeadGeo, skinMat);
+      head.position.z = face * DRUM_HALF;
+      if (face < 0) head.rotation.y = Math.PI;
+      const hoop = new THREE.Mesh(hoopGeo, bronzeMat);
+      hoop.position.z = face * (DRUM_HALF - 0.005);
+      drum.add(head, hoop);
+      for (let k = 0; k < STUDS; k++) {
+        const a = (k / STUDS) * Math.PI * 2;
+        studMatrix.makeTranslation(Math.cos(a) * 0.668, Math.sin(a) * 0.668, face * (DRUM_HALF - 0.055));
+        studs.setMatrixAt((face > 0 ? 0 : STUDS) + k, studMatrix);
+      }
     }
+    drum.add(studs);
+    for (const rx of [-1, 1]) {
+      const ring = new THREE.Mesh(sideRingGeo, bronzeMat);
+      ring.position.set(rx * 0.745, -0.06, 0);
+      drum.add(ring);
+    }
+
+    // Cradle: four splayed legs, two rails under the barrel, a stretcher at each end
+    const footY = -1.55;
+    const railY = -0.63;
+    for (const lx of [-1, 1]) {
+      for (const lz of [-1, 1]) {
+        beam(drum, new THREE.Vector3(lx * 0.56, footY, lz * 0.4), new THREE.Vector3(lx * 0.42, railY, lz * 0.3));
+      }
+      beam(drum, new THREE.Vector3(lx * 0.42, railY, -0.38), new THREE.Vector3(lx * 0.42, railY, 0.38));
+    }
+    for (const lz of [-1, 1]) {
+      beam(drum, new THREE.Vector3(-0.5, -1.2, lz * 0.36), new THREE.Vector3(0.5, -1.2, lz * 0.36));
+    }
+
+    // Two sticks laid across the top, their cloth-bound heads toward the painted face
+    for (const k of [-1, 1]) {
+      const stick = new THREE.Group();
+      stick.userData.static = true;
+      stick.position.set(k * 0.12, 0.76, 0.02);
+      stick.rotation.set(Math.PI / 2 - 0.08, 0, k * 0.22);
+      const shaft = new THREE.Mesh(stickGeo, woodMat);
+      const knob = new THREE.Mesh(knobGeo, knobMat);
+      knob.position.y = 0.27;
+      stick.add(shaft, knob);
+      drum.add(stick);
+    }
+    // The whole drum is one rigid object: a draw per material instead of one per part
+    mergeRigid(drum, { matte: woodMat, metal: bronzeMat }, bag);
   }
 
   // ------------------------------------------------------------ war banners
-  const factionChar = (f: FactionId) => (FACTION_CLOTH[f] ?? FACTION_CLOTH.neutral).glyph;
   const specs: Array<{ x: number; z: number; glyph: string; pal: { bg: string; trim: string }; dir: number }> = [
     { x: -9.6, z: -7.6, glyph: attacker.seal, pal: atkPal, dir: 1 },
-    { x: -5.6, z: -9.6, glyph: factionChar(attacker.faction), pal: atkPal, dir: 1 },
-    { x: -12.4, z: -4.0, glyph: factionChar(attacker.faction), pal: atkPal, dir: 1 },
+    { x: -5.6, z: -9.6, glyph: factionGlyph(attacker.faction), pal: atkPal, dir: 1 },
+    { x: -12.4, z: -4.0, glyph: factionGlyph(attacker.faction), pal: atkPal, dir: 1 },
     { x: 9.6, z: -7.6, glyph: defender.seal, pal: defPal, dir: -1 },
-    { x: 5.6, z: -9.6, glyph: factionChar(defender.faction), pal: defPal, dir: -1 },
-    { x: 12.4, z: -4.0, glyph: factionChar(defender.faction), pal: defPal, dir: -1 },
+    { x: 5.6, z: -9.6, glyph: factionGlyph(defender.faction), pal: defPal, dir: -1 },
+    { x: 12.4, z: -4.0, glyph: factionGlyph(defender.faction), pal: defPal, dir: -1 },
   ];
   const poleGeo = bag.add(new THREE.CylinderGeometry(0.06, 0.08, 7.4, 8));
   const barGeo = bag.add(new THREE.CylinderGeometry(0.035, 0.035, 1.7, 6));
@@ -650,6 +744,7 @@ export function buildDuelArena3D(
     camp,
     brazierLights,
     brazierFlames,
+    fire,
     backdrop: {
       texture: panoTex,
       horizonV: look.band[0] + look.horizon * bandHeight,

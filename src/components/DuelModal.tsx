@@ -331,11 +331,13 @@ export function DuelModal({
   const latestLog = logs[logs.length - 1];
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/88 backdrop-blur-md flex items-center justify-center p-2.5 sm:p-4">
-      {/* As wide as the window's height allows the 21:10 stage to grow, and never narrower than before */}
+    <div className="fixed inset-0 z-50 bg-black/88 backdrop-blur-md flex overflow-y-auto p-2.5 sm:p-4">
+      {/* As wide as the window's height allows the 21:10 stage to grow (the HUD and the clash
+          line sit on the stage itself, so about 200px of the height goes to the rest), and never
+          narrower than before. Centred with auto margins so a short window scrolls, not clips. */}
       <div
-        className="ink-panel gold-border-glow rounded-2xl w-full overflow-hidden shadow-2xl animate-modal-in relative border border-[#d4a853]/45"
-        style={{ maxWidth: 'max(56rem, min(80rem, calc((100vh - 400px) * 2.1 + 2.5rem)))' }}
+        className="m-auto ink-panel gold-border-glow rounded-2xl w-full overflow-hidden shadow-2xl animate-modal-in relative border border-[#d4a853]/45"
+        style={{ maxWidth: 'max(56rem, min(112rem, calc((100vh - 200px) * 2.1 + 2.5rem)))' }}
       >
         <div className="p-3.5 sm:p-5 space-y-3 bg-gradient-to-b from-[#0d111a] via-[#0b0f17] to-[#080b11]">
           {/* Top Cinema Control Bar */}
@@ -431,95 +433,95 @@ export function DuelModal({
             </div>
           </div>
 
-          {/* Fighting-Game Broadcast Dual HP Bar HUD */}
-          <div className="grid grid-cols-[1fr_auto_1fr] gap-2.5 sm:gap-4 items-center">
-            {/* Left General (Player) */}
-            <div className="flex items-center gap-2.5 min-w-0">
-              <HeroAvatar hero={attacker} size="md" showLevel />
-              <div className="min-w-0 flex-1 space-y-1">
-                <div className="flex items-baseline justify-between gap-2">
-                  <div className="truncate">
-                    <span className="font-display font-extrabold text-sm sm:text-base text-[#f7efe0]">
-                      {tLoc(attacker.name, lang)}
-                    </span>
-                    <span className="ml-1.5 text-[10px] text-amber-300/90 hidden sm:inline">
-                      · {tLoc(atkProfile.horseName, lang)}
-                    </span>
-                  </div>
-                  <span className="text-xs font-mono font-extrabold text-emerald-300 shrink-0">
-                    {displayAtkHp}
-                  </span>
-                </div>
-                {/* Angled HP bar with delayed ghost damage trail */}
-                <div className="relative h-3 rounded-sm bg-white/10 overflow-hidden -skew-x-12 border border-emerald-400/35">
-                  <div
-                    className="absolute inset-y-0 left-0 bg-amber-300/85 transition-all duration-500"
-                    style={{ width: `${ghostAtkHp}%` }}
-                  />
-                  <div
-                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-emerald-600 via-emerald-400 to-teal-300 transition-all duration-200"
-                    style={{ width: `${displayAtkHp}%` }}
-                  />
-                </div>
-                <div className="text-[10px] text-slate-400 flex items-center gap-2">
-                  <span>
-                    {lang === 'zh' ? '武' : 'WAR'} <strong className="text-slate-200">{attacker.war}</strong>
-                  </span>
-                  <span>
-                    {lang === 'zh' ? '智' : 'INT'} <strong className="text-slate-200">{attacker.intellect}</strong>
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Center VS Crest */}
-            <div className="flex flex-col items-center justify-center px-1">
-              <span className="font-display font-black text-base sm:text-xl text-transparent bg-clip-text bg-gradient-to-b from-amber-200 via-amber-400 to-rose-500 drop-shadow">
-                VS
-              </span>
-            </div>
-
-            {/* Right General (Enemy) */}
-            <div className="flex items-center gap-2.5 flex-row-reverse text-right min-w-0">
-              <HeroAvatar hero={defender} size="md" showLevel />
-              <div className="min-w-0 flex-1 space-y-1">
-                <div className="flex items-baseline justify-between gap-2 flex-row-reverse">
-                  <div className="truncate">
-                    <span className="mr-1.5 text-[10px] text-rose-300/90 hidden sm:inline">
-                      {tLoc(defProfile.horseName, lang)} ·
-                    </span>
-                    <span className="font-display font-extrabold text-sm sm:text-base text-[#f7efe0]">
-                      {tLoc(defender.name, lang)}
-                    </span>
-                  </div>
-                  <span className="text-xs font-mono font-extrabold text-rose-300 shrink-0">
-                    {displayDefHp}
-                  </span>
-                </div>
-                <div className="relative h-3 rounded-sm bg-white/10 overflow-hidden skew-x-12 border border-rose-400/35">
-                  <div
-                    className="absolute inset-y-0 right-0 bg-amber-300/85 transition-all duration-500"
-                    style={{ width: `${ghostDefHp}%` }}
-                  />
-                  <div
-                    className="absolute inset-y-0 right-0 bg-gradient-to-l from-rose-600 via-rose-400 to-orange-400 transition-all duration-200"
-                    style={{ width: `${displayDefHp}%` }}
-                  />
-                </div>
-                <div className="text-[10px] text-slate-400 flex items-center justify-end gap-2">
-                  <span>
-                    {lang === 'zh' ? '武' : 'WAR'} <strong className="text-slate-200">{defender.war}</strong>
-                  </span>
-                  <span>
-                    {lang === 'zh' ? '智' : 'INT'} <strong className="text-slate-200">{defender.intellect}</strong>
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Center 16:9 Real-Time 3D WebGL Cavalry Duel Arena + Cut-In & Callout Overlays */}
+          {/* Center 21:10 Real-Time 3D WebGL Cavalry Duel Arena + HUD, Cut-In & Callout Overlays */}
           <div className="relative">
+            {/* Fighting-Game Broadcast Dual HP Bar HUD: above the stage on phones, laid over its top edge from md up */}
+            <div className="grid grid-cols-[1fr_auto_1fr] gap-2.5 sm:gap-4 items-center mb-3 md:mb-0 md:absolute md:inset-x-0 md:top-0 md:z-20 md:px-4 md:pt-3 md:pb-10 md:rounded-t-xl md:bg-gradient-to-b md:from-black/80 md:via-black/40 md:to-transparent md:pointer-events-none">
+              {/* Left General (Player) */}
+              <div className="flex items-center gap-2.5 min-w-0">
+                <HeroAvatar hero={attacker} size="md" showLevel />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <div className="truncate">
+                      <span className="font-display font-extrabold text-sm sm:text-base text-[#f7efe0]">
+                        {tLoc(attacker.name, lang)}
+                      </span>
+                      <span className="ml-1.5 text-[10px] text-amber-300/90 hidden sm:inline">
+                        · {tLoc(atkProfile.horseName, lang)}
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono font-extrabold text-emerald-300 shrink-0">
+                      {displayAtkHp}
+                    </span>
+                  </div>
+                  {/* Angled HP bar with delayed ghost damage trail */}
+                  <div className="relative h-3 rounded-sm bg-white/10 overflow-hidden -skew-x-12 border border-emerald-400/35">
+                    <div
+                      className="absolute inset-y-0 left-0 bg-amber-300/85 transition-all duration-500"
+                      style={{ width: `${ghostAtkHp}%` }}
+                    />
+                    <div
+                      className="absolute inset-y-0 left-0 bg-gradient-to-r from-emerald-600 via-emerald-400 to-teal-300 transition-all duration-200"
+                      style={{ width: `${displayAtkHp}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                    <span>
+                      {lang === 'zh' ? '武' : 'WAR'} <strong className="text-slate-200">{attacker.war}</strong>
+                    </span>
+                    <span>
+                      {lang === 'zh' ? '智' : 'INT'} <strong className="text-slate-200">{attacker.intellect}</strong>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Center VS Crest */}
+              <div className="flex flex-col items-center justify-center px-1">
+                <span className="font-display font-black text-base sm:text-xl text-transparent bg-clip-text bg-gradient-to-b from-amber-200 via-amber-400 to-rose-500 drop-shadow">
+                  VS
+                </span>
+              </div>
+
+              {/* Right General (Enemy) */}
+              <div className="flex items-center gap-2.5 flex-row-reverse text-right min-w-0">
+                <HeroAvatar hero={defender} size="md" showLevel />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-baseline justify-between gap-2 flex-row-reverse">
+                    <div className="truncate">
+                      <span className="mr-1.5 text-[10px] text-rose-300/90 hidden sm:inline">
+                        {tLoc(defProfile.horseName, lang)} ·
+                      </span>
+                      <span className="font-display font-extrabold text-sm sm:text-base text-[#f7efe0]">
+                        {tLoc(defender.name, lang)}
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono font-extrabold text-rose-300 shrink-0">
+                      {displayDefHp}
+                    </span>
+                  </div>
+                  <div className="relative h-3 rounded-sm bg-white/10 overflow-hidden skew-x-12 border border-rose-400/35">
+                    <div
+                      className="absolute inset-y-0 right-0 bg-amber-300/85 transition-all duration-500"
+                      style={{ width: `${ghostDefHp}%` }}
+                    />
+                    <div
+                      className="absolute inset-y-0 right-0 bg-gradient-to-l from-rose-600 via-rose-400 to-orange-400 transition-all duration-200"
+                      style={{ width: `${displayDefHp}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-slate-400 flex items-center justify-end gap-2">
+                    <span>
+                      {lang === 'zh' ? '武' : 'WAR'} <strong className="text-slate-200">{defender.war}</strong>
+                    </span>
+                    <span>
+                      {lang === 'zh' ? '智' : 'INT'} <strong className="text-slate-200">{defender.intellect}</strong>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <DuelStage3D
               attacker={attacker}
               defender={defender}
@@ -605,60 +607,60 @@ export function DuelModal({
                 </div>
               </div>
             )}
-          </div>
 
-          {/* Compact Latest Clash Ticker + Expandable Round Log */}
-          <div className="rounded-xl bg-[#090d14]/95 border border-white/10 px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-xs text-[#ebe5d5] truncate">
-                {isAnimating ? (
-                  <span className="text-amber-300 font-semibold animate-pulse">
-                    {lang === 'zh'
-                      ? '⚔️ 两将策马交锋中，寒光飞溅……'
-                      : '⚔️ Generals clashing on horseback — steel sparks fly…'}
-                  </span>
-                ) : latestLog ? (
-                  <span>{tLoc(latestLog.summary, lang)}</span>
-                ) : (
-                  <span className="text-[#9ea3ae]">
-                    {lang === 'zh'
-                      ? '两军阵前战鼓雷鸣！刚猛强攻克固守 · 诱敌反击克强攻 · 固守蓄势克反击。'
-                      : 'War drums thunder between the armies! Strike beats Guard · Feint beats Strike · Guard beats Feint.'}
-                  </span>
+            {/* Compact Latest Clash Ticker + Expandable Round Log: below the stage on phones, a caption along its foot from md up */}
+            <div className="mt-3 rounded-xl bg-[#090d14]/95 border border-white/10 px-3 py-2 md:mt-0 md:absolute md:inset-x-0 md:bottom-0 md:z-20 md:rounded-t-none md:rounded-b-xl md:border-0 md:bg-transparent md:bg-gradient-to-t md:from-black/80 md:via-black/45 md:to-transparent md:px-4 md:pt-10 md:pb-2.5 md:pr-52 md:pointer-events-none">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs md:text-sm text-[#ebe5d5] truncate md:[text-shadow:0_1px_3px_rgba(0,0,0,0.9)]">
+                  {isAnimating ? (
+                    <span className="text-amber-300 font-semibold animate-pulse">
+                      {lang === 'zh'
+                        ? '⚔️ 两将策马交锋中，寒光飞溅……'
+                        : '⚔️ Generals clashing on horseback — steel sparks fly…'}
+                    </span>
+                  ) : latestLog ? (
+                    <span>{tLoc(latestLog.summary, lang)}</span>
+                  ) : (
+                    <span className="text-[#9ea3ae]">
+                      {lang === 'zh'
+                        ? '两军阵前战鼓雷鸣！刚猛强攻克固守 · 诱敌反击克强攻 · 固守蓄势克反击。'
+                        : 'War drums thunder between the armies! Strike beats Guard · Feint beats Strike · Guard beats Feint.'}
+                    </span>
+                  )}
+                </div>
+                {logs.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowFullLog((v) => !v)}
+                    className="pointer-events-auto inline-flex items-center gap-0.5 text-[10px] text-amber-300/90 hover:text-amber-200 shrink-0 cursor-pointer"
+                  >
+                    <span>{lang === 'zh' ? `战报(${logs.length})` : `Log (${logs.length})`}</span>
+                    {showFullLog ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  </button>
                 )}
               </div>
-              {logs.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => setShowFullLog((v) => !v)}
-                  className="inline-flex items-center gap-0.5 text-[10px] text-amber-300/90 hover:text-amber-200 shrink-0 cursor-pointer"
-                >
-                  <span>{lang === 'zh' ? `战报(${logs.length})` : `Log (${logs.length})`}</span>
-                  {showFullLog ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                </button>
+
+              {showFullLog && logs.length > 1 && (
+                <div className="pointer-events-auto mt-2 pt-2 border-t border-white/10 space-y-1 max-h-24 overflow-y-auto">
+                  {logs.map((l) => (
+                    <div key={l.round} className="text-[11px] text-[#d5cebe]">
+                      {tLoc(l.summary, lang)}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
-
-            {showFullLog && logs.length > 1 && (
-              <div className="mt-2 pt-2 border-t border-white/10 space-y-1 max-h-24 overflow-y-auto">
-                {logs.map((l) => (
-                  <div key={l.round} className="text-[11px] text-[#d5cebe]">
-                    {tLoc(l.summary, lang)}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
 
           {/* Bottom Stance Command Deck OR Conclusion Banner */}
           {!finished ? (
             <div className={`space-y-2 transition-opacity ${isAnimating ? 'opacity-50 pointer-events-none' : ''}`}>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-6 lg:grid-cols-5 gap-2">
                 <button
                   type="button"
                   disabled={isAnimating}
                   onClick={() => playRound('strike')}
-                  className="p-2.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/35 border border-rose-400/40 text-left transition cursor-pointer disabled:cursor-wait"
+                  className="col-span-2 lg:col-span-1 p-2.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/35 border border-rose-400/40 text-left transition cursor-pointer disabled:cursor-wait"
                 >
                   <div className="flex items-center gap-1.5 text-xs font-bold text-rose-200">
                     <Swords className="w-3.5 h-3.5" />
@@ -673,7 +675,7 @@ export function DuelModal({
                   type="button"
                   disabled={isAnimating}
                   onClick={() => playRound('feint')}
-                  className="p-2.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/35 border border-amber-400/40 text-left transition cursor-pointer disabled:cursor-wait"
+                  className="col-span-2 lg:col-span-1 p-2.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/35 border border-amber-400/40 text-left transition cursor-pointer disabled:cursor-wait"
                 >
                   <div className="flex items-center gap-1.5 text-xs font-bold text-amber-200">
                     <Sparkles className="w-3.5 h-3.5" />
@@ -688,7 +690,7 @@ export function DuelModal({
                   type="button"
                   disabled={isAnimating}
                   onClick={() => playRound('guard')}
-                  className="p-2.5 rounded-xl bg-sky-600/20 hover:bg-sky-600/35 border border-sky-400/40 text-left transition cursor-pointer disabled:cursor-wait"
+                  className="col-span-2 lg:col-span-1 p-2.5 rounded-xl bg-sky-600/20 hover:bg-sky-600/35 border border-sky-400/40 text-left transition cursor-pointer disabled:cursor-wait"
                 >
                   <div className="flex items-center gap-1.5 text-xs font-bold text-sky-200">
                     <Shield className="w-3.5 h-3.5" />
@@ -698,14 +700,12 @@ export function DuelModal({
                     {lang === 'zh' ? '克「反击」· 铁壁格挡反刺' : 'Beats Feint · Parry & halve dmg'}
                   </div>
                 </button>
-              </div>
 
-              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   disabled={!canUseSkill || isAnimating}
                   onClick={() => playRound('skill')}
-                  className="p-2.5 rounded-xl bg-gradient-to-r from-[#d4a853]/25 to-[#c84b31]/25 hover:from-[#d4a853]/40 hover:to-[#c84b31]/40 border border-[#d4a853]/60 disabled:opacity-35 text-left transition cursor-pointer"
+                  className="col-span-3 lg:col-span-1 p-2.5 rounded-xl bg-gradient-to-r from-[#d4a853]/25 to-[#c84b31]/25 hover:from-[#d4a853]/40 hover:to-[#c84b31]/40 border border-[#d4a853]/60 disabled:opacity-35 text-left transition cursor-pointer"
                 >
                   <div className="flex items-center gap-1.5 text-xs font-bold text-[#f7e7be]">
                     <Flame className="w-3.5 h-3.5 text-amber-400" />
@@ -729,7 +729,7 @@ export function DuelModal({
                   type="button"
                   disabled={!canUseChrono || isAnimating}
                   onClick={() => playRound('chrono_counter')}
-                  className="p-2.5 rounded-xl bg-sky-500/18 hover:bg-sky-500/30 border border-sky-400/50 disabled:opacity-35 text-left transition cursor-pointer"
+                  className="col-span-3 lg:col-span-1 p-2.5 rounded-xl bg-sky-500/18 hover:bg-sky-500/30 border border-sky-400/50 disabled:opacity-35 text-left transition cursor-pointer"
                 >
                   <div className="flex items-center gap-1.5 text-xs font-bold text-sky-200">
                     <Eye className="w-3.5 h-3.5 text-sky-300" />

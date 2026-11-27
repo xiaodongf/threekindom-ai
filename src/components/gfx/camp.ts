@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { DisposeBag } from '../duel/duelGeometry3D.js';
-import { createFlameTexture } from '../duel/duelTextures3D.js';
+import { createFire } from './fire.js';
 import type { Wind } from './wind.js';
 
 /**
@@ -238,44 +238,29 @@ export function buildCamp(options: CampOptions, bag: DisposeBag): Camp {
     group.add(flag);
   }
 
-  // Cooking fires between the tents
+  // Cooking fires between the tents: the same living flames as the braziers, on their own clock
+  const fire = options.fires ? createFire(bag, 0.75) : null;
   const flames: THREE.Object3D[] = [];
-  if (options.fires) {
-    const flameMat = bag.add(
-      new THREE.MeshBasicMaterial({
-        map: createFlameTexture(bag),
-        color: new THREE.Color(1.7, 0.95, 0.34),
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        fog: false,
-      })
-    );
-    const flameGeo = bag.add(new THREE.PlaneGeometry(0.9, 1.4));
-    flameGeo.translate(0, 0.66, 0);
+  if (fire) {
+    const sources: THREE.Vector3[] = [];
     for (let i = 0; i < 5; i++) {
       const s = spot(1.6, near + 1, far - 4);
       if (!s) continue;
-      const fire = new THREE.Group();
-      fire.position.set(s.x, 0.05, s.z);
-      for (const turn of [0.3, 0.3 + Math.PI / 2]) {
-        const card = new THREE.Mesh(flameGeo, flameMat);
-        card.rotation.y = turn;
-        card.renderOrder = 3;
-        fire.add(card);
-      }
-      group.add(fire);
-      flames.push(fire);
+      const flame = fire.flame(1.0, 1.5, i * 0.37 + 0.2);
+      flame.position.set(s.x, 0.05, s.z);
+      group.add(flame);
+      flames.push(flame);
+      sources.push(new THREE.Vector3(s.x, 0.4, s.z));
     }
+    if (sources.length) group.add(fire.embers(sources, 10, 2.4));
   }
 
   return {
     group,
     update(elapsed) {
-      flames.forEach((fire, i) => {
-        const lick = Math.sin(elapsed * 13 + i * 2.3);
-        fire.scale.set(1 - lick * 0.08, 0.9 + lick * 0.18 + Math.sin(elapsed * 21 + i) * 0.07, 1 - lick * 0.08);
+      fire?.update(elapsed);
+      flames.forEach((flame, i) => {
+        flame.scale.y = 1 + Math.sin(elapsed * 11 + i * 2.3) * 0.05;
       });
     },
   };
