@@ -8,13 +8,16 @@ import type {
   AdvisorResponse,
   DiplomacyRequest,
   DiplomacyResponse,
+  FactionId,
+  GameState,
   HeroEncounterRequest,
   HeroEncounterResponse,
+  PlayableFactionId,
   ResolvedProviderId,
   TacticId,
 } from '../../src/game/types.js';
 import { CITY_SPECIALTY_IDS, canCharterSpecialty } from '../../src/game/citySpecialties.js';
-import { ACTION_COSTS } from '../../src/game/data.js';
+import { ACTION_COSTS, getDiplomacyKey } from '../../src/game/data.js';
 import {
   AI_TURN_SCHEMA,
   DIPLOMACY_RESPONSE_SCHEMA,
@@ -225,7 +228,16 @@ export async function handleDiplomacyRequest(req: DiplomacyRequest): Promise<Dip
   }
 }
 
-function validateAITurnAction(req: AITurnDecisionRequest, raw: Partial<AITurnAction>): AITurnAction | null {
+function hasActiveTruce(gameState: GameState, a: PlayableFactionId, b: FactionId): boolean {
+  if (b === 'neutral' || a === b) return false;
+  const rel = gameState.diplomacy[getDiplomacyKey(a, b)];
+  return Boolean(rel && rel.truceTurnsLeft > 0);
+}
+
+export function validateAITurnAction(
+  req: AITurnDecisionRequest,
+  raw: Partial<AITurnAction>
+): AITurnAction | null {
   const { gameState, factionId } = req;
   const city = raw.cityId ? gameState.cities[raw.cityId] : undefined;
   if (!city || city.owner !== factionId) return null;
@@ -237,7 +249,13 @@ function validateAITurnAction(req: AITurnDecisionRequest, raw: Partial<AITurnAct
 
   if (raw.type === 'attack' && raw.targetCityId) {
     const target = gameState.cities[raw.targetCityId];
-    if (target && target.owner !== factionId && city.neighbors.includes(target.id) && city.troops >= 4000) {
+    if (
+      target &&
+      target.owner !== factionId &&
+      !hasActiveTruce(gameState, factionId, target.owner) &&
+      city.neighbors.includes(target.id) &&
+      city.troops >= 4000
+    ) {
       return {
         type: 'attack',
         cityId: city.id,
@@ -251,7 +269,13 @@ function validateAITurnAction(req: AITurnDecisionRequest, raw: Partial<AITurnAct
 
   if (raw.type === 'raid' && raw.targetCityId) {
     const target = gameState.cities[raw.targetCityId];
-    if (target && target.owner !== factionId && city.neighbors.includes(target.id) && city.troops >= 2500) {
+    if (
+      target &&
+      target.owner !== factionId &&
+      !hasActiveTruce(gameState, factionId, target.owner) &&
+      city.neighbors.includes(target.id) &&
+      city.troops >= 2500
+    ) {
       return { type: 'raid', cityId: city.id, targetCityId: target.id };
     }
     return null;
@@ -259,11 +283,16 @@ function validateAITurnAction(req: AITurnDecisionRequest, raw: Partial<AITurnAct
 
   if (raw.type === 'bombard' && raw.targetCityId) {
     const target = gameState.cities[raw.targetCityId];
+    const wallsWorthBombarding =
+      Boolean(target) && target.defense >= 2 && (!target.wallScar || target.defense >= 4);
     if (
       target &&
       target.owner !== factionId &&
+      !hasActiveTruce(gameState, factionId, target.owner) &&
       city.neighbors.includes(target.id) &&
-      gameState.factions[factionId].gold >= 150
+      city.troops >= 3000 &&
+      wallsWorthBombarding &&
+      gameState.factions[factionId].gold >= ACTION_COSTS.bombardGold
     ) {
       return { type: 'bombard', cityId: city.id, targetCityId: target.id };
     }

@@ -435,5 +435,58 @@ describe('Three Kingdoms AI — Time-Traveler & Hero-Centric Engine', () => {
       targetCityId: 'hanzhong',
     });
     expect(aiBomb.cities.hanzhong.defense).toBe(shuState.cities.hanzhong.defense - 1);
+    expect(aiBomb.lastOperation?.friendlyTroopsLost).toBeGreaterThan(0);
+    expect(aiBomb.cities.changan.troops).toBeLessThan(shuState.cities.changan.troops);
+  });
+
+  it('rebalances sabotage bombardment: requires >= 2500 staging troops, inflicts sally losses, and scales pre-gunpowder damage reasonably', () => {
+    const state = createNewGame('shu');
+
+    // Skeleton garrison (< 2500) cannot launch cross-border bombardment
+    const thinWei: GameState = {
+      ...state,
+      cities: {
+        ...state.cities,
+        chencang: { ...state.cities.chencang, troops: 1800 },
+      },
+    };
+    const blocked = performSabotageBombard(thinWei, 'wei', 'chencang', 'hanzhong', 'xiahouyuan', false, () => 0.5);
+    expect(blocked).toBe(thinWei);
+
+    // Chencang (7,500) bombarding fortified Hanzhong (11,500, Def Lv.4) without Gunpowder:
+    // Hanzhong stays Shu-owned, takes moderate fire losses (< 1,100 rather than 2,100+), and inflicts sally losses on Wei.
+    const preGunpowder = performSabotageBombard(state, 'wei', 'chencang', 'hanzhong', 'xiahouyuan', false, () => 0.5);
+    expect(preGunpowder.cities.hanzhong.owner).toBe('shu');
+    expect(preGunpowder.lastOperation?.enemyTroopsLost).toBeGreaterThan(350);
+    expect(preGunpowder.lastOperation?.enemyTroopsLost).toBeLessThan(1100);
+    expect(preGunpowder.lastOperation?.friendlyTroopsLost).toBeGreaterThan(150);
+    expect(preGunpowder.cities.chencang.troops).toBe(
+      state.cities.chencang.troops - preGunpowder.lastOperation!.friendlyTroopsLost
+    );
+
+    // With Gunpowder unlocked, bombardment deals heavier casualties and -2 wall levels with fewer attacker losses
+    const withPowderState: GameState = {
+      ...state,
+      chrono: {
+        ...state.chrono,
+        rivalTechs: { ...state.chrono.rivalTechs, wei: ['gunpowder'] },
+      },
+    };
+    const postGunpowder = performSabotageBombard(
+      withPowderState,
+      'wei',
+      'chencang',
+      'hanzhong',
+      'xiahouyuan',
+      false,
+      () => 0.5
+    );
+    expect(postGunpowder.lastOperation!.defenseReduced).toBe(2);
+    expect(postGunpowder.lastOperation!.enemyTroopsLost).toBeGreaterThan(
+      preGunpowder.lastOperation!.enemyTroopsLost
+    );
+    expect(postGunpowder.lastOperation!.friendlyTroopsLost).toBeLessThan(
+      preGunpowder.lastOperation!.friendlyTroopsLost
+    );
   });
 });

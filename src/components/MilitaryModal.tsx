@@ -272,7 +272,7 @@ export function MilitaryModal({
       id: 'bombard',
       label: lang === 'zh' ? '火攻轰城' : 'Bombard',
       icon: Bomb,
-      enabled: adjacentStaging.length > 0,
+      enabled: adjacentStaging.some((c) => c.troops >= 2500),
       badge: hasGunpowder ? (lang === 'zh' ? '火药' : 'Powder') : undefined,
     },
     {
@@ -297,7 +297,11 @@ export function MilitaryModal({
       : actionType === 'raid'
         ? Boolean(activeFromCity && activeFromCity.troops >= 2500)
         : actionType === 'bombard'
-          ? Boolean(activeFromCity && playerFaction.gold >= ACTION_COSTS.bombardGold)
+          ? Boolean(
+              activeFromCity &&
+                activeFromCity.troops >= 2500 &&
+                playerFaction.gold >= ACTION_COSTS.bombardGold
+            )
           : actionType === 'discord'
             ? (adjacentStaging.length > 0 || hasSpyglass) &&
               playerFaction.gold >= ACTION_COSTS.discordGold
@@ -558,8 +562,8 @@ export function MilitaryModal({
                     </div>
                     <div>
                       {lang === 'zh'
-                        ? `城防 -${hasGunpowder ? 2 : 1}，焚毁 1.2k–2.8k 守军（耗 ${ACTION_COSTS.bombardGold} 金）`
-                        : `Walls -${hasGunpowder ? 2 : 1}, scorches 1.2k–2.8k troops (${ACTION_COSTS.bombardGold}g)`}
+                        ? `城防 -${hasGunpowder ? 2 : 1}，焚伤守军${hasGunpowder ? '（火药重创 12%–24%）' : '（6%–14%，受敌将智略与城防克制）'}，奇袭偏师有少量折损（耗 ${ACTION_COSTS.bombardGold} 金）`
+                        : `Walls -${hasGunpowder ? 2 : 1}, scorches ${hasGunpowder ? '12–24%' : '6–14%'} garrison (contested by enemy INT & walls; detachment takes light sally losses, ${ACTION_COSTS.bombardGold}g)`}
                     </div>
                   </>
                 )}
@@ -1045,11 +1049,19 @@ export function OperationReportModal({
 }: OperationReportModalProps) {
   const target = state.cities[report.targetCityId];
   const defectedHero = report.defectedHeroId ? state.generals[report.defectedHeroId] : undefined;
+  const isPlayerDefending =
+    report.attackerFaction !== state.playerFaction && target?.owner === state.playerFaction;
 
   const titleByType: Record<OperationReport['type'], { en: string; zh: string }> = {
-    raid: { en: 'Night Raid Report', zh: '夜袭劫营战报' },
-    bombard: { en: 'Bombardment Report', zh: '火攻轰城战报' },
-    discord: { en: 'Espionage & Discord Report', zh: '离间策反密报' },
+    raid: isPlayerDefending
+      ? { en: 'Enemy Night Raid Report', zh: '敌军夜袭战报' }
+      : { en: 'Night Raid Report', zh: '夜袭劫营战报' },
+    bombard: isPlayerDefending
+      ? { en: 'Enemy Bombardment Report', zh: '敌军火攻战报' }
+      : { en: 'Bombardment Report', zh: '火攻轰城战报' },
+    discord: isPlayerDefending
+      ? { en: 'Enemy Espionage Report', zh: '敌军反间密报' }
+      : { en: 'Espionage & Discord Report', zh: '离间策反密报' },
   };
 
   return (
@@ -1058,6 +1070,11 @@ export function OperationReportModal({
         <div className="text-center space-y-1">
           <div className="text-xs font-bold uppercase tracking-widest text-cyan-300">
             {target ? tLoc(target.name, lang) : ''}
+            {isPlayerDefending
+              ? lang === 'zh'
+                ? ' · 城池未失（现驻 ' + (target?.troops.toLocaleString() ?? '') + '）'
+                : ` · City Held (${target?.troops.toLocaleString() ?? ''} standing)`
+              : ''}
           </div>
           <h3 className="font-display text-2xl font-bold text-white">
             {tLoc(titleByType[report.type], lang)}
@@ -1068,13 +1085,40 @@ export function OperationReportModal({
           {tLoc(report.narrative, lang)}
         </p>
 
-        <div className="grid grid-cols-2 gap-2.5 text-center text-xs">
+        <div
+          className={`grid ${report.friendlyTroopsLost > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-2.5 text-center text-xs`}
+        >
           <div className="rounded-xl bg-slate-900/75 border border-slate-800 p-2.5">
-            <div className="text-slate-400">{lang === 'zh' ? '敌军损失' : 'Enemy Troops Lost'}</div>
+            <div className="text-slate-400">
+              {isPlayerDefending
+                ? lang === 'zh'
+                  ? '我方守军折损'
+                  : 'Our Garrison Lost'
+                : lang === 'zh'
+                  ? '敌城守军损失'
+                  : 'Enemy Troops Lost'}
+            </div>
             <div className="text-base font-bold text-rose-400">
               -{report.enemyTroopsLost.toLocaleString()}
             </div>
           </div>
+
+          {report.friendlyTroopsLost > 0 && (
+            <div className="rounded-xl bg-slate-900/75 border border-slate-800 p-2.5">
+              <div className="text-slate-400">
+                {isPlayerDefending
+                  ? lang === 'zh'
+                    ? '来袭敌军折损'
+                    : 'Raiders Lost'
+                  : lang === 'zh'
+                    ? '我方奇袭折损'
+                    : 'Detachment Lost'}
+              </div>
+              <div className="text-base font-bold text-amber-300">
+                -{report.friendlyTroopsLost.toLocaleString()}
+              </div>
+            </div>
+          )}
 
           {report.type === 'raid' && (
             <div className="rounded-xl bg-slate-900/75 border border-slate-800 p-2.5">

@@ -385,6 +385,8 @@ export function BattleReportModal({
     report.defenderFaction === 'neutral'
       ? tLoc(UI_TEXT.neutralOwner, lang)
       : tLoc(state.factions[report.defenderFaction].name, lang);
+  const isPlayerDefending = report.defenderFaction === state.playerFaction;
+  const playerWon = isPlayerDefending ? !report.captured : report.captured;
 
   const capturedHero =
     report.capturedHeroId &&
@@ -399,17 +401,25 @@ export function BattleReportModal({
         <div className="text-center space-y-2">
           <div
             className={`w-12 h-12 mx-auto rounded-full flex items-center justify-center ${
-              report.captured
+              playerWon
                 ? 'bg-emerald-500/20 border border-emerald-400/50 text-emerald-300'
                 : 'bg-rose-500/20 border border-rose-400/50 text-rose-300'
             }`}
           >
-            {report.captured ? <Trophy className="w-6 h-6" /> : <ShieldAlert className="w-6 h-6" />}
+            {playerWon ? <Trophy className="w-6 h-6" /> : <ShieldAlert className="w-6 h-6" />}
           </div>
           <h3 className="font-display text-2xl font-bold text-[#f7efe0]">
-            {report.captured
-              ? tLoc(UI_TEXT.battleVictory, lang)
-              : tLoc(UI_TEXT.battleRepelled, lang)}
+            {isPlayerDefending
+              ? report.captured
+                ? lang === 'zh'
+                  ? '城池失守 · 守军败退'
+                  : 'City Lost!'
+                : lang === 'zh'
+                  ? '守城大捷 · 击退来敌！'
+                  : 'Walls Held! Assault Repelled'
+              : report.captured
+                ? tLoc(UI_TEXT.battleVictory, lang)
+                : tLoc(UI_TEXT.battleRepelled, lang)}
           </h3>
           <p className="text-xs text-[#d4a853]">
             {tLoc(toCity.name, lang)} · {tLoc(TACTICS[report.tactic].name, lang)}

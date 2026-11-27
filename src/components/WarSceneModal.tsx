@@ -1004,12 +1004,17 @@ export function WarSceneModal({
     return () => cancelAnimationFrame(rafId);
   }, [scene, webglFailed, initialElapsed, cutInHero]);
 
+  const isConquestMode =
+    scene.mode === 'assault' || scene.mode === 'pincer' || scene.mode === 'river_strike';
+
   const modeLabel: Record<WarSceneConfig['mode'], LocalizedText> = {
     assault: { en: 'City Siege Battle', zh: '攻城决战' },
     pincer: { en: 'Joint Pincer Encirclement', zh: '多路合围夹击' },
     river_strike: { en: 'Yangtze Amphibious Assault', zh: '长江水师奔袭' },
     raid: { en: 'Night Camp Raid', zh: '夜袭劫营' },
-    bombard: { en: 'Fire & Gunpowder Bombardment', zh: '雷火轰城' },
+    bombard: scene.hasGunpowder
+      ? { en: 'Thunder-Bomb Bombardment', zh: '震天雷轰城' }
+      : { en: 'Fire Sabotage Stratagem', zh: '奇谋火攻' },
     discord: { en: 'Covert Infiltration & Discord', zh: '离间策反' },
   };
 
@@ -1029,7 +1034,13 @@ export function WarSceneModal({
               <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-cyan-300">
                 {scene.isPlayerDefending && (
                   <span className="px-1.5 py-0.5 rounded bg-rose-600/90 text-white animate-pulse">
-                    {lang === 'zh' ? '敌军来袭！' : 'UNDER ATTACK!'}
+                    {isConquestMode
+                      ? lang === 'zh'
+                        ? '敌军来袭！'
+                        : 'UNDER ATTACK!'
+                      : lang === 'zh'
+                        ? '敌军奇袭！'
+                        : 'ENEMY PLOT!'}
                   </span>
                 )}
                 <span>
@@ -1194,28 +1205,94 @@ export function WarSceneModal({
             <div className="absolute inset-0 z-30 bg-[#0a0806]/72 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center">
               <div className="anim-rise flex items-center gap-5">
                 <Seal
-                  char={playerWon ? '勝' : '敗'}
+                  char={
+                    isConquestMode
+                      ? playerWon
+                        ? '勝'
+                        : '敗'
+                      : scene.isPlayerDefending
+                        ? scene.attackerWon
+                          ? '警'
+                          : '穩'
+                        : scene.attackerWon
+                          ? '奇'
+                          : '挫'
+                  }
                   size={92}
                   stamped
-                  color={playerWon ? undefined : '#3a342c'}
+                  color={
+                    playerWon
+                      ? undefined
+                      : isConquestMode
+                        ? '#3a342c'
+                        : '#8c4a27'
+                  }
                 />
                 <div className="text-left">
                   <div className="brush-heading font-brush text-4xl font-bold text-slate-50 leading-none">
-                    {scene.isPlayerDefending
-                      ? scene.attackerWon
-                        ? lang === 'zh'
-                          ? '城池失守'
-                          : 'The city has fallen'
-                        : lang === 'zh'
-                          ? '守城大捷'
-                          : 'The walls held'
-                      : scene.attackerWon
-                        ? lang === 'zh'
-                          ? '大获全胜'
-                          : 'Victory'
-                        : lang === 'zh'
-                          ? '攻势受挫'
-                          : 'The assault was thrown back'}
+                    {isConquestMode
+                      ? scene.isPlayerDefending
+                        ? scene.attackerWon
+                          ? lang === 'zh'
+                            ? '城池失守'
+                            : 'The city has fallen'
+                          : lang === 'zh'
+                            ? '守城大捷'
+                            : 'The walls held'
+                        : scene.attackerWon
+                          ? lang === 'zh'
+                            ? '大获全胜'
+                            : 'Victory'
+                          : lang === 'zh'
+                            ? '攻势受挫'
+                            : 'The assault was thrown back'
+                      : scene.mode === 'bombard'
+                        ? scene.isPlayerDefending
+                          ? scene.attackerWon
+                            ? lang === 'zh'
+                              ? '城防受创 · 守军犹存'
+                              : 'Walls scorched — city still holds'
+                            : lang === 'zh'
+                              ? '挫败火攻'
+                              : 'Fire plot foiled'
+                          : scene.attackerWon
+                            ? lang === 'zh'
+                              ? '火攻得手'
+                              : 'Bombardment struck home'
+                            : lang === 'zh'
+                              ? '火攻受阻'
+                              : 'Bombardment blunted'
+                        : scene.mode === 'raid'
+                          ? scene.isPlayerDefending
+                            ? scene.attackerWon
+                              ? lang === 'zh'
+                                ? '营寨遭袭 · 城池未失'
+                                : 'Camp raided — city still holds'
+                              : lang === 'zh'
+                                ? '击退夜袭'
+                                : 'Night raid repelled'
+                            : scene.attackerWon
+                              ? lang === 'zh'
+                                ? '劫营得手'
+                                : 'Night raid succeeded'
+                              : lang === 'zh'
+                                ? '劫营受挫'
+                                : 'Raiders driven back'
+                          : scene.isPlayerDefending
+                            ? scene.attackerWon
+                              ? lang === 'zh'
+                                ? '流言四起 · 军心动摇'
+                                : 'Discord sown in the garrison'
+                              : lang === 'zh'
+                                ? '识破反间'
+                                : 'Enemy agents exposed'
+                            : scene.attackerWon
+                              ? lang === 'zh'
+                                ? '反间奏效'
+                                : 'Discord plot succeeded'
+                              : lang === 'zh'
+                                ? '反间未果'
+                                : 'Plot had little effect'}
                   </div>
                   <p className="mt-4 text-sm text-slate-200 max-w-xl leading-relaxed">
                     {tLoc(scene.summaryText, lang)}
@@ -1232,6 +1309,7 @@ export function WarSceneModal({
                       start: scene.attackerStartTroops,
                       lost: scene.attackerLosses,
                       won: scene.attackerWon,
+                      isAttacker: true,
                     },
                     {
                       name: defName,
@@ -1239,46 +1317,109 @@ export function WarSceneModal({
                       start: scene.defenderStartTroops,
                       lost: scene.defenderLosses,
                       won: !scene.attackerWon,
+                      isAttacker: false,
                     },
                   ] as const
-                ).map((side, idx) => (
-                  <div key={idx} className="bg-[#14110d] px-4 py-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-2 font-display text-base font-bold text-slate-50">
-                        <span className="w-2.5 h-2.5 rotate-45" style={{ background: side.color }} />
-                        {side.name}
-                      </span>
-                      <span className={`text-[11px] font-bold ${side.won ? 'text-amber-200' : 'text-slate-400'}`}>
-                        {side.won ? (lang === 'zh' ? '胜' : 'Held the field') : lang === 'zh' ? '负' : 'Driven off'}
-                      </span>
+                ).map((side, idx) => {
+                  const statusLabel = isConquestMode
+                    ? side.won
+                      ? lang === 'zh'
+                        ? '胜'
+                        : 'Held the field'
+                      : lang === 'zh'
+                        ? '负'
+                        : 'Driven off'
+                    : side.isAttacker
+                      ? scene.mode === 'bombard'
+                        ? lang === 'zh'
+                          ? '奇袭方'
+                          : 'Saboteurs'
+                        : scene.mode === 'raid'
+                          ? lang === 'zh'
+                            ? '劫营方'
+                            : 'Raiders'
+                          : lang === 'zh'
+                            ? '细作方'
+                            : 'Operatives'
+                      : lang === 'zh'
+                        ? '驻守方 · 城未失'
+                        : 'Garrison · City Held';
+                  const startLabel = isConquestMode
+                    ? lang === 'zh'
+                      ? '出阵'
+                      : 'Fielded'
+                    : side.isAttacker
+                      ? scene.mode === 'discord'
+                        ? lang === 'zh'
+                          ? '潜入密探'
+                          : 'Operatives'
+                        : lang === 'zh'
+                          ? '奇袭偏师'
+                          : 'Detachment'
+                      : lang === 'zh'
+                        ? '原驻守军'
+                        : 'Garrison';
+                  const standingLabel = isConquestMode
+                    ? lang === 'zh'
+                      ? '余部'
+                      : 'Standing'
+                    : side.isAttacker
+                      ? lang === 'zh'
+                        ? '撤回'
+                        : 'Returned'
+                      : lang === 'zh'
+                        ? '现存守军'
+                        : 'Still Holding';
+
+                  return (
+                    <div key={idx} className="bg-[#14110d] px-4 py-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-2 font-display text-base font-bold text-slate-50">
+                          <span className="w-2.5 h-2.5 rotate-45" style={{ background: side.color }} />
+                          {side.name}
+                        </span>
+                        <span
+                          className={`text-[11px] font-bold ${
+                            isConquestMode
+                              ? side.won
+                                ? 'text-amber-200'
+                                : 'text-slate-400'
+                              : side.isAttacker
+                                ? 'text-amber-200/90'
+                                : 'text-emerald-300'
+                          }`}
+                        >
+                          {statusLabel}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-baseline justify-between text-xs text-slate-400">
+                        <span>{lang === 'zh' ? '折损' : 'Lost'}</span>
+                        <span className="text-2xl font-bold text-rose-300">
+                          −<CountUp value={side.lost} from={0} />
+                        </span>
+                      </div>
+                      <div className="mt-1.5 h-1.5 bg-black/70 overflow-hidden">
+                        <div
+                          className="h-full"
+                          style={{
+                            width: `${Math.max(2, Math.round((1 - side.lost / Math.max(1, side.start)) * 100))}%`,
+                            background: side.color,
+                            transition: 'width 900ms cubic-bezier(0.22, 1, 0.36, 1)',
+                          }}
+                        />
+                      </div>
+                      <div className="mt-1.5 flex items-baseline justify-between text-xs text-slate-400">
+                        <span>
+                          {startLabel} {side.start.toLocaleString()}
+                        </span>
+                        <span className="text-slate-200 font-semibold">
+                          {standingLabel}{' '}
+                          <CountUp value={Math.max(0, side.start - side.lost)} from={side.start} />
+                        </span>
+                      </div>
                     </div>
-                    <div className="mt-2 flex items-baseline justify-between text-xs text-slate-400">
-                      <span>{lang === 'zh' ? '折损' : 'Lost'}</span>
-                      <span className="text-2xl font-bold text-rose-300">
-                        −<CountUp value={side.lost} from={0} />
-                      </span>
-                    </div>
-                    <div className="mt-1.5 h-1.5 bg-black/70 overflow-hidden">
-                      <div
-                        className="h-full"
-                        style={{
-                          width: `${Math.max(2, Math.round((1 - side.lost / Math.max(1, side.start)) * 100))}%`,
-                          background: side.color,
-                          transition: 'width 900ms cubic-bezier(0.22, 1, 0.36, 1)',
-                        }}
-                      />
-                    </div>
-                    <div className="mt-1.5 flex items-baseline justify-between text-xs text-slate-400">
-                      <span>
-                        {lang === 'zh' ? '出阵' : 'Fielded'} {side.start.toLocaleString()}
-                      </span>
-                      <span className="text-slate-200 font-semibold">
-                        {lang === 'zh' ? '余部' : 'Standing'}{' '}
-                        <CountUp value={Math.max(0, side.start - side.lost)} from={side.start} />
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <button

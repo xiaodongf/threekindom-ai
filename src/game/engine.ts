@@ -2744,7 +2744,7 @@ export function performSabotageBombard(
   const faction = state.factions[attackerFaction];
   if (!fromCity || !toCity) return state;
   if (fromCity.owner !== attackerFaction || toCity.owner === attackerFaction) return state;
-  if (!fromCity.neighbors.includes(toCityId)) return state;
+  if (!fromCity.neighbors.includes(toCityId) || fromCity.troops < 2500) return state;
   if (faction.gold < ACTION_COSTS.bombardGold) return state;
   if (consumeAP && state.actionPoints < 1) return state;
 
@@ -2755,17 +2755,48 @@ export function performSabotageBombard(
       ? state.generals[heroId]
       : undefined) || getBestGeneralInCity(state, fromCityId, attackerFaction);
 
+  const defHero = getCityGenerals(state, toCityId)
+    .filter((g) => g.status === 'active')
+    .sort((a, b) => b.intellect - a.intellect)[0];
+
   const intStat = hero ? hero.intellect : 75;
+  const defInt = defHero ? defHero.intellect : 65;
+  const defWar = defHero ? defHero.war : 70;
   const hasGunpowder = factionHasTech(state, attackerFaction, 'gunpowder');
   const defDrop = Math.min(toCity.defense - 1, hasGunpowder ? 2 : 1);
   const bastionMitigation = cityRaidBombardLossFactor(toCity);
+
+  const intEdge = clamp((intStat - defInt) * 5.5, -220, 280);
+  const terrainShelter =
+    toCity.terrain === 'fortress' ? 0.82 : toCity.terrain === 'mountain' ? 0.88 : 1.0;
+  const wallShelter = clamp(1 - (toCity.defense - 1) * 0.05, 0.8, 1.0);
+  const rawBurn = Math.max(
+    260,
+    (620 + intStat * 5.5 + intEdge + rng() * 200) *
+      (hasGunpowder ? 1.65 : 1.0) *
+      terrainShelter *
+      wallShelter
+  );
+  const maxShareBurn = Math.max(450, Math.round(toCity.troops * (hasGunpowder ? 0.24 : 0.14)));
   const burnedTroops = Math.min(
     Math.max(0, toCity.troops - 500),
-    Math.round((1150 + intStat * 12 + rng() * 350) * (hasGunpowder ? 1.38 : 1.0) * bastionMitigation)
+    Math.round(Math.min(rawBurn, maxShareBurn) * bastionMitigation)
+  );
+
+  const medicineFactor = factionHasTech(state, attackerFaction, 'medicine') ? 0.75 : 1.0;
+  const gunpowderRangeFactor = hasGunpowder ? 0.7 : 1.0;
+  const friendlyLost = Math.min(
+    Math.max(0, fromCity.troops - 1500),
+    Math.round(
+      (190 + defWar * 1.8 + toCity.defense * 28 + rng() * 140) *
+        medicineFactor *
+        gunpowderRangeFactor
+    )
   );
 
   const updatedCities = {
     ...state.cities,
+    [fromCityId]: { ...fromCity, troops: Math.max(1000, fromCity.troops - friendlyLost) },
     [toCityId]: {
       ...toCity,
       defense: Math.max(1, toCity.defense - defDrop),
@@ -2807,8 +2838,8 @@ export function performSabotageBombard(
 
   const atkName = faction.shortName;
   const narrative: LocalizedText = {
-    en: `${hasGunpowder ? 'Thunder-Bomb Bombardment' : 'Fire Stratagem'}! ${hero ? `${hero.name.en} struck ` : `${atkName.en} bombarded `}${toCity.name.en}: Walls -${defDrop} (now Lv.${updatedCities[toCityId].defense}) & scorched ${burnedTroops.toLocaleString()} troops!`,
-    zh: `${hasGunpowder ? '震天雷火炮轰城' : '奇谋纵火焚城'}！${hero ? `${hero.name.zh}施计轰击` : `${atkName.zh}军奇袭`}${toCity.name.zh}：城防 -${defDrop}（现 Lv.${updatedCities[toCityId].defense}），焚毁守军 ${burnedTroops.toLocaleString()} 人！`,
+    en: `${hasGunpowder ? 'Thunder-Bomb Bombardment' : 'Fire Stratagem'}! ${hero ? `${hero.name.en} struck ` : `${atkName.en} bombarded `}${toCity.name.en}: Walls -${defDrop} (now Lv.${updatedCities[toCityId].defense}) & scorched ${burnedTroops.toLocaleString()} garrison troops (${friendlyLost.toLocaleString()} raiders lost; city still holds).`,
+    zh: `${hasGunpowder ? '震天雷火炮轰城' : '奇谋纵火焚城'}！${hero ? `${hero.name.zh}施计轰击` : `${atkName.zh}军奇袭`}${toCity.name.zh}：城防 -${defDrop}（现 Lv.${updatedCities[toCityId].defense}），焚伤守军 ${burnedTroops.toLocaleString()} 人（来袭折损 ${friendlyLost.toLocaleString()} 人，城池未失）。`,
   };
 
   const opReport: OperationReport = {
@@ -2820,7 +2851,7 @@ export function performSabotageBombard(
     fromCityId,
     heroId: hero?.id,
     enemyTroopsLost: burnedTroops,
-    friendlyTroopsLost: 0,
+    friendlyTroopsLost: friendlyLost,
     goldPlundered: 0,
     foodPlundered: 0,
     defenseReduced: defDrop,
